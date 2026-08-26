@@ -11,12 +11,13 @@ backend-neutral `go-queue` job API.
 The repository contains connection, topology, message, publisher-outcome,
 delivery, and settlement policy foundations plus independent synchronous
 producer and consumer resources. The producer uses mandatory routing, exact
-confirm/return correlation, bounded startup retry, credential refresh, and
-verified TLS, bounded asynchronous admission, and ordered non-atomic batches.
+confirm/return correlation, bounded startup and runtime recovery, credential
+refresh, verified TLS, connection-blocked notifications, bounded asynchronous
+admission, and ordered non-atomic batches.
 The consumer uses manual settlement, bounded QoS and concurrency, bounded
-delivery snapshots, explicit failure policy, and graceful drain/close. Runtime
-recovery, health, observability, broker and failover evidence, PHP
-interoperability, and optional OpenTelemetry remain in progress.
+delivery snapshots, explicit failure policy, and graceful drain/close. Consumer
+runtime recovery, health, broader observability, broker and failover evidence,
+PHP interoperability, and optional OpenTelemetry remain in progress.
 
 ## Policy example
 
@@ -89,8 +90,12 @@ topology-management mechanism.
   another worker.
 - Batches validate every item before publishing, preserve input order, and
   report independent per-item outcomes; they are not atomic broker operations.
-- The current producer retries bounded startup attempts but reaches a terminal
-  unavailable state after runtime channel or connection loss.
+- The producer makes in-flight work ambiguous on connection loss, rejects new
+  work while recovering, then rebuilds a fresh confirm generation with bounded
+  endpoint rotation and refreshed credentials. Exhausted recovery is terminal.
+- `BlockedNotifications` reports coalesced blocked/unblocked transitions without
+  exposing broker reason text; a blocked connection does not by itself retry a
+  publication.
 - The current consumer retries bounded startup attempts but reaches a terminal
   unavailable state after runtime delivery, settlement, channel, or connection
   loss.

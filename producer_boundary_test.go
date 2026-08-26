@@ -466,7 +466,11 @@ func TestProducerCloseForcesOwnedConnectionWhenDrainDeadlineExpires(t *testing.T
 	<-started
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
+	startedClose := time.Now()
 	closeErr := producer.Close(ctx)
+	if elapsed := time.Since(startedClose); elapsed > 100*time.Millisecond {
+		t.Fatalf("Close() elapsed = %s, want prompt forced close after deadline", elapsed)
+	}
 	if resource.deadlineCalls == 0 {
 		releaseOnce.Do(func() { close(release) })
 	}

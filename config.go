@@ -122,6 +122,17 @@ func (config ConnectionConfig) Validate() error {
 	return nil
 }
 
+func ownConnectionConfig(config ConnectionConfig) ConnectionConfig {
+	config.Endpoints = append([]Endpoint(nil), config.Endpoints...)
+	config.TLS.RootCAs = append([][]byte(nil), config.TLS.RootCAs...)
+	for index := range config.TLS.RootCAs {
+		config.TLS.RootCAs[index] = append([]byte(nil), config.TLS.RootCAs[index]...)
+	}
+	config.TLS.ClientCertificate = append([]byte(nil), config.TLS.ClientCertificate...)
+	config.TLS.ClientPrivateKey = append([]byte(nil), config.TLS.ClientPrivateKey...)
+	return config
+}
+
 func invalidIdentity(value string, maximum int) bool {
 	return value == "" || len(value) > maximum || strings.TrimSpace(value) != value ||
 		strings.ContainsAny(value, "\x00\r\n")

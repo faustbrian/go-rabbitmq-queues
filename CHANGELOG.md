@@ -14,6 +14,8 @@
   startup retry, graceful close, and explicit ambiguous outcomes.
 - Add bounded asynchronous publishing and prevalidated, ordered non-atomic
   batches with independent per-item outcomes.
+- Add bounded producer runtime recovery with fresh confirm generations,
+  endpoint and credential rotation, and sanitized connection-blocked state.
 - Add an independent bounded consumer with manual ACK, NACK, reject and
   delegated settlement, owned delivery snapshots, dead-letter history,
   per-consumer QoS, explicit failure policy, and graceful drain/close.

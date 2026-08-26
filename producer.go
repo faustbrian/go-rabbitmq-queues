@@ -42,25 +42,32 @@ type producerChannel interface {
 	Close() error
 }
 
-// Producer owns one confirm-enabled AMQP channel and never creates consumers.
+// Producer owns one active confirm-enabled AMQP generation and never creates consumers.
 // Publish is safe for concurrent use. Close prevents new work, drains bounded
-// active calls, and then releases the channel and connection resource.
+// active calls, cancels recovery, and then releases the channel and connection resource.
 type Producer struct {
-	config        ProducerConfig
-	session       string
-	channel       producerChannel
-	resource      io.Closer
-	tracker       *publishTracker
-	returns       <-chan amqp.Return
-	confirms      <-chan amqp.Confirmation
-	eventsContext context.Context
-	stopEvents    context.CancelFunc
-	eventsDone    chan struct{}
+	config            ProducerConfig
+	session           string
+	channel           producerChannel
+	resource          io.Closer
+	tracker           *publishTracker
+	returns           <-chan amqp.Return
+	confirms          <-chan amqp.Confirmation
+	connectionClosed  <-chan *amqp.Error
+	connectionBlocked <-chan amqp.Blocking
+	generationClose   *sync.Once
+	recovery          *producerRecovery
+	eventsContext     context.Context
+	stopEvents        context.CancelFunc
+	eventsDone        chan struct{}
+	failure           chan struct{}
+	blockedEvents     chan ConnectionBlockedState
 
 	publishMu    sync.Mutex
 	stateMu      sync.Mutex
 	closed       bool
 	unavailable  bool
+	blocked      bool
 	active       int
 	drained      chan struct{}
 	drainedOnce  sync.Once
@@ -84,6 +91,17 @@ func newProducerFromChannelWithContext(
 	channel producerChannel,
 	resource io.Closer,
 ) (*Producer, error) {
+	return newProducerFromChannelWithRecovery(ctx, config, session, channel, resource, nil)
+}
+
+func newProducerFromChannelWithRecovery(
+	ctx context.Context,
+	config ProducerConfig,
+	session string,
+	channel producerChannel,
+	resource io.Closer,
+	recovery *producerRecovery,
+) (*Producer, error) {
 	if ctx == nil {
 		return nil, ErrContextRequired
 	}
@@ -93,39 +111,41 @@ func newProducerFromChannelWithContext(
 	if invalidIdentity(session, 128) || channel == nil || resource == nil {
 		return nil, ErrProducerUnavailable
 	}
-	setupContext, cancel := context.WithTimeout(ctx, config.PublishTimeout)
-	defer cancel()
-	confirmed := make(chan error, 1)
-	go func() { confirmed <- channel.Confirm(false) }()
-	var confirmErr error
-	select {
-	case confirmErr = <-confirmed:
-	case <-setupContext.Done():
-		_ = closeWithDeadline(resource, deadlineFor(setupContext, config.PublishTimeout))
-		_ = channel.Close()
-		<-confirmed
-		return nil, ErrProducerUnavailable
-	}
-	if confirmErr != nil {
-		_ = closeWithDeadline(resource, deadlineFor(setupContext, config.PublishTimeout))
-		_ = channel.Close()
+	returns, confirms, connectionClosed, connectionBlocked, err := setupProducerChannel(ctx, config, channel, resource)
+	if err != nil {
 		return nil, ErrProducerUnavailable
 	}
 	eventsContext, stopEvents := context.WithCancel(context.Background())
 	producer := &Producer{
-		config:        config,
-		session:       session,
-		channel:       channel,
-		resource:      resource,
-		tracker:       newPublishTracker(config.MaxOutstanding),
-		eventsContext: eventsContext,
-		stopEvents:    stopEvents,
-		eventsDone:    make(chan struct{}),
-		drained:       make(chan struct{}),
+		config:          config,
+		session:         session,
+		channel:         channel,
+		resource:        resource,
+		tracker:         newPublishTracker(config.MaxOutstanding),
+		generationClose: &sync.Once{},
+		recovery:        recovery,
+		eventsContext:   eventsContext,
+		stopEvents:      stopEvents,
+		eventsDone:      make(chan struct{}),
+		failure:         make(chan struct{}, 1),
+		blockedEvents:   make(chan ConnectionBlockedState, 1),
+		drained:         make(chan struct{}),
 	}
-	producer.returns = channel.NotifyReturn(make(chan amqp.Return, config.MaxOutstanding))
-	producer.confirms = channel.NotifyPublish(make(chan amqp.Confirmation, config.MaxOutstanding))
-	go producer.runEvents()
+	producer.returns = returns
+	producer.confirms = confirms
+	producer.connectionClosed = connectionClosed
+	producer.connectionBlocked = connectionBlocked
+	go producer.runEvents(
+		producer.returns,
+		producer.confirms,
+		producer.connectionClosed,
+		producer.connectionBlocked,
+		producer.tracker,
+		producer.failure,
+		producer.channel,
+		producer.resource,
+		producer.generationClose,
+	)
 
 	return producer, nil
 }
@@ -235,16 +255,21 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 		producer.publishMu.Unlock()
 		return PublishResult{State: PublishNotSent}, ErrProducerUnavailable
 	}
-	sequence := producer.channel.GetNextPublishSeqNo()
+	channel := producer.channel
+	tracker := producer.tracker
+	resource := producer.resource
+	generationClose := producer.generationClose
+	failure := producer.failure
+	sequence := channel.GetNextPublishSeqNo()
 	token := producer.session + "/" + strconv.FormatUint(sequence, 10)
-	attempt, err := producer.tracker.register(sequence, token)
+	attempt, err := tracker.register(sequence, token)
 	if err != nil {
 		producer.publishMu.Unlock()
 		return PublishResult{State: PublishNotSent}, err
 	}
 	sent := make(chan error, 1)
 	go func() {
-		sent <- producer.channel.PublishWithContext(
+		sent <- channel.PublishWithContext(
 			publishContext,
 			publication.Exchange,
 			publication.RoutingKey,
@@ -261,45 +286,52 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 		case err = <-sent:
 		default:
 			transmissionTimeout = publishContext.Err()
-			producer.markUnavailable()
-			producer.closeOwnedResources(deadlineFor(publishContext, producer.config.PublishTimeout))
+			producer.failGeneration(tracker, failure)
+			_ = closeProducerGeneration(
+				channel,
+				resource,
+				generationClose,
+				deadlineFor(publishContext, producer.config.PublishTimeout),
+			)
 			err = <-sent
 		}
 	}
 	contextErr := publishContext.Err()
 	preflightCancellation := err != nil && contextErr != nil && errors.Is(err, contextErr)
 	if err != nil && !preflightCancellation {
-		producer.markUnavailable()
+		producer.failGeneration(tracker, failure)
 	}
 	producer.publishMu.Unlock()
 	if err != nil {
 		if preflightCancellation {
-			producer.tracker.abandon(attempt.sequence, PublishNotSent)
+			tracker.abandon(attempt.sequence, PublishNotSent)
 			return PublishResult{State: PublishNotSent}, contextErr
 		}
 		publishErr := error(ErrPublishAmbiguous)
 		if transmissionTimeout != nil {
 			publishErr = errors.Join(ErrPublishAmbiguous, transmissionTimeout)
 		}
-		return producer.completePublishError(attempt, PublishAmbiguous, publishErr)
+		return producer.completePublishError(tracker, attempt, PublishAmbiguous, publishErr)
 	}
 	if transmissionTimeout != nil {
 		return producer.completePublishError(
+			tracker,
 			attempt,
 			PublishAmbiguous,
 			errors.Join(ErrPublishAmbiguous, transmissionTimeout),
 		)
 	}
 
-	return producer.waitForOutcome(publishContext, attempt)
+	return producer.waitForOutcome(publishContext, tracker, attempt)
 }
 
 func (producer *Producer) completePublishError(
+	tracker *publishTracker,
 	attempt *publishAttempt,
 	state PublishState,
 	err error,
 ) (PublishResult, error) {
-	if producer.tracker.abandon(attempt.sequence, state) {
+	if tracker.abandon(attempt.sequence, state) {
 		return PublishResult{State: state}, err
 	}
 	result := <-attempt.outcome
@@ -331,6 +363,18 @@ func (producer *Producer) markUnavailable() {
 	producer.stateMu.Unlock()
 }
 
+// failGeneration is called while publishMu owns the generation snapshot.
+func (producer *Producer) failGeneration(tracker *publishTracker, failure chan<- struct{}) {
+	if producer.tracker != tracker {
+		return
+	}
+	producer.markUnavailable()
+	select {
+	case failure <- struct{}{}:
+	default:
+	}
+}
+
 func (producer *Producer) isUnavailable() bool {
 	producer.stateMu.Lock()
 	defer producer.stateMu.Unlock()
@@ -348,6 +392,7 @@ func (producer *Producer) release() {
 
 func (producer *Producer) waitForOutcome(
 	ctx context.Context,
+	tracker *publishTracker,
 	attempt *publishAttempt,
 ) (PublishResult, error) {
 	select {
@@ -364,7 +409,7 @@ func (producer *Producer) waitForOutcome(
 			return result, publishResultError(result)
 		default:
 		}
-		if producer.tracker.abandon(attempt.sequence, PublishAmbiguous) {
+		if tracker.abandon(attempt.sequence, PublishAmbiguous) {
 			return PublishResult{State: PublishAmbiguous}, errors.Join(ErrPublishAmbiguous, ctx.Err())
 		}
 		result := <-attempt.outcome
@@ -387,9 +432,57 @@ func publishResultError(result PublishResult) error {
 	}
 }
 
-func (producer *Producer) runEvents() {
-	defer close(producer.eventsDone)
-	returns := producer.returns
+func (producer *Producer) runEvents(
+	returns <-chan amqp.Return,
+	confirms <-chan amqp.Confirmation,
+	connectionClosed <-chan *amqp.Error,
+	connectionBlocked <-chan amqp.Blocking,
+	tracker *publishTracker,
+	failure <-chan struct{},
+	channel producerChannel,
+	resource io.Closer,
+	generationClose *sync.Once,
+) {
+	defer func() {
+		producer.setBlocked(false)
+		close(producer.blockedEvents)
+		close(producer.eventsDone)
+	}()
+	for {
+		if !producer.runGeneration(returns, confirms, connectionClosed, connectionBlocked, tracker, failure) {
+			return
+		}
+		producer.setBlocked(false)
+		producer.markUnavailable()
+		tracker.failAll(PublishAmbiguous)
+		_ = closeProducerGeneration(channel, resource, generationClose, time.Now().Add(producer.config.PublishTimeout))
+		select {
+		case <-failure:
+		default:
+		}
+		if !producer.recoverRuntime() {
+			return
+		}
+		returns = producer.returns
+		confirms = producer.confirms
+		connectionClosed = producer.connectionClosed
+		connectionBlocked = producer.connectionBlocked
+		tracker = producer.tracker
+		failure = producer.failure
+		channel = producer.channel
+		resource = producer.resource
+		generationClose = producer.generationClose
+	}
+}
+
+func (producer *Producer) runGeneration(
+	returns <-chan amqp.Return,
+	confirms <-chan amqp.Confirmation,
+	connectionClosed <-chan *amqp.Error,
+	connectionBlocked <-chan amqp.Blocking,
+	tracker *publishTracker,
+	failure <-chan struct{},
+) bool {
 	for {
 		select {
 		case returned, open := <-returns:
@@ -397,37 +490,82 @@ func (producer *Producer) runEvents() {
 				returns = nil
 				continue
 			}
-			producer.applyReturn(returned)
-		case confirmation, open := <-producer.confirms:
+			producer.applyReturn(tracker, returned)
+		case confirmation, open := <-confirms:
 			if !open {
-				producer.markUnavailable()
-				producer.tracker.failAll(PublishAmbiguous)
-				return
+				return true
 			}
-			producer.drainReturns(returns)
-			producer.tracker.confirm(confirmation.DeliveryTag, confirmation.Ack)
+			producer.drainReturns(tracker, returns)
+			tracker.confirm(confirmation.DeliveryTag, confirmation.Ack)
+		case <-connectionClosed:
+			return true
+		case blocking, open := <-connectionBlocked:
+			if !open {
+				connectionBlocked = nil
+				continue
+			}
+			producer.setBlocked(blocking.Active)
+		case <-failure:
+			return true
 		case <-producer.eventsContext.Done():
-			producer.tracker.failAll(PublishAmbiguous)
-			return
+			tracker.failAll(PublishAmbiguous)
+			return false
 		}
 	}
 }
 
-func (producer *Producer) drainReturns(returns <-chan amqp.Return) {
+// IsBlocked reports the latest sanitized RabbitMQ connection-blocked state.
+func (producer *Producer) IsBlocked() bool {
+	producer.stateMu.Lock()
+	defer producer.stateMu.Unlock()
+	return producer.blocked
+}
+
+// BlockedNotifications emits coalesced sanitized state transitions. The
+// channel closes when the producer lifecycle ends.
+func (producer *Producer) BlockedNotifications() <-chan ConnectionBlockedState {
+	return producer.blockedEvents
+}
+
+func (producer *Producer) setBlocked(active bool) {
+	producer.stateMu.Lock()
+	if producer.blocked == active {
+		producer.stateMu.Unlock()
+		return
+	}
+	producer.blocked = active
+	producer.stateMu.Unlock()
+	state := ConnectionBlockedState{Active: active}
+	select {
+	case producer.blockedEvents <- state:
+		return
+	default:
+	}
+	select {
+	case <-producer.blockedEvents:
+	default:
+	}
+	select {
+	case producer.blockedEvents <- state:
+	default:
+	}
+}
+
+func (producer *Producer) drainReturns(tracker *publishTracker, returns <-chan amqp.Return) {
 	for returns != nil {
 		select {
 		case returned, open := <-returns:
 			if !open {
 				return
 			}
-			producer.applyReturn(returned)
+			producer.applyReturn(tracker, returned)
 		default:
 			return
 		}
 	}
 }
 
-func (producer *Producer) applyReturn(returned amqp.Return) {
+func (producer *Producer) applyReturn(tracker *publishTracker, returned amqp.Return) {
 	token, ok := returned.Headers[publishTokenHeader].(string)
 	if !ok {
 		return
@@ -436,7 +574,7 @@ func (producer *Producer) applyReturn(returned amqp.Return) {
 	if len(reason) > 255 || containsControl(reason) {
 		reason = ""
 	}
-	producer.tracker.returned(token, Return{
+	tracker.returned(token, Return{
 		Code:       returned.ReplyCode,
 		Reason:     reason,
 		Exchange:   returned.Exchange,
@@ -475,15 +613,46 @@ func (producer *Producer) closeDeadline(ctx context.Context) time.Time {
 
 func (producer *Producer) closeOwnedResources(deadline time.Time) {
 	producer.resourceOnce.Do(func() {
-		if err := closeWithDeadline(producer.resource, deadline); err != nil {
-			producer.resourceErr = ErrProducerUnavailable
-		}
-		if err := producer.channel.Close(); err != nil {
-			producer.resourceErr = ErrProducerUnavailable
-		}
 		producer.stopEvents()
+		if err := producer.closeCurrentGeneration(deadline); err != nil {
+			producer.resourceErr = ErrProducerUnavailable
+		}
 		<-producer.eventsDone
 	})
+}
+
+func (producer *Producer) closeCurrentGeneration(deadline time.Time) error {
+	producer.stateMu.Lock()
+	channel := producer.channel
+	resource := producer.resource
+	generationClose := producer.generationClose
+	producer.stateMu.Unlock()
+	return closeProducerGeneration(channel, resource, generationClose, deadline)
+}
+
+func closeProducerGeneration(
+	channel producerChannel,
+	resource io.Closer,
+	once *sync.Once,
+	deadline time.Time,
+) error {
+	if once == nil {
+		return nil
+	}
+	var closeErr error
+	once.Do(func() {
+		if resource != nil {
+			if err := closeWithDeadline(resource, deadline); err != nil {
+				closeErr = ErrProducerUnavailable
+			}
+		}
+		if channel != nil {
+			if err := channel.Close(); err != nil {
+				closeErr = ErrProducerUnavailable
+			}
+		}
+	})
+	return closeErr
 }
 
 type deadlineCloser interface {

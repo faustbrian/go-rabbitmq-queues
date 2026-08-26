@@ -17,9 +17,10 @@ Research and initial local policy tests use these immutable inputs as of
 The container pin is the intended Linux arm64 broker fixture. Local unit tests
 exercise TLS configuration, producer/consumer AMQP client boundaries, manual
 settlement policy, synchronous/asynchronous/batch outcome handling, bounded
+producer recovery seams, sanitized connection-blocked transitions, bounded
 delivery conversion, and lifecycle behavior without contacting a broker. No
-container, live TLS handshake, broker settlement, cluster, operator, failure,
-or PHP interoperability claim is established by those tests.
+container, live TLS handshake, broker settlement, cluster, operator, runtime
+failure, or PHP interoperability claim is established by those tests.
 
 ## Authoritative sources
 
