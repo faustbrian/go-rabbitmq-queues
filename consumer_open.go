@@ -16,6 +16,12 @@ type consumerDialFunc func(
 	Credentials,
 ) (consumerChannel, io.Closer, error)
 
+type consumerRecovery struct {
+	connection   ConnectionConfig
+	dial         consumerDialFunc
+	nextEndpoint int
+}
+
 type consumerAMQPOpenFunc func(string, amqp.Config, time.Time) (consumerChannel, io.Closer, error)
 
 // OpenConsumer establishes an independent consumer-only AMQP connection,
@@ -45,6 +51,7 @@ func openConsumerWith(
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	connection = ownConnectionConfig(connection)
 	if handler == nil {
 		return nil, ErrInvalidConsumer
 	}
@@ -73,7 +80,17 @@ func openConsumerWith(
 			)
 			wipe(credentials.Password)
 			if dialErr == nil && channel != nil && resource != nil {
-				consumer, consumerErr := newConsumerFromChannel(attemptContext, config, handler, channel, resource)
+				recovery := &consumerRecovery{
+					connection: connection, dial: dial, nextEndpoint: attempt + 1,
+				}
+				consumer, consumerErr := newConsumerFromChannelWithRecovery(
+					attemptContext,
+					config,
+					handler,
+					channel,
+					resource,
+					recovery,
+				)
 				cancel()
 				if consumerErr == nil {
 					return consumer, nil
@@ -96,6 +113,70 @@ func openConsumerWith(
 		}
 	}
 	return nil, ErrConsumerUnavailable
+}
+
+func (consumer *Consumer) recoverRuntime() (*consumerGeneration, bool) {
+	if consumer.recovery == nil {
+		return nil, false
+	}
+	delay := consumer.recovery.connection.Recovery.InitialDelay
+	for attempt := 0; attempt < consumer.recovery.connection.Recovery.MaxAttempts; attempt++ {
+		select {
+		case <-consumer.recoveryContext.Done():
+			return nil, false
+		default:
+		}
+		if attempt > 0 {
+			if err := waitForRecovery(consumer.recoveryContext, delay); err != nil {
+				return nil, false
+			}
+			if delay > consumer.recovery.connection.Recovery.MaxDelay/2 {
+				delay = consumer.recovery.connection.Recovery.MaxDelay
+			} else {
+				delay *= 2
+			}
+		}
+		attemptContext, cancel := context.WithTimeout(
+			consumer.recoveryContext,
+			consumer.recovery.connection.DialTimeout,
+		)
+		deadline, _ := attemptContext.Deadline()
+		credentials, credentialErr := consumer.recovery.connection.Credentials.Credentials(attemptContext)
+		if credentialErr != nil || !validCredentials(credentials) {
+			cancel()
+			wipe(credentials.Password)
+			continue
+		}
+		endpointIndex := (consumer.recovery.nextEndpoint + attempt) % len(consumer.recovery.connection.Endpoints)
+		channel, resource, dialErr := consumer.recovery.dial(
+			attemptContext,
+			consumer.recovery.connection.Endpoints[endpointIndex],
+			consumer.recovery.connection,
+			credentials,
+		)
+		wipe(credentials.Password)
+		if dialErr != nil || channel == nil || resource == nil {
+			cancel()
+			_ = boundedCloseConsumerResources(resource, channel, deadline)
+			continue
+		}
+		generation, setupErr := setupConsumerGeneration(attemptContext, consumer.config, channel, resource)
+		cancel()
+		if setupErr != nil {
+			continue
+		}
+		consumer.stateMu.Lock()
+		if consumer.stopping {
+			consumer.stateMu.Unlock()
+			_ = consumer.closeGeneration(generation, deadline)
+			return nil, false
+		}
+		consumer.generation = generation
+		consumer.recovery.nextEndpoint = endpointIndex + 1
+		consumer.stateMu.Unlock()
+		return generation, true
+	}
+	return nil, false
 }
 
 func dialAMQPConsumer(

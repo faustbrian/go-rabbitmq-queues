@@ -114,11 +114,11 @@ func TestConsumerTreatsHandlerDeadlineAndInvalidSettlementAsFailure(t *testing.T
 			t.Parallel()
 			channel := newFakeConsumerChannel()
 			config := testConsumerConfig()
-			config.HandlerTimeout = time.Millisecond
 			consumer, err := newConsumerFromChannel(t.Context(), config, handler, channel, io.NopCloser(nilReader{}))
 			if err != nil {
 				t.Fatalf("construct consumer: %v", err)
 			}
+			consumer.config.HandlerTimeout = time.Millisecond
 			t.Cleanup(func() { closeConsumerForTest(t, consumer) })
 			channel.deliveries <- testAMQPDelivery(10)
 			if settled := <-channel.settled; settled.method != SettlementReject || settled.requeue {
@@ -223,11 +223,12 @@ type blockingCloser struct {
 
 type concurrentCountingCloser struct {
 	calls atomic.Int32
+	err   error
 }
 
 func (closer *concurrentCountingCloser) Close() error {
 	closer.calls.Add(1)
-	return nil
+	return closer.err
 }
 
 func (closer *concurrentCountingCloser) count() int {
@@ -262,13 +263,13 @@ func TestConsumerDrainDeadlineForcesBlockedCancellationClosed(t *testing.T) {
 	channel.cancelBlock = make(chan struct{})
 	resource := &concurrentCountingCloser{}
 	config := testConsumerConfig()
-	config.HandlerTimeout = time.Millisecond
 	consumer, err := newConsumerFromChannel(t.Context(), config, func(context.Context, Delivery) (Settlement, error) {
 		return Acknowledge(), nil
 	}, channel, resource)
 	if err != nil {
 		t.Fatalf("construct consumer: %v", err)
 	}
+	consumer.config.HandlerTimeout = time.Millisecond
 	drained := make(chan error, 1)
 	go func() { drained <- consumer.Drain(context.Background()) }()
 	var drainErr error
@@ -296,13 +297,13 @@ func TestConsumerSettlementDeadlineTerminatesAndClosesResources(t *testing.T) {
 	channel.ackBlock = make(chan struct{})
 	resource := &concurrentCountingCloser{}
 	config := testConsumerConfig()
-	config.HandlerTimeout = time.Millisecond
 	consumer, err := newConsumerFromChannel(t.Context(), config, func(context.Context, Delivery) (Settlement, error) {
 		return Acknowledge(), nil
 	}, channel, resource)
 	if err != nil {
 		t.Fatalf("construct consumer: %v", err)
 	}
+	consumer.config.HandlerTimeout = time.Millisecond
 	channel.deliveries <- testAMQPDelivery(14)
 	select {
 	case <-consumer.Done():

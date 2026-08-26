@@ -318,6 +318,7 @@ type fakeConsumerChannel struct {
 	ackBlock     chan struct{}
 	cancelBlock  chan struct{}
 	closeCalls   int
+	closeErr     error
 	cancelOnce   sync.Once
 }
 
@@ -391,7 +392,7 @@ func (channel *fakeConsumerChannel) Close() error {
 	channel.mu.Lock()
 	defer channel.mu.Unlock()
 	channel.closeCalls++
-	return nil
+	return channel.closeErr
 }
 
 func (channel *fakeConsumerChannel) closeCount() int {

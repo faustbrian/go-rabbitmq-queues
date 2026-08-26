@@ -15,9 +15,9 @@ confirm/return correlation, bounded startup and runtime recovery, credential
 refresh, verified TLS, connection-blocked notifications, bounded asynchronous
 admission, and ordered non-atomic batches.
 The consumer uses manual settlement, bounded QoS and concurrency, bounded
-delivery snapshots, explicit failure policy, and graceful drain/close. Consumer
-runtime recovery, health, broader observability, broker and failover evidence,
-PHP interoperability, and optional OpenTelemetry remain in progress.
+delivery snapshots, explicit failure policy, bounded runtime replacement, and
+graceful drain/close. Health, broader observability, broker and failover
+evidence, PHP interoperability, and optional OpenTelemetry remain in progress.
 
 ## Policy example
 
@@ -96,9 +96,12 @@ topology-management mechanism.
 - `BlockedNotifications` reports coalesced blocked/unblocked transitions without
   exposing broker reason text; a blocked connection does not by itself retry a
   publication.
-- The current consumer retries bounded startup attempts but reaches a terminal
-  unavailable state after runtime delivery, settlement, channel, or connection
-  loss.
+- The consumer closes a failed generation before bounded replacement, reapplies
+  QoS and consumer identity, and refreshes endpoints and credentials. Work from
+  the failed generation is never settled on its replacement; exhausted recovery
+  is terminal.
+- Connection loss can redeliver a message while its earlier handler invocation
+  is still completing. Applications must tolerate concurrent duplicates.
 - Manual settlement provides at-least-once processing; applications remain
   responsible for idempotency.
 - Handler, settlement, and shutdown work is bounded by the configured handler

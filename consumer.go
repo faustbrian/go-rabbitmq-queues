@@ -2,8 +2,10 @@ package rabbitmqqueue
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -22,30 +24,45 @@ type consumerChannel interface {
 // DeliveryHandler processes one owned delivery and returns its explicit manual settlement.
 type DeliveryHandler func(context.Context, Delivery) (Settlement, error)
 
-type consumerEnvelope struct {
-	delivery Delivery
-	tag      uint64
+type consumerGeneration struct {
+	channel    consumerChannel
+	resource   io.Closer
+	deliveries <-chan amqp.Delivery
+	failure    chan struct{}
+	closeOnce  sync.Once
+	closeDone  chan struct{}
+	closeErr   error
+	closed     atomic.Bool
+	cancelOnce sync.Once
+	cancelErr  error
 }
 
-// Consumer owns one manual-acknowledgement AMQP channel and a bounded worker pool.
+type consumerEnvelope struct {
+	delivery   Delivery
+	tag        uint64
+	generation *consumerGeneration
+}
+
+// Consumer owns one active manual-acknowledgement generation and a bounded
+// worker pool. Runtime recovery replaces the complete connection/channel/
+// consumer generation before admitting more broker deliveries.
 type Consumer struct {
 	config   ConsumerConfig
 	handler  DeliveryHandler
-	channel  consumerChannel
-	resource io.Closer
+	recovery *consumerRecovery
 
 	lifetimeContext context.Context
 	stopLifetime    context.CancelFunc
+	recoveryContext context.Context
+	stopRecovery    context.CancelFunc
 	jobs            chan consumerEnvelope
 	done            chan struct{}
 
-	stateMu      sync.Mutex
-	stopping     bool
-	terminalErr  error
-	cancelOnce   sync.Once
-	cancelErr    error
-	resourceOnce sync.Once
-	resourceErr  error
+	stateMu     sync.Mutex
+	stopping    bool
+	terminalErr error
+	generation  *consumerGeneration
+	resourceErr error
 }
 
 func newConsumerFromChannel(
@@ -54,6 +71,17 @@ func newConsumerFromChannel(
 	handler DeliveryHandler,
 	channel consumerChannel,
 	resource io.Closer,
+) (*Consumer, error) {
+	return newConsumerFromChannelWithRecovery(ctx, config, handler, channel, resource, nil)
+}
+
+func newConsumerFromChannelWithRecovery(
+	ctx context.Context,
+	config ConsumerConfig,
+	handler DeliveryHandler,
+	channel consumerChannel,
+	resource io.Closer,
+	recovery *consumerRecovery,
 ) (*Consumer, error) {
 	if ctx == nil {
 		return nil, ErrContextRequired
@@ -64,6 +92,29 @@ func newConsumerFromChannel(
 	if handler == nil || channel == nil || resource == nil {
 		return nil, ErrInvalidConsumer
 	}
+	generation, err := setupConsumerGeneration(ctx, config, channel, resource)
+	if err != nil {
+		return nil, err
+	}
+	lifetimeContext, stopLifetime := context.WithCancel(context.Background())
+	recoveryContext, stopRecovery := context.WithCancel(context.Background())
+	consumer := &Consumer{
+		config: config, handler: handler, recovery: recovery,
+		lifetimeContext: lifetimeContext, stopLifetime: stopLifetime,
+		recoveryContext: recoveryContext, stopRecovery: stopRecovery,
+		jobs: make(chan consumerEnvelope, config.Prefetch), done: make(chan struct{}),
+		generation: generation,
+	}
+	go consumer.run(generation)
+	return consumer, nil
+}
+
+func setupConsumerGeneration(
+	ctx context.Context,
+	config ConsumerConfig,
+	channel consumerChannel,
+	resource io.Closer,
+) (*consumerGeneration, error) {
 	setupContext, cancelSetup := context.WithTimeout(ctx, config.HandlerTimeout)
 	defer cancelSetup()
 	if err := boundedConsumerSetup(setupContext, config.HandlerTimeout, resource, channel, func() error {
@@ -71,54 +122,32 @@ func newConsumerFromChannel(
 	}); err != nil {
 		return nil, err
 	}
-	lifetimeContext, stopLifetime := context.WithCancel(context.Background())
 	type consumeResult struct {
 		deliveries <-chan amqp.Delivery
 		err        error
 	}
 	consumed := make(chan consumeResult, 1)
 	go func() {
-		deliveries, err := channel.Consume(
-			config.Queue.Name,
-			config.Name,
-			false,
-			false,
-			false,
-			false,
-			nil,
-		)
+		deliveries, err := channel.Consume(config.Queue.Name, config.Name, false, false, false, false, nil)
 		consumed <- consumeResult{deliveries: deliveries, err: err}
 	}()
-	var deliveries <-chan amqp.Delivery
 	select {
 	case result := <-consumed:
 		if result.err != nil || result.deliveries == nil {
-			stopLifetime()
-			_ = boundedCloseConsumerResources(resource, channel, deadlineFor(setupContext, config.HandlerTimeout))
+			_ = boundedCloseConsumerResources(resource, channel, consumerCleanupDeadline(setupContext, config.HandlerTimeout))
 			return nil, ErrConsumerUnavailable
 		}
-		deliveries = result.deliveries
+		return &consumerGeneration{
+			channel: channel, resource: resource, deliveries: result.deliveries,
+			failure: make(chan struct{}, 1), closeDone: make(chan struct{}),
+		}, nil
 	case <-setupContext.Done():
-		stopLifetime()
-		_ = boundedCloseConsumerResources(resource, channel, deadlineFor(setupContext, config.HandlerTimeout))
+		_ = boundedCloseConsumerResources(resource, channel, consumerCleanupDeadline(setupContext, config.HandlerTimeout))
 		return nil, ErrConsumerUnavailable
 	}
-	consumer := &Consumer{
-		config: config, handler: handler, channel: channel, resource: resource,
-		lifetimeContext: lifetimeContext, stopLifetime: stopLifetime,
-		jobs: make(chan consumerEnvelope, config.Prefetch), done: make(chan struct{}),
-	}
-	go consumer.run(deliveries)
-	return consumer, nil
 }
 
-func boundedConsumerSetup(
-	ctx context.Context,
-	fallback time.Duration,
-	resource io.Closer,
-	channel consumerChannel,
-	setup func() error,
-) error {
+func boundedConsumerSetup(ctx context.Context, fallback time.Duration, resource io.Closer, channel consumerChannel, setup func() error) error {
 	result := make(chan error, 1)
 	go func() { result <- setup() }()
 	select {
@@ -128,11 +157,19 @@ func boundedConsumerSetup(
 		}
 	case <-ctx.Done():
 	}
-	_ = boundedCloseConsumerResources(resource, channel, deadlineFor(ctx, fallback))
+	_ = boundedCloseConsumerResources(resource, channel, consumerCleanupDeadline(ctx, fallback))
 	return ErrConsumerUnavailable
 }
 
-func (consumer *Consumer) run(deliveries <-chan amqp.Delivery) {
+func consumerCleanupDeadline(ctx context.Context, fallback time.Duration) time.Time {
+	deadline := deadlineFor(ctx, fallback)
+	if time.Until(deadline) > 0 {
+		return deadline
+	}
+	return time.Now().Add(fallback)
+}
+
+func (consumer *Consumer) run(initial *consumerGeneration) {
 	var workers sync.WaitGroup
 	workers.Add(consumer.config.Concurrency)
 	for range consumer.config.Concurrency {
@@ -144,36 +181,60 @@ func (consumer *Consumer) run(deliveries <-chan amqp.Delivery) {
 		}()
 	}
 
-consume:
+	generation := initial
 	for {
-		select {
-		case source, open := <-deliveries:
-			if !open {
-				if !consumer.isStopping() {
-					consumer.setTerminal(ErrConsumerUnavailable)
-				}
-				break consume
-			}
-			delivery, err := deliveryFromAMQP(source, consumer.config)
-			if err != nil {
-				if consumer.settle(source.DeliveryTag, Reject(false)) != nil {
-					consumer.setTerminal(ErrConsumerUnavailable)
-					break consume
-				}
-				continue
-			}
-			select {
-			case consumer.jobs <- consumerEnvelope{delivery: delivery, tag: source.DeliveryTag}:
-			case <-consumer.lifetimeContext.Done():
-				break consume
-			}
-		case <-consumer.lifetimeContext.Done():
-			break consume
+		if !consumer.consumeGeneration(generation) {
+			break
 		}
+		if err := consumer.closeGeneration(generation, time.Now().Add(consumer.config.HandlerTimeout)); err != nil {
+			consumer.setResourceError(err)
+			consumer.setTerminalError(ErrConsumerUnavailable)
+			break
+		}
+		next, ok := consumer.recoverRuntime()
+		if !ok {
+			if !consumer.isStopping() {
+				consumer.setTerminalError(ErrConsumerUnavailable)
+			}
+			break
+		}
+		generation = next
+	}
+	consumer.stopRecovery()
+	if consumer.Err() != nil {
+		consumer.stopLifetime()
+		_ = consumer.closeGeneration(consumer.currentGeneration(), time.Now().Add(consumer.config.HandlerTimeout))
 	}
 	close(consumer.jobs)
 	workers.Wait()
 	close(consumer.done)
+}
+
+func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool {
+	for {
+		select {
+		case source, open := <-generation.deliveries:
+			if !open {
+				return !consumer.isStopping()
+			}
+			delivery, err := deliveryFromAMQP(source, consumer.config)
+			if err != nil {
+				if consumer.settle(generation, source.DeliveryTag, Reject(false)) != nil {
+					return true
+				}
+				continue
+			}
+			select {
+			case consumer.jobs <- consumerEnvelope{delivery: delivery, tag: source.DeliveryTag, generation: generation}:
+			case <-consumer.recoveryContext.Done():
+				return false
+			}
+		case <-generation.failure:
+			return true
+		case <-consumer.recoveryContext.Done():
+			return false
+		}
+	}
 }
 
 func (consumer *Consumer) handle(envelope consumerEnvelope) {
@@ -188,35 +249,42 @@ func (consumer *Consumer) handle(envelope consumerEnvelope) {
 		return
 	}
 	requested = boundedSettlement(envelope.delivery, requested, consumer.config)
-	if err := consumer.settle(envelope.tag, requested); err != nil {
-		consumer.setTerminal(ErrConsumerUnavailable)
+	if err := consumer.settle(envelope.generation, envelope.tag, requested); err != nil {
+		consumer.failGeneration(envelope.generation)
 	}
 }
 
-func (consumer *Consumer) settle(tag uint64, settlement Settlement) error {
+func (consumer *Consumer) settle(generation *consumerGeneration, tag uint64, settlement Settlement) error {
 	settled := make(chan error, 1)
-	go func() { settled <- consumer.applySettlement(tag, settlement) }()
+	go func() { settled <- applySettlement(generation.channel, tag, settlement) }()
 	ctx, cancel := context.WithTimeout(consumer.lifetimeContext, consumer.config.HandlerTimeout)
 	defer cancel()
 	select {
 	case err := <-settled:
 		return err
 	case <-ctx.Done():
-		consumer.closeOwnedResources(deadlineFor(ctx, consumer.config.HandlerTimeout))
+		_ = consumer.closeGeneration(generation, deadlineFor(ctx, consumer.config.HandlerTimeout))
 		return ErrConsumerUnavailable
 	}
 }
 
-func (consumer *Consumer) applySettlement(tag uint64, settlement Settlement) error {
+func applySettlement(channel consumerChannel, tag uint64, settlement Settlement) error {
 	switch settlement.Method {
 	case SettlementAcknowledge:
-		return consumer.channel.Ack(tag, false)
+		return channel.Ack(tag, false)
 	case SettlementNegativeAcknowledge:
-		return consumer.channel.Nack(tag, false, settlement.Requeue)
+		return channel.Nack(tag, false, settlement.Requeue)
 	case SettlementReject:
-		return consumer.channel.Reject(tag, settlement.Requeue)
+		return channel.Reject(tag, settlement.Requeue)
 	default:
 		return ErrInvalidSettlement
+	}
+}
+
+func (consumer *Consumer) failGeneration(generation *consumerGeneration) {
+	select {
+	case generation.failure <- struct{}{}:
+	default:
 	}
 }
 
@@ -226,14 +294,27 @@ func (consumer *Consumer) isStopping() bool {
 	return consumer.stopping
 }
 
-func (consumer *Consumer) setTerminal(err error) {
+func (consumer *Consumer) setTerminalError(err error) {
 	consumer.stateMu.Lock()
 	if consumer.terminalErr == nil {
 		consumer.terminalErr = err
 	}
 	consumer.stateMu.Unlock()
-	consumer.stopLifetime()
-	consumer.closeOwnedResources(time.Now().Add(consumer.config.HandlerTimeout))
+}
+
+func (consumer *Consumer) setResourceError(err error) {
+	if err == nil {
+		return
+	}
+	consumer.stateMu.Lock()
+	consumer.resourceErr = ErrConsumerUnavailable
+	consumer.stateMu.Unlock()
+}
+
+func (consumer *Consumer) currentGeneration() *consumerGeneration {
+	consumer.stateMu.Lock()
+	defer consumer.stateMu.Unlock()
+	return consumer.generation
 }
 
 // Done closes after broker intake stops and all admitted handlers return.
@@ -256,33 +337,41 @@ func (consumer *Consumer) Drain(ctx context.Context) error {
 	defer cancelDrain()
 	consumer.stateMu.Lock()
 	consumer.stopping = true
+	generation := consumer.generation
 	consumer.stateMu.Unlock()
-	consumer.cancelOnce.Do(func() {
-		cancelled := make(chan error, 1)
-		go func() { cancelled <- consumer.channel.Cancel(consumer.config.Name, false) }()
-		select {
-		case err := <-cancelled:
-			if err != nil {
-				consumer.cancelErr = ErrConsumerUnavailable
-				consumer.stopLifetime()
-			}
-		case <-drainContext.Done():
-			consumer.stopLifetime()
-			consumer.closeOwnedResources(deadlineFor(drainContext, consumer.config.HandlerTimeout))
-			consumer.cancelErr = drainContext.Err()
-		}
-	})
-	if consumer.cancelErr != nil {
-		return consumer.cancelErr
+	consumer.stopRecovery()
+	if err := consumer.cancelGeneration(drainContext, generation); err != nil {
+		consumer.stopLifetime()
+		_ = consumer.closeGeneration(generation, deadlineFor(drainContext, consumer.config.HandlerTimeout))
+		return err
 	}
 	select {
 	case <-consumer.done:
 		return nil
 	case <-drainContext.Done():
 		consumer.stopLifetime()
-		consumer.closeOwnedResources(deadlineFor(drainContext, consumer.config.HandlerTimeout))
+		_ = consumer.closeGeneration(generation, deadlineFor(drainContext, consumer.config.HandlerTimeout))
 		return drainContext.Err()
 	}
+}
+
+func (consumer *Consumer) cancelGeneration(ctx context.Context, generation *consumerGeneration) error {
+	if generation == nil || generation.closed.Load() {
+		return nil
+	}
+	generation.cancelOnce.Do(func() {
+		cancelled := make(chan error, 1)
+		go func() { cancelled <- generation.channel.Cancel(consumer.config.Name, false) }()
+		select {
+		case err := <-cancelled:
+			if err != nil {
+				generation.cancelErr = ErrConsumerUnavailable
+			}
+		case <-ctx.Done():
+			generation.cancelErr = ctx.Err()
+		}
+	})
+	return generation.cancelErr
 }
 
 // Close drains admitted handlers, then closes owned resources. If cancellation
@@ -292,19 +381,38 @@ func (consumer *Consumer) Close(ctx context.Context) error {
 		return ErrContextRequired
 	}
 	drainErr := consumer.Drain(ctx)
-	consumer.closeOwnedResources(deadlineFor(ctx, consumer.config.HandlerTimeout))
+	consumer.setResourceError(consumer.closeGeneration(consumer.currentGeneration(), deadlineFor(ctx, consumer.config.HandlerTimeout)))
 	if drainErr != nil {
 		return drainErr
 	}
+	consumer.stateMu.Lock()
+	defer consumer.stateMu.Unlock()
 	return consumer.resourceErr
 }
 
-func (consumer *Consumer) closeOwnedResources(deadline time.Time) {
-	consumer.resourceOnce.Do(func() {
-		if err := boundedCloseConsumerResources(consumer.resource, consumer.channel, deadline); err != nil {
-			consumer.resourceErr = ErrConsumerUnavailable
-		}
+func (consumer *Consumer) closeGeneration(generation *consumerGeneration, deadline time.Time) error {
+	if generation == nil {
+		return nil
+	}
+	generation.closeOnce.Do(func() {
+		generation.closed.Store(true)
+		go func() {
+			generation.closeErr = boundedCloseConsumerResources(generation.resource, generation.channel, deadline)
+			close(generation.closeDone)
+		}()
 	})
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return ErrConsumerUnavailable
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-generation.closeDone:
+		return generation.closeErr
+	case <-timer.C:
+		return ErrConsumerUnavailable
+	}
 }
 
 func boundedCloseConsumerResources(resource io.Closer, channel io.Closer, deadline time.Time) error {
@@ -318,7 +426,7 @@ func boundedCloseConsumerResources(resource io.Closer, channel io.Closer, deadli
 			}
 			return ErrConsumerUnavailable
 		}
-		failed = err != nil
+		failed = consumerCloseFailed(err)
 	}
 	if channel != nil {
 		result := startConsumerClose(channel, deadline)
@@ -326,12 +434,16 @@ func boundedCloseConsumerResources(resource io.Closer, channel io.Closer, deadli
 		if !completed {
 			return ErrConsumerUnavailable
 		}
-		failed = failed || err != nil
+		failed = failed || consumerCloseFailed(err)
 	}
 	if failed {
 		return ErrConsumerUnavailable
 	}
 	return nil
+}
+
+func consumerCloseFailed(err error) bool {
+	return err != nil && !errors.Is(err, amqp.ErrClosed)
 }
 
 func startConsumerClose(closer io.Closer, deadline time.Time) <-chan error {

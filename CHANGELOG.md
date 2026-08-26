@@ -19,4 +19,6 @@
 - Add an independent bounded consumer with manual ACK, NACK, reject and
   delegated settlement, owned delivery snapshots, dead-letter history,
   per-consumer QoS, explicit failure policy, and graceful drain/close.
+- Add bounded consumer runtime recovery with complete generation replacement,
+  endpoint and credential rotation, and generation-owned settlement.
 - Pin RabbitMQ 4.3 compatibility research and queue capability distinctions.
