@@ -3,6 +3,8 @@
 This document records the compatibility boundary between
 `github.com/faustbrian/go-queue/rabbitmq` and `rabbitmqqueue`. It is a migration
 plan, not evidence that an adapter or an application cutover is complete.
+Cross-library ownership and application requirements are recorded in the
+[adoption audit](adoption-audit.md).
 
 The comparison was refreshed on 2026-08-26 against:
 

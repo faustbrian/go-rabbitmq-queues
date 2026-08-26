@@ -9,6 +9,7 @@
 
 - [Guarantees and boundaries](guarantees.md)
 - [Interoperability](interoperability.md)
+- [Adoption audit](adoption-audit.md)
 - [`go-queue/rabbitmq` migration and rollback](go-queue-migration.md)
 - [Performance](performance.md)
 - [Compatibility policy](../COMPATIBILITY.md)

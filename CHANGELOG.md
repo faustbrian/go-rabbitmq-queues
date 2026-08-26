@@ -8,6 +8,8 @@
   documentation index.
 - Document the verified `go-queue/rabbitmq` parity gaps, adapter prerequisites,
   staged adoption, and rollback gate.
+- Record adjacent-library ownership, API-to-Bill and Track migration
+  requirements, evidence limitations, and application adoption gates.
 
 ### Added
 
