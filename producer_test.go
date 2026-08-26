@@ -84,6 +84,32 @@ func TestProducerCorrelatesPositiveAndNegativeConfirms(t *testing.T) {
 	}
 }
 
+func TestProducerPublishesNativeFanoutRoutingWithoutInventingAKey(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	channel.publish = func(_ context.Context, exchange, key string, _ bool, _ bool, _ amqp.Publishing) error {
+		if exchange != "events" || key != "" {
+			t.Fatalf("publish route = (%q, %q), want native fanout route", exchange, key)
+		}
+		channel.confirms <- amqp.Confirmation{DeliveryTag: channel.nextSequence(), Ack: true}
+		return nil
+	}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-a", channel, io.NopCloser(nilReader{}))
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	t.Cleanup(func() { closeProducerForTest(t, producer) })
+
+	publication := testPublication()
+	publication.ExchangeKind = ExchangeFanout
+	publication.RoutingKey = ""
+	result, err := producer.Publish(t.Context(), publication)
+	if err != nil || result.State != PublishConfirmed {
+		t.Fatalf("Publish() = (%#v, %v), want confirmed fanout publication", result, err)
+	}
+}
+
 func TestProducerKeepsPostTransmissionCancellationAmbiguous(t *testing.T) {
 	t.Parallel()
 

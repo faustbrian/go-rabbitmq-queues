@@ -112,6 +112,46 @@ func TestPublicationValidation(t *testing.T) {
 	}
 }
 
+func TestPublicationSupportsNativeFanoutAndHeadersRouting(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		kind       ExchangeKind
+		routingKey string
+		want       error
+	}{
+		"unspecified kind preserves non-empty routing": {routingKey: "orders.created"},
+		"direct uses a routing key":                    {kind: ExchangeDirect, routingKey: "orders.created"},
+		"topic uses a routing key":                     {kind: ExchangeTopic, routingKey: "orders.*"},
+		"fanout uses an empty routing key":             {kind: ExchangeFanout},
+		"headers uses an empty routing key":            {kind: ExchangeHeaders},
+		"unspecified kind cannot omit routing":         {want: ErrInvalidPublication},
+		"direct cannot omit routing":                   {kind: ExchangeDirect, want: ErrInvalidPublication},
+		"topic cannot omit routing":                    {kind: ExchangeTopic, want: ErrInvalidPublication},
+		"fanout cannot carry routing": {
+			kind: ExchangeFanout, routingKey: "ignored", want: ErrInvalidPublication,
+		},
+		"headers cannot carry routing": {
+			kind: ExchangeHeaders, routingKey: "ignored", want: ErrInvalidPublication,
+		},
+		"unknown kind is rejected": {
+			kind: ExchangeKind("plugin"), routingKey: "orders.created", want: ErrInvalidPublication,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			publication := testPublication()
+			publication.ExchangeKind = test.kind
+			publication.RoutingKey = test.routingKey
+			if err := publication.Validate(DefaultLimits()); !errors.Is(err, test.want) {
+				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestPublishStatesRemainDistinct(t *testing.T) {
 	t.Parallel()
 

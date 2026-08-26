@@ -30,6 +30,10 @@ Important RabbitMQ 4.3 distinctions:
 - quorum publishers need confirms, and consumer processing needs manual
   acknowledgements for data-safety claims;
 - quorum confirms are emitted after replication to a member quorum;
+- `Publication.ExchangeKind` records the locally expected exchange semantic.
+  Direct and topic publications use a non-empty routing key; fanout and headers
+  publications use the native empty key. Passive topology verification remains
+  the broker evidence for the exchange's actual kind;
 - AMQP 0-9-1 `basic.nack` does not increment the 4.3 quorum
   `x-delivery-count`, while `basic.reject` and connection loss do;
 - `Delivery.AcquiredCount` preserves RabbitMQ 4.3's `x-acquired-count`, which

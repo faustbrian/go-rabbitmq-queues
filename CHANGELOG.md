@@ -30,6 +30,8 @@
 - Add a language-neutral AMQP message corpus for byte-preserving interoperability
   checks without claiming broker or PHP evidence.
 - Add bounded AMQP publication metadata and distinct publisher outcome states.
+- Add exchange-kind-aware publication routing so fanout and headers exchanges
+  preserve their native empty routing key without weakening direct/topic policy.
 - Add bounded AMQP reply-to publication metadata for application-owned
   request/reply flows.
 - Add bounded exact correlation for confirmations, mandatory returns, late

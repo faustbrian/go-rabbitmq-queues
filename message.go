@@ -97,7 +97,11 @@ const (
 
 // Publication binds one message to explicit AMQP routing policy.
 type Publication struct {
-	Exchange     string
+	Exchange string
+	// ExchangeKind records the expected routing semantic for local validation.
+	// Omit it only for non-empty direct/topic-compatible routing keys; fanout
+	// and headers publications must name their kind and use an empty key.
+	ExchangeKind ExchangeKind
 	RoutingKey   string
 	Mandatory    bool
 	DeliveryMode DeliveryMode
@@ -110,8 +114,7 @@ func (publication Publication) Validate(limits Limits) error {
 		return ErrInvalidBounds
 	}
 	if invalidIdentity(publication.Exchange, limits.MaxNameBytes) ||
-		publication.RoutingKey == "" || len(publication.RoutingKey) > limits.MaxRoutingKeyBytes ||
-		containsControl(publication.RoutingKey) ||
+		!validPublicationRouting(publication.ExchangeKind, publication.RoutingKey, limits) ||
 		publication.DeliveryMode < DeliveryTransient || publication.DeliveryMode > DeliveryPersistent {
 		return ErrInvalidPublication
 	}
@@ -185,6 +188,20 @@ func (publication Publication) Validate(limits Limits) error {
 	}
 
 	return nil
+}
+
+func validPublicationRouting(kind ExchangeKind, routingKey string, limits Limits) bool {
+	if len(routingKey) > limits.MaxRoutingKeyBytes || containsControl(routingKey) {
+		return false
+	}
+	switch kind {
+	case "", ExchangeDirect, ExchangeTopic:
+		return routingKey != ""
+	case ExchangeFanout, ExchangeHeaders:
+		return routingKey == ""
+	default:
+		return false
+	}
 }
 
 func containsControl(value string) bool {

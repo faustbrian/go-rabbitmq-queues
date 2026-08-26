@@ -21,6 +21,10 @@ internal transfer.
 - Publisher confirmation and consumer acknowledgement are separate effects.
 - Cancellation or connection loss after transmission can be ambiguous.
 - Mandatory returns must be reconciled with confirms before acceptance.
+- Publications can name the expected direct, topic, fanout, or headers exchange
+  kind so routing-key validation matches the exchange semantic. The kind is a
+  local policy assertion; passive topology verification proves the broker's
+  actual exchange declaration.
 - Asynchronous publishing owns the admitted publication and emits exactly one
   terminal outcome; a full admission window rejects new work without spawning
   another worker.
