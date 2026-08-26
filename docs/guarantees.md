@@ -81,6 +81,12 @@ internal transfer.
   broker deadline expires, RabbitMQ closes the channel and requeues all of its
   outstanding deliveries; application handler deadlines should finish before
   the effective broker timeout.
+- `Queue.DisconnectedConsumerTimeout` models how long a RabbitMQ 4.3 quorum
+  queue waits before returning deliveries held by a consumer node that becomes
+  unreachable. It is omitted by default, preserving the broker's 60-second
+  default, and accepts explicit non-negative millisecond values. This bounds
+  broker-side partition recovery; it does not prove that the original handler
+  stopped or prevent concurrent duplicate effects after redelivery.
 - `Queue.DelayedRetry` models RabbitMQ 4.3's quorum-only broker-managed linear
   backoff for returned deliveries. It is omitted by default. Enabled policy is
   bounded by a positive minimum and an optional maximum delay; explicit

@@ -109,24 +109,27 @@ type QueueDelayedRetry struct {
 // from omission. Expires, when present, must be a positive millisecond value.
 // ConsumerTimeout is RabbitMQ 4.3's quorum-only delivery-acknowledgement
 // timeout and must be at least one minute with millisecond precision.
+// DisconnectedConsumerTimeout is RabbitMQ 4.3's quorum-only wait before held
+// deliveries are returned after a consumer node becomes unreachable.
 // DelayedRetry is RabbitMQ 4.3's quorum-only linear-backoff policy.
 type Queue struct {
-	Name                 string
-	Type                 QueueType
-	Durable              bool
-	AutoDelete           bool
-	Exclusive            bool
-	SingleActiveConsumer bool
-	DeliveryLimit        uint32
-	MaxPriority          uint8
-	MessageTTL           *time.Duration
-	Expires              *time.Duration
-	ConsumerTimeout      *time.Duration
-	DelayedRetry         *QueueDelayedRetry
-	MaxLength            *uint64
-	MaxLengthBytes       *uint64
-	Overflow             QueueOverflow
-	DeadLetter           *QueueDeadLetter
+	Name                        string
+	Type                        QueueType
+	Durable                     bool
+	AutoDelete                  bool
+	Exclusive                   bool
+	SingleActiveConsumer        bool
+	DeliveryLimit               uint32
+	MaxPriority                 uint8
+	MessageTTL                  *time.Duration
+	Expires                     *time.Duration
+	ConsumerTimeout             *time.Duration
+	DisconnectedConsumerTimeout *time.Duration
+	DelayedRetry                *QueueDelayedRetry
+	MaxLength                   *uint64
+	MaxLengthBytes              *uint64
+	Overflow                    QueueOverflow
+	DeadLetter                  *QueueDeadLetter
 }
 
 // Validate rejects policies that RabbitMQ cannot apply to the selected queue type.
@@ -144,6 +147,7 @@ func (queue Queue) Validate() error {
 		if queue.DeliveryLimit != 0 || (queue.Exclusive && queue.Durable) ||
 			(!queue.Durable && !queue.Exclusive) ||
 			queue.ConsumerTimeout != nil ||
+			queue.DisconnectedConsumerTimeout != nil ||
 			queue.DelayedRetry != nil ||
 			(queue.DeadLetter != nil && queue.DeadLetter.Strategy != "") {
 			return ErrUnsupportedQueuePolicy
@@ -159,6 +163,7 @@ func (queue Queue) Validate() error {
 
 	if !validQueueDuration(queue.MessageTTL, true) || !validQueueDuration(queue.Expires, false) ||
 		!validConsumerTimeout(queue.ConsumerTimeout) ||
+		!validQueueDuration(queue.DisconnectedConsumerTimeout, true) ||
 		!validDelayedRetry(queue.DelayedRetry) ||
 		!validQueueLength(queue.MaxLength) || !validQueueLength(queue.MaxLengthBytes) {
 		return ErrUnsupportedQueuePolicy

@@ -239,6 +239,67 @@ func TestQueuePolicyModelsQuorumConsumerTimeout(t *testing.T) {
 	}
 }
 
+func TestQueuePolicyModelsQuorumDisconnectedConsumerTimeout(t *testing.T) {
+	t.Parallel()
+
+	immediate := time.Duration(0)
+	brokerDefault := time.Minute
+	negative := -time.Millisecond
+	subMillisecond := time.Microsecond
+
+	tests := map[string]struct {
+		queue Queue
+		want  error
+	}{
+		"omitted quorum timeout": {
+			queue: Queue{Name: "orders", Type: QueueQuorum, Durable: true},
+		},
+		"explicit zero timeout": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DisconnectedConsumerTimeout: &immediate,
+			},
+		},
+		"broker default timeout": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DisconnectedConsumerTimeout: &brokerDefault,
+			},
+		},
+		"classic timeout is unsupported": {
+			queue: Queue{
+				Name: "orders", Type: QueueClassic, Durable: true,
+				DisconnectedConsumerTimeout: &brokerDefault,
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"negative timeout is unsupported": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DisconnectedConsumerTimeout: &negative,
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"timeout requires millisecond precision": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DisconnectedConsumerTimeout: &subMillisecond,
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := test.queue.Validate(); !errors.Is(err, test.want) {
+				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestQueuePolicyModelsQuorumDelayedRetry(t *testing.T) {
 	t.Parallel()
 

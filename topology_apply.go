@@ -326,6 +326,9 @@ func queueArguments(queue Queue) amqp.Table {
 	if queue.ConsumerTimeout != nil {
 		arguments["x-consumer-timeout"] = queue.ConsumerTimeout.Milliseconds()
 	}
+	if queue.DisconnectedConsumerTimeout != nil {
+		arguments["x-consumer-disconnected-timeout"] = queue.DisconnectedConsumerTimeout.Milliseconds()
+	}
 	if queue.DelayedRetry != nil {
 		arguments["x-delayed-retry-type"] = string(queue.DelayedRetry.Type)
 		if queue.DelayedRetry.Type != DelayedRetryDisabled {
@@ -389,6 +392,10 @@ func ownTopology(topology Topology) Topology {
 		if queue.ConsumerTimeout != nil {
 			value := *queue.ConsumerTimeout
 			queue.ConsumerTimeout = &value
+		}
+		if queue.DisconnectedConsumerTimeout != nil {
+			value := *queue.DisconnectedConsumerTimeout
+			queue.DisconnectedConsumerTimeout = &value
 		}
 		if queue.DelayedRetry != nil {
 			delayedRetry := *queue.DelayedRetry

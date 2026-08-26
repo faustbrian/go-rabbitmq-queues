@@ -20,6 +20,7 @@ row is implemented yet. The source snapshot and products are pinned in
 | Broker delivery limit | No poison-message counter | Default 20; `x-delivery-count` semantics changed in 4.3 | No queue delivery limit |
 | Dead lettering | Yes; no at-least-once dead-lettering | Yes; at-least-once mode when configured | Not a queue/DLX model |
 | Consumer timeout in 4.3 | No queue-specific support | Yes | Different protocol lifecycle |
+| Disconnected-consumer timeout in 4.3 | No | Yes; broker default is 60 seconds | Different protocol lifecycle |
 | Delayed retry in 4.3 | No | `disabled`, `all`, `failed`, or `returned` linear backoff | Different protocol lifecycle |
 | Global QoS | Deprecated/removed policy surface | Unsupported | Not applicable |
 
@@ -42,6 +43,11 @@ Important RabbitMQ 4.3 distinctions:
   `ConsumerTimeout` emits `x-consumer-timeout`, accepts the broker minimum of
   one minute at millisecond precision, and remains distinct from the package's
   handler deadline;
+- disconnected-consumer timeout is quorum-only in 4.3.
+  `DisconnectedConsumerTimeout` emits `x-consumer-disconnected-timeout` and
+  bounds how long the broker waits before returning deliveries held by a
+  consumer node that becomes unreachable. Omission retains the broker's
+  60-second default; explicit values are non-negative milliseconds;
 - delayed retry is quorum-only in 4.3. `Queue.DelayedRetry` distinguishes
   omission from explicit disabling and can apply linear backoff to all returned
   messages, only delivery-count-incrementing failures, or only returns that do
@@ -88,13 +94,14 @@ topology; its exchange remains pre-existing and is passively verified.
 ## Declaration-equivalent queue policy
 
 `Queue` can represent RabbitMQ declaration arguments for per-queue message TTL,
-unused-queue expiry, quorum delivery-acknowledgement timeout, quorum delayed
-retry, maximum ready-message count, maximum ready-message bytes, overflow
-behavior, dead-letter exchange and routing key, and quorum dead-letter
-strategy. Optional numeric fields distinguish an explicit zero from an omitted
-argument and are bounded to millisecond or signed AMQP integer values. A nil
-dead-letter routing key preserves the broker's original-routing-key behavior,
-while a pointer to an empty string represents an explicit empty argument.
+unused-queue expiry, quorum delivery-acknowledgement and disconnected-consumer
+timeouts, quorum delayed retry, maximum ready-message count, maximum
+ready-message bytes, overflow behavior, dead-letter exchange and routing key,
+and quorum dead-letter strategy. Optional numeric fields distinguish an
+explicit zero from an omitted argument and are bounded to millisecond or signed
+AMQP integer values. A nil dead-letter routing key preserves the broker's
+original-routing-key behavior, while a pointer to an empty string represents an
+explicit empty argument.
 
 Queue-type validation preserves the RabbitMQ 4.3 distinctions:
 
@@ -105,6 +112,8 @@ Queue-type validation preserves the RabbitMQ 4.3 distinctions:
   `reject-publish-dlx`;
 - quorum consumer timeout is optional, must be at least one minute, and is
   rejected for classic queues;
+- quorum disconnected-consumer timeout is optional, accepts non-negative
+  millisecond values, and is rejected for classic queues;
 - quorum delayed retry is optional, requires a positive millisecond minimum
   when enabled, and is rejected for classic queues;
 - quorum at-least-once dead-lettering requires a dead-letter exchange and

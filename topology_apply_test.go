@@ -133,6 +133,36 @@ func TestApplyTopologyMapsQuorumConsumerTimeout(t *testing.T) {
 	}
 }
 
+func TestApplyTopologyMapsQuorumDisconnectedConsumerTimeout(t *testing.T) {
+	t.Parallel()
+
+	disconnectedTimeout := time.Minute
+	var captured amqp.Table
+	channel := &fakeTopologyChannel{queuePassive: func(
+		_ string, _, _, _ bool, arguments amqp.Table,
+	) (amqp.Queue, error) {
+		captured = arguments
+		return amqp.Queue{Name: "orders"}, nil
+	}}
+	_, err := applyTopologyWith(
+		t.Context(), testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
+		Topology{Queues: []Queue{{
+			Name: "orders", Type: QueueQuorum, Durable: true,
+			DisconnectedConsumerTimeout: &disconnectedTimeout,
+		}}},
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
+			return channel, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("applyTopologyWith() error = %v", err)
+	}
+	if len(captured) != 2 || captured["x-queue-type"] != "quorum" ||
+		captured["x-consumer-disconnected-timeout"] != int64(60_000) {
+		t.Fatalf("passive queue arguments = %#v", captured)
+	}
+}
+
 func TestApplyTopologyMapsQuorumDelayedRetry(t *testing.T) {
 	t.Parallel()
 
@@ -238,6 +268,7 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 	messageTTL := 30 * time.Second
 	queueExpires := 10 * time.Minute
 	consumerTimeout := 5 * time.Minute
+	disconnectedConsumerTimeout := time.Minute
 	delayedRetryMaximum := 30 * time.Second
 	delayedRetry := &QueueDelayedRetry{
 		Type: DelayedRetryAll, Minimum: time.Second, Maximum: &delayedRetryMaximum,
@@ -260,14 +291,16 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 		Topology{Queues: []Queue{{
 			Name: "orders", Type: QueueQuorum, Durable: true,
 			MessageTTL: &messageTTL, Expires: &queueExpires, ConsumerTimeout: &consumerTimeout,
-			DelayedRetry: delayedRetry,
-			MaxLength:    &maxLength, MaxLengthBytes: &maxLengthBytes,
+			DisconnectedConsumerTimeout: &disconnectedConsumerTimeout,
+			DelayedRetry:                delayedRetry,
+			MaxLength:                   &maxLength, MaxLengthBytes: &maxLengthBytes,
 			Overflow: QueueOverflowRejectPublish, DeadLetter: deadLetter,
 		}}},
 		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
 			messageTTL = -time.Millisecond
 			queueExpires = 0
 			consumerTimeout = time.Minute - time.Millisecond
+			disconnectedConsumerTimeout = -time.Millisecond
 			delayedRetryMaximum = time.Millisecond
 			delayedRetry.Type = DelayedRetryType("mutated")
 			delayedRetry.Minimum = time.Microsecond
@@ -285,6 +318,7 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 	if captured["x-message-ttl"] != int64(30_000) ||
 		captured["x-expires"] != int64(600_000) ||
 		captured["x-consumer-timeout"] != int64(300_000) ||
+		captured["x-consumer-disconnected-timeout"] != int64(60_000) ||
 		captured["x-delayed-retry-type"] != "all" ||
 		captured["x-delayed-retry-min"] != int64(1_000) ||
 		captured["x-delayed-retry-max"] != int64(30_000) ||
