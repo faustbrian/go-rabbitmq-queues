@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Documentation
+
+- Organize detailed guarantees behind a concise package overview and
+  documentation index.
+
 ### Added
 
 - Add bounded connection, credential, verified TLS, and recovery policy types.
@@ -25,6 +30,8 @@
   per-consumer QoS, explicit failure policy, and graceful drain/close.
 - Add bounded consumer runtime recovery with complete generation replacement,
   endpoint and credential rotation, and generation-owned settlement.
+- Add idempotent consumer pause/resume admission that preserves in-flight
+  settlement, bounded buffering, runtime recovery, and readiness semantics.
 - Add separate producer and consumer liveness, readiness, and dependency-health
   contracts that distinguish temporary recovery from terminal failure.
 - Add bounded low-cardinality producer and consumer observation streams with
