@@ -90,6 +90,12 @@ func applyTopologyWith(
 	}
 	connection = ownConnectionConfig(connection)
 	topology = ownTopology(topology)
+	if err := connection.Validate(); err != nil {
+		return TopologyResult{}, err
+	}
+	if err := topology.Validate(policy); err != nil {
+		return TopologyResult{}, err
+	}
 	delay := connection.Recovery.InitialDelay
 	for attempt := 0; attempt < connection.Recovery.MaxAttempts; attempt++ {
 		select {
@@ -310,6 +316,30 @@ func queueArguments(queue Queue) amqp.Table {
 	if queue.MaxPriority > 0 {
 		arguments["x-max-priority"] = int32(queue.MaxPriority)
 	}
+	if queue.MessageTTL != nil {
+		arguments["x-message-ttl"] = queue.MessageTTL.Milliseconds()
+	}
+	if queue.Expires != nil {
+		arguments["x-expires"] = queue.Expires.Milliseconds()
+	}
+	if queue.MaxLength != nil {
+		arguments["x-max-length"] = int64(*queue.MaxLength)
+	}
+	if queue.MaxLengthBytes != nil {
+		arguments["x-max-length-bytes"] = int64(*queue.MaxLengthBytes)
+	}
+	if queue.Overflow != "" {
+		arguments["x-overflow"] = string(queue.Overflow)
+	}
+	if queue.DeadLetter != nil {
+		arguments["x-dead-letter-exchange"] = queue.DeadLetter.Exchange
+		if queue.DeadLetter.RoutingKey != nil {
+			arguments["x-dead-letter-routing-key"] = *queue.DeadLetter.RoutingKey
+		}
+		if queue.DeadLetter.Strategy != "" {
+			arguments["x-dead-letter-strategy"] = string(queue.DeadLetter.Strategy)
+		}
+	}
 	return arguments
 }
 
@@ -333,6 +363,33 @@ func bindingArguments(arguments []Header) amqp.Table {
 func ownTopology(topology Topology) Topology {
 	topology.Exchanges = append([]Exchange(nil), topology.Exchanges...)
 	topology.Queues = append([]Queue(nil), topology.Queues...)
+	for index := range topology.Queues {
+		queue := &topology.Queues[index]
+		if queue.MessageTTL != nil {
+			value := *queue.MessageTTL
+			queue.MessageTTL = &value
+		}
+		if queue.Expires != nil {
+			value := *queue.Expires
+			queue.Expires = &value
+		}
+		if queue.MaxLength != nil {
+			value := *queue.MaxLength
+			queue.MaxLength = &value
+		}
+		if queue.MaxLengthBytes != nil {
+			value := *queue.MaxLengthBytes
+			queue.MaxLengthBytes = &value
+		}
+		if queue.DeadLetter != nil {
+			deadLetter := *queue.DeadLetter
+			if deadLetter.RoutingKey != nil {
+				routingKey := *deadLetter.RoutingKey
+				deadLetter.RoutingKey = &routingKey
+			}
+			queue.DeadLetter = &deadLetter
+		}
+	}
 	topology.Bindings = append([]Binding(nil), topology.Bindings...)
 	for index := range topology.Bindings {
 		topology.Bindings[index].Arguments = append([]Header(nil), topology.Bindings[index].Arguments...)

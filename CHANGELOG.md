@@ -13,6 +13,8 @@
 
 - Add bounded connection, credential, verified TLS, and recovery policy types.
 - Add explicit classic/quorum queue and passive/development topology policy.
+- Add bounded declaration-equivalent queue TTL, expiry, length, overflow, and
+  dead-letter policy with explicit RabbitMQ 4.3 queue-type restrictions.
 - Add bounded passive exchange and queue equivalence checks plus explicit
   development-only binding declaration without mutating production bindings.
 - Add a language-neutral AMQP message corpus for byte-preserving interoperability

@@ -52,3 +52,31 @@ equivalence therefore remains an operator/infrastructure gate; the package
 rejects passive binding requests instead of calling the mutating bind method.
 Development-only declarations can create an explicitly modeled binding after
 `PermitDevelopmentTopology` is supplied.
+
+## Declaration-equivalent queue policy
+
+`Queue` can represent RabbitMQ declaration arguments for per-queue message TTL,
+unused-queue expiry, maximum ready-message count, maximum ready-message bytes,
+overflow behavior, dead-letter exchange and routing key, and quorum dead-letter
+strategy. Optional numeric fields distinguish an explicit zero from an omitted
+argument and are bounded to millisecond or signed AMQP integer values. A nil
+dead-letter routing key preserves the broker's original-routing-key behavior,
+while a pointer to an empty string represents an explicit empty argument.
+
+Queue-type validation preserves the RabbitMQ 4.3 distinctions:
+
+- non-durable classic queues must be exclusive;
+- classic queues support `drop-head`, `reject-publish`, and
+  `reject-publish-dlx`, but not an explicit dead-letter strategy;
+- quorum queues support `drop-head` and `reject-publish`, but not
+  `reject-publish-dlx`;
+- quorum at-least-once dead-lettering requires a dead-letter exchange and
+  `reject-publish` overflow; and
+- quorum priority remains intrinsic and does not emit `x-max-priority`.
+
+RabbitMQ policies remain preferred for production because they can change
+without redeploying applications. Declaration arguments override policy values.
+When infrastructure supplies a setting only through policy, omit the matching
+`Queue` field and verify the effective policy through operator evidence. Use
+the field during passive verification only when the existing queue was declared
+with that same `x-` argument.

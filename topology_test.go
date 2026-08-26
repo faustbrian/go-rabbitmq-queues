@@ -2,8 +2,128 @@ package rabbitmqqueue
 
 import (
 	"errors"
+	"math"
+	"strings"
 	"testing"
+	"time"
 )
+
+func TestQueuePolicyModelsTTLLengthOverflowAndDeadLetterCapabilities(t *testing.T) {
+	t.Parallel()
+
+	messageTTL := 30 * time.Second
+	queueExpires := 10 * time.Minute
+	maxLength := uint64(10_000)
+	maxLengthBytes := uint64(64 << 20)
+	routingKey := "jobs.failed"
+	emptyRoutingKey := ""
+	tooLongRoutingKey := strings.Repeat("r", 256)
+	zeroTTL := time.Duration(0)
+	zeroLength := uint64(0)
+	tooLarge := uint64(math.MaxInt64) + 1
+	negativeTTL := -time.Millisecond
+	subMillisecond := time.Microsecond
+	zeroExpires := time.Duration(0)
+
+	valid := map[string]Queue{
+		"classic declaration arguments": {
+			Name: "jobs", Type: QueueClassic, Durable: true,
+			MessageTTL: &messageTTL, Expires: &queueExpires,
+			MaxLength: &maxLength, MaxLengthBytes: &maxLengthBytes,
+			Overflow:   QueueOverflowRejectPublishDeadLetter,
+			DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead", RoutingKey: &routingKey},
+		},
+		"quorum at least once dead lettering": {
+			Name: "orders", Type: QueueQuorum, Durable: true,
+			MaxLength: &maxLength, Overflow: QueueOverflowRejectPublish,
+			DeadLetter: &QueueDeadLetter{
+				Exchange: "orders.dead", Strategy: DeadLetterAtLeastOnce,
+			},
+		},
+		"zero message ttl and queue length": {
+			Name: "immediate", Type: QueueClassic, Durable: true,
+			MessageTTL: &zeroTTL, MaxLength: &zeroLength,
+		},
+		"default dead letter exchange": {
+			Name: "default-dlx", Type: QueueClassic, Durable: true,
+			DeadLetter: &QueueDeadLetter{RoutingKey: &emptyRoutingKey},
+		},
+		"explicit quorum at most once strategy": {
+			Name: "audit", Type: QueueQuorum, Durable: true,
+			DeadLetter: &QueueDeadLetter{Exchange: "audit.dead", Strategy: DeadLetterAtMostOnce},
+		},
+	}
+	for name, queue := range valid {
+		queue := queue
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := queue.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+
+	invalid := map[string]Queue{
+		"non durable non exclusive classic": {
+			Name: "transient", Type: QueueClassic,
+		},
+		"sub millisecond message ttl": {
+			Name: "jobs", Type: QueueClassic, Durable: true, MessageTTL: &subMillisecond,
+		},
+		"negative message ttl": {
+			Name: "jobs", Type: QueueClassic, Durable: true, MessageTTL: &negativeTTL,
+		},
+		"zero queue expiry": {
+			Name: "jobs", Type: QueueClassic, Durable: true, Expires: &zeroExpires,
+		},
+		"length exceeds AMQP integer": {
+			Name: "jobs", Type: QueueClassic, Durable: true, MaxLength: &tooLarge,
+		},
+		"byte length exceeds AMQP integer": {
+			Name: "jobs", Type: QueueClassic, Durable: true, MaxLengthBytes: &tooLarge,
+		},
+		"unknown overflow": {
+			Name: "jobs", Type: QueueClassic, Durable: true, Overflow: QueueOverflow("unknown"),
+		},
+		"quorum reject publish dead letter overflow": {
+			Name: "jobs", Type: QueueQuorum, Durable: true,
+			Overflow: QueueOverflowRejectPublishDeadLetter,
+		},
+		"classic explicit dead letter strategy": {
+			Name: "jobs", Type: QueueClassic, Durable: true,
+			DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead", Strategy: DeadLetterAtMostOnce},
+		},
+		"quorum at least once requires reject publish": {
+			Name: "jobs", Type: QueueQuorum, Durable: true, Overflow: QueueOverflowDropHead,
+			DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead", Strategy: DeadLetterAtLeastOnce},
+		},
+		"reject publish dead letter requires exchange policy": {
+			Name: "jobs", Type: QueueClassic, Durable: true,
+			Overflow: QueueOverflowRejectPublishDeadLetter,
+		},
+		"dead letter exchange contains control": {
+			Name: "jobs", Type: QueueClassic, Durable: true,
+			DeadLetter: &QueueDeadLetter{Exchange: "jobs\ndead"},
+		},
+		"dead letter routing key exceeds AMQP short string": {
+			Name: "jobs", Type: QueueClassic, Durable: true,
+			DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead", RoutingKey: &tooLongRoutingKey},
+		},
+		"unknown dead letter strategy": {
+			Name: "jobs", Type: QueueQuorum, Durable: true,
+			DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead", Strategy: DeadLetterStrategy("unknown")},
+		},
+	}
+	for name, queue := range invalid {
+		queue := queue
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := queue.Validate(); !errors.Is(err, ErrUnsupportedQueuePolicy) {
+				t.Fatalf("Validate() error = %v, want %v", err, ErrUnsupportedQueuePolicy)
+			}
+		})
+	}
+}
 
 func TestQueuePolicyModelsQueueTypeCapabilities(t *testing.T) {
 	t.Parallel()

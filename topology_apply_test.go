@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -55,6 +56,157 @@ func TestApplyTopologyPassivelyVerifiesExchangeAndQueueWithoutMutation(t *testin
 	}
 	if channel.closeCount() != 1 || resource.count() != 1 {
 		t.Fatalf("close calls = channel %d resource %d", channel.closeCount(), resource.count())
+	}
+}
+
+func TestApplyTopologyMapsBoundedQuorumQueuePolicyArguments(t *testing.T) {
+	t.Parallel()
+
+	messageTTL := 30 * time.Second
+	queueExpires := 10 * time.Minute
+	maxLength := uint64(10_000)
+	maxLengthBytes := uint64(64 << 20)
+	routingKey := "orders.failed"
+	channel := &fakeTopologyChannel{queuePassive: func(
+		_ string, _, _, _ bool, arguments amqp.Table,
+	) (amqp.Queue, error) {
+		if len(arguments) != 9 || arguments["x-queue-type"] != "quorum" ||
+			arguments["x-message-ttl"] != int64(30_000) ||
+			arguments["x-expires"] != int64(600_000) ||
+			arguments["x-max-length"] != int64(10_000) ||
+			arguments["x-max-length-bytes"] != int64(64<<20) ||
+			arguments["x-overflow"] != "reject-publish" ||
+			arguments["x-dead-letter-exchange"] != "orders.dead" ||
+			arguments["x-dead-letter-routing-key"] != "orders.failed" ||
+			arguments["x-dead-letter-strategy"] != "at-least-once" {
+			t.Fatal("passive queue did not receive the complete bounded queue policy")
+		}
+		return amqp.Queue{Name: "orders"}, nil
+	}}
+	_, err := applyTopologyWith(
+		t.Context(), testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
+		Topology{Queues: []Queue{{
+			Name: "orders", Type: QueueQuorum, Durable: true,
+			MessageTTL: &messageTTL, Expires: &queueExpires,
+			MaxLength: &maxLength, MaxLengthBytes: &maxLengthBytes,
+			Overflow: QueueOverflowRejectPublish,
+			DeadLetter: &QueueDeadLetter{
+				Exchange: "orders.dead", RoutingKey: &routingKey, Strategy: DeadLetterAtLeastOnce,
+			},
+		}}},
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
+			return channel, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("applyTopologyWith() error = %v", err)
+	}
+}
+
+func TestApplyTopologyMapsLegacyClassicDeadLetterArgumentsWithoutQuorumStrategy(t *testing.T) {
+	t.Parallel()
+
+	routingKey := "jobs.failed"
+	channel := &fakeTopologyChannel{queuePassive: func(
+		_ string, _, _, _ bool, arguments amqp.Table,
+	) (amqp.Queue, error) {
+		if len(arguments) != 4 || arguments["x-queue-type"] != "classic" ||
+			arguments["x-overflow"] != "reject-publish-dlx" ||
+			arguments["x-dead-letter-exchange"] != "jobs.dead" ||
+			arguments["x-dead-letter-routing-key"] != "jobs.failed" {
+			t.Fatal("passive queue did not receive the classic dead-letter policy")
+		}
+		if _, exists := arguments["x-dead-letter-strategy"]; exists {
+			t.Fatal("classic queue received unsupported dead-letter strategy")
+		}
+		return amqp.Queue{Name: "jobs"}, nil
+	}}
+	_, err := applyTopologyWith(
+		t.Context(), testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
+		Topology{Queues: []Queue{{
+			Name: "jobs", Type: QueueClassic, Durable: true,
+			Overflow:   QueueOverflowRejectPublishDeadLetter,
+			DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead", RoutingKey: &routingKey},
+		}}},
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
+			return channel, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("applyTopologyWith() error = %v", err)
+	}
+}
+
+func TestQueueArgumentsDistinguishesOmittedAndExplicitEmptyDeadLetterRoutingKey(t *testing.T) {
+	t.Parallel()
+
+	omitted := queueArguments(Queue{
+		Name: "jobs", Type: QueueClassic, Durable: true,
+		DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead"},
+	})
+	if _, exists := omitted["x-dead-letter-routing-key"]; exists {
+		t.Fatal("omitted dead-letter routing key was declared")
+	}
+
+	empty := ""
+	explicit := queueArguments(Queue{
+		Name: "jobs", Type: QueueClassic, Durable: true,
+		DeadLetter: &QueueDeadLetter{Exchange: "jobs.dead", RoutingKey: &empty},
+	})
+	value, exists := explicit["x-dead-letter-routing-key"]
+	if !exists || value != "" {
+		t.Fatal("explicit empty dead-letter routing key was not declared")
+	}
+}
+
+func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
+	t.Parallel()
+
+	messageTTL := 30 * time.Second
+	queueExpires := 10 * time.Minute
+	maxLength := uint64(10_000)
+	maxLengthBytes := uint64(64 << 20)
+	routingKey := "orders.failed"
+	deadLetter := &QueueDeadLetter{
+		Exchange: "orders.dead", RoutingKey: &routingKey, Strategy: DeadLetterAtLeastOnce,
+	}
+	var captured amqp.Table
+	channel := &fakeTopologyChannel{queuePassive: func(
+		_ string, _, _, _ bool, arguments amqp.Table,
+	) (amqp.Queue, error) {
+		captured = arguments
+		return amqp.Queue{Name: "orders"}, nil
+	}}
+	_, err := applyTopologyWith(
+		t.Context(), testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
+		Topology{Queues: []Queue{{
+			Name: "orders", Type: QueueQuorum, Durable: true,
+			MessageTTL: &messageTTL, Expires: &queueExpires,
+			MaxLength: &maxLength, MaxLengthBytes: &maxLengthBytes,
+			Overflow: QueueOverflowRejectPublish, DeadLetter: deadLetter,
+		}}},
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
+			messageTTL = -time.Millisecond
+			queueExpires = 0
+			maxLength = uint64(math.MaxInt64) + 1
+			maxLengthBytes = uint64(math.MaxInt64) + 1
+			routingKey = "mutated\nroute"
+			deadLetter.Exchange = "mutated\nexchange"
+			deadLetter.Strategy = DeadLetterStrategy("mutated")
+			return channel, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("applyTopologyWith() error = %v", err)
+	}
+	if captured["x-message-ttl"] != int64(30_000) ||
+		captured["x-expires"] != int64(600_000) ||
+		captured["x-max-length"] != int64(10_000) ||
+		captured["x-max-length-bytes"] != int64(64<<20) ||
+		captured["x-dead-letter-exchange"] != "orders.dead" ||
+		captured["x-dead-letter-routing-key"] != "orders.failed" ||
+		captured["x-dead-letter-strategy"] != "at-least-once" {
+		t.Fatal("topology retained caller-owned optional queue policy")
 	}
 }
 

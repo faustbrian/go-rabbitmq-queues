@@ -9,6 +9,14 @@ reports routing drift as a returned publication. Development declarations are
 ordered, non-transactional AMQP operations and can leave a partial test topology
 when a later declaration fails.
 
+Queue TTL, expiry, length, overflow, and dead-letter fields describe AMQP
+declaration arguments, not mutable operator policies. RabbitMQ policies remain
+the production default. Passive verification includes an optional argument only
+when the caller supplies it, so a policy-managed queue requires separate
+operator evidence for the effective policy. Quorum at-least-once dead-lettering
+is accepted only with `reject-publish` overflow and can still duplicate at the
+target while RabbitMQ retries an unconfirmed internal transfer.
+
 - Publisher confirmation and consumer acknowledgement are separate effects.
 - Cancellation or connection loss after transmission can be ambiguous.
 - Mandatory returns must be reconciled with confirms before acceptance.

@@ -1,5 +1,10 @@
 package rabbitmqqueue
 
+import (
+	"math"
+	"time"
+)
+
 const (
 	// MaxTopologyExchanges bounds one topology operation's exchange set.
 	MaxTopologyExchanges = 128
@@ -49,8 +54,39 @@ const (
 	QueueQuorum  QueueType = "quorum"
 )
 
+// QueueOverflow selects RabbitMQ's queue-length overflow behavior.
+type QueueOverflow string
+
+const (
+	QueueOverflowDropHead                QueueOverflow = "drop-head"
+	QueueOverflowRejectPublish           QueueOverflow = "reject-publish"
+	QueueOverflowRejectPublishDeadLetter QueueOverflow = "reject-publish-dlx"
+)
+
+// DeadLetterStrategy selects quorum queue dead-letter transfer guarantees.
+// The zero value leaves the broker's at-most-once default implicit.
+type DeadLetterStrategy string
+
+const (
+	DeadLetterAtMostOnce  DeadLetterStrategy = "at-most-once"
+	DeadLetterAtLeastOnce DeadLetterStrategy = "at-least-once"
+)
+
+// QueueDeadLetter describes declaration-time dead-letter arguments. An empty
+// Exchange explicitly selects the AMQP default exchange. A nil RoutingKey
+// omits the argument and preserves original routing keys; a pointer to an empty
+// string emits an explicit empty routing key. RabbitMQ policies are preferred
+// for production configuration because they remain mutable.
+type QueueDeadLetter struct {
+	Exchange   string
+	RoutingKey *string
+	Strategy   DeadLetterStrategy
+}
+
 // Queue describes declaration-equivalent queue policy. A zero Name requests a
 // server-generated name and is valid only for an exclusive classic queue.
+// MessageTTL and the length pointers distinguish an explicit zero argument
+// from omission. Expires, when present, must be a positive millisecond value.
 type Queue struct {
 	Name                 string
 	Type                 QueueType
@@ -60,6 +96,12 @@ type Queue struct {
 	SingleActiveConsumer bool
 	DeliveryLimit        uint32
 	MaxPriority          uint8
+	MessageTTL           *time.Duration
+	Expires              *time.Duration
+	MaxLength            *uint64
+	MaxLengthBytes       *uint64
+	Overflow             QueueOverflow
+	DeadLetter           *QueueDeadLetter
 }
 
 // Validate rejects policies that RabbitMQ cannot apply to the selected queue type.
@@ -74,18 +116,61 @@ func (queue Queue) Validate() error {
 
 	switch queue.Type {
 	case QueueClassic:
-		if queue.DeliveryLimit != 0 || (queue.Exclusive && queue.Durable) {
+		if queue.DeliveryLimit != 0 || (queue.Exclusive && queue.Durable) ||
+			(!queue.Durable && !queue.Exclusive) ||
+			(queue.DeadLetter != nil && queue.DeadLetter.Strategy != "") {
 			return ErrUnsupportedQueuePolicy
 		}
 	case QueueQuorum:
-		if !queue.Durable || queue.Exclusive || queue.AutoDelete || queue.MaxPriority != 0 {
+		if !queue.Durable || queue.Exclusive || queue.AutoDelete || queue.MaxPriority != 0 ||
+			queue.Overflow == QueueOverflowRejectPublishDeadLetter {
 			return ErrUnsupportedQueuePolicy
 		}
 	default:
 		return ErrUnsupportedQueuePolicy
 	}
 
+	if !validQueueDuration(queue.MessageTTL, true) || !validQueueDuration(queue.Expires, false) ||
+		!validQueueLength(queue.MaxLength) || !validQueueLength(queue.MaxLengthBytes) {
+		return ErrUnsupportedQueuePolicy
+	}
+	switch queue.Overflow {
+	case "", QueueOverflowDropHead, QueueOverflowRejectPublish, QueueOverflowRejectPublishDeadLetter:
+	default:
+		return ErrUnsupportedQueuePolicy
+	}
+	if queue.Overflow == QueueOverflowRejectPublishDeadLetter && queue.DeadLetter == nil {
+		return ErrUnsupportedQueuePolicy
+	}
+	if queue.DeadLetter != nil {
+		if len(queue.DeadLetter.Exchange) > 255 || containsControl(queue.DeadLetter.Exchange) ||
+			(queue.DeadLetter.RoutingKey != nil &&
+				(len(*queue.DeadLetter.RoutingKey) > 255 || containsControl(*queue.DeadLetter.RoutingKey))) {
+			return ErrUnsupportedQueuePolicy
+		}
+		switch queue.DeadLetter.Strategy {
+		case "", DeadLetterAtMostOnce:
+		case DeadLetterAtLeastOnce:
+			if queue.Type != QueueQuorum || queue.Overflow != QueueOverflowRejectPublish {
+				return ErrUnsupportedQueuePolicy
+			}
+		default:
+			return ErrUnsupportedQueuePolicy
+		}
+	}
+
 	return nil
+}
+
+func validQueueDuration(value *time.Duration, allowZero bool) bool {
+	if value == nil {
+		return true
+	}
+	return (*value > 0 || (allowZero && *value == 0)) && *value%time.Millisecond == 0
+}
+
+func validQueueLength(value *uint64) bool {
+	return value == nil || *value <= math.MaxInt64
 }
 
 // TopologyMode selects passive equivalence verification or active declaration.

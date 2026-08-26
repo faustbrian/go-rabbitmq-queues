@@ -6,7 +6,7 @@ plan, not evidence that an adapter or an application cutover is complete.
 
 The comparison was refreshed on 2026-08-26 against:
 
-- `go-rabbitmq-queues` commit `c96365c`;
+- the `go-rabbitmq-queues` source at this document's revision;
 - `go-queue` commit `569b6af`;
 - `go-queue/rabbitmq` using `amqp091-go` `v1.11.0` and a RabbitMQ `3.13.7`
   integration fixture; and
@@ -23,7 +23,7 @@ filesystem `replace` or an unretrievable pseudo-version to ship an adapter.
 | One `Worker` implements `Run`, `Queue`, `Request`, and `Shutdown` | Independent `Producer` and `Consumer` resources | The adapter must own two resources without coupling their failure or shutdown state |
 | `Request` pulls one delivery and attaches acknowledgement callbacks to `job.Message` | `Consumer` pushes an owned `Delivery` into a handler and requires the handler to return `Settlement` | A bridge must preserve handler-before-ACK and classified failure settlement without holding unbounded work |
 | `Queue` starts the consumer lazily before publishing | A producer never creates a consumer | Adapter publishing must remain producer-only; it must not retain this legacy side effect |
-| Constructor and consumer startup actively declare exchanges, queues, bindings, and dead-letter topology; the main queue includes `x-dead-letter-exchange` and `x-dead-letter-routing-key` | Production topology is operator-owned; the current native queue policy cannot express those dead-letter arguments for passive equivalence | Adapter adoption is blocked until the reviewed native topology surface includes those arguments or separate operator evidence verifies the complete queue contract without claiming native passive equivalence |
+| Constructor and consumer startup actively declare exchanges, queues, bindings, and dead-letter topology; the main queue includes `x-dead-letter-exchange` and `x-dead-letter-routing-key` | `QueueDeadLetter` can represent those declaration arguments, while production policies and binding equivalence remain operator-owned | Passive verification may supply the exact legacy arguments with no explicit classic dead-letter strategy; policy-managed settings and bindings require separate operator evidence |
 | One credential-bearing AMQP URI configures one endpoint | Structured endpoints, rotating credentials, verified TLS, heartbeat, and bounded recovery | Deprecated URI input needs an explicit, sanitized conversion or a migration error; credentials must never enter diagnostics |
 | Durable classic queue assumptions are implicit | Classic and quorum queue types are explicit | Initial parity must name classic queues; quorum adoption is a separate topology and failure-semantics migration |
 | `autoAck` can disable manual settlement | Native consumers always use manual settlement | `autoAck=true` cannot be represented as equivalent reliable behavior and must be rejected or migrated explicitly |
@@ -56,7 +56,7 @@ explicit dispositions:
 | `WithLogger` | `queue.NewLogger()` | Bridge-owned compatibility input; the native package has no logger dependency, and applications consume its bounded observations externally |
 | `WithRequestTimeout` | 6 s | Bridge-owned idle pull timeout; it must not map to `ConsumerConfig.HandlerTimeout` |
 | `WithPublishTimeout` | 5 s | Direct mapping to `ProducerConfig.PublishTimeout` after validating the native bound |
-| `WithDeadLetter` | `<exchange>-dead`, `<queue>-dead`, `<routing-key>.dead`, 5 attempts | Blocking topology and retry-strategy gap: the adapter cannot claim parity until dead-letter declarations, retry publications, delivery-attempt metadata, and duplicate/loss windows have reviewed native or operator-owned equivalents |
+| `WithDeadLetter` | `<exchange>-dead`, `<queue>-dead`, `<routing-key>.dead`, 5 attempts | Exchange and routing key map to `QueueDeadLetter`, with the classic broker default left implicit; dead-letter queue/binding evidence remains operator-owned, while replacement publications, attempt metadata, and duplicate/loss windows remain a blocking adapter retry-strategy gap |
 
 `TaskMessage` does not guarantee an identifier, and `job.Metadata.OriginalID` is
 optional. Production adapter configuration must therefore provide a stable ID
@@ -83,9 +83,9 @@ The adapter may be implemented only after all of these gates are satisfied:
 4. Define production configuration that supplies structured credentials, TLS,
    endpoints, queue type, topology references, prefetch, concurrency, and
    handler bounds. Do not infer these from the legacy URI or defaults when the
-   mapping is ambiguous. Extend the reviewed topology policy to represent the
-   legacy dead-letter queue arguments, or require separate operator evidence
-   for the complete queue contract without claiming native passive equivalence.
+   mapping is ambiguous. Supply `QueueDeadLetter` only when passively verifying
+   the same declaration-time arguments; policy-managed settings and bindings
+   require separate operator evidence for the complete effective topology.
 5. Define and characterize the stable message-ID source, preservation across
    publish and recovery retries, ambiguity error, and reconciliation procedure.
    Preserve the existing job envelope bytes and stable failure metadata, or
