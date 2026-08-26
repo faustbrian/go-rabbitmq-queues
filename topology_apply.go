@@ -59,7 +59,8 @@ func (err *retryableTopologyOperationError) Unwrap() []error {
 // ApplyTopology passively verifies operator-owned exchange and queue
 // equivalence, or performs explicitly permitted development-only declarations.
 // AMQP cannot passively inspect bindings; Topology.Validate rejects passive
-// binding requests rather than mutating production topology.
+// binding requests rather than mutating production topology. Connection-scoped
+// server-named queues are declared only by a client-owned transient consumer.
 func ApplyTopology(
 	ctx context.Context,
 	connection ConnectionConfig,

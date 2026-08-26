@@ -10,7 +10,7 @@ row is implemented yet. The source snapshot and products are pinned in
 | Durable | Yes | Required | Required |
 | Non-durable | Exclusive queues; non-exclusive requires a deprecated feature disabled by default in 4.3 | No | No |
 | Replicated in RabbitMQ 4.x | No | Yes, Raft quorum | Yes |
-| Exclusive/server-named | Yes | No | No |
+| Exclusive/server-named | Yes; must share the declaring consumer connection | No | No |
 | Queue/message TTL | Yes | Yes; queue TTL has renewal caveat | Retention policy instead |
 | Length limit | Yes | Yes, with overflow restrictions | Retention policy instead |
 | Message priority | Configured with `x-max-priority`; 1-255, low single digits recommended | Always enabled in 4.3; strict levels 0-31 | No queue-priority contract |
@@ -41,6 +41,10 @@ Important RabbitMQ 4.3 distinctions:
   single-active-consumer declaration; `QueueReference.SingleActiveConsumer`
   records the expected topology semantic for local validation but is not live
   broker evidence;
+- a client-owned transient consumer passively verifies its existing exchange,
+  then declares, binds, and consumes a server-named exclusive classic queue on
+  one connection. Recovery creates a new empty queue; the deleted generation's
+  backlog is not recovered;
 - classic SAC initially selects a consumer without applying priority, while a
   higher-priority quorum SAC consumer takes over after outstanding deliveries
   from the current active consumer are acknowledged;
@@ -63,6 +67,12 @@ equivalence therefore remains an operator/infrastructure gate; the package
 rejects passive binding requests instead of calling the mutating bind method.
 Development-only declarations can create an explicitly modeled binding after
 `PermitDevelopmentTopology` is supplied.
+
+`ApplyTopology` rejects server-named exclusive queues because it closes its
+connection after verification or declaration, which would immediately delete
+such a queue. Use `QueueReference.Transient` when a consumer explicitly owns a
+connection-scoped queue. This is the bounded exception to operator-owned queue
+topology; its exchange remains pre-existing and is passively verified.
 
 ## Declaration-equivalent queue policy
 

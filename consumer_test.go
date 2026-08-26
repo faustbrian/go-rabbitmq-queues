@@ -96,6 +96,38 @@ func TestConsumerPreservesExplicitZeroPriority(t *testing.T) {
 	}
 }
 
+func TestConsumerDeclaresAndConsumesClientOwnedTransientQueueOnOwnedGeneration(t *testing.T) {
+	t.Parallel()
+
+	config := testConsumerConfig()
+	config.Queue = QueueReference{
+		Type: QueueClassic,
+		Transient: &TransientQueue{
+			Exchange: Exchange{Name: "events", Kind: ExchangeFanout, Durable: true},
+		},
+	}
+	channel := newFakeConsumerChannel()
+	channel.declaredQueueName = "generated-events"
+	resource := &concurrentCountingCloser{}
+	consumer, err := newConsumerFromChannel(
+		t.Context(), config,
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		channel, resource,
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	if channel.exchangeName != "events" || channel.exchangeKind != "fanout" || !channel.exchangeDurable ||
+		channel.exchangeAutoDelete || channel.exchangeInternal || channel.declareQueue != "" ||
+		channel.declareDurable || !channel.declareAutoDelete || !channel.declareExclusive ||
+		channel.declareArguments["x-queue-type"] != "classic" || channel.bindQueue != "generated-events" ||
+		channel.bindRoutingKey != "" || channel.bindExchange != "events" || len(channel.bindArguments) != 0 ||
+		channel.queue != "generated-events" || resource.count() != 0 {
+		t.Fatalf("transient consumer setup = channel %#v resource closes %d", channel, resource.count())
+	}
+}
+
 func TestConsumerAppliesFailurePolicyWithoutRepublishing(t *testing.T) {
 	t.Parallel()
 
@@ -445,37 +477,58 @@ type fakeConsumerSettlement struct {
 }
 
 type fakeConsumerChannel struct {
-	mu           sync.Mutex
-	prefetch     int
-	globalQOS    bool
-	queue        string
-	consumer     string
-	autoAck      bool
-	exclusive    bool
-	noLocal      bool
-	noWait       bool
-	arguments    amqp.Table
-	deliveries   chan amqp.Delivery
-	settled      chan fakeConsumerSettlement
-	onAck        func()
-	cancelCalls  int
-	cancelErr    error
-	qosErr       error
-	qosBlock     chan struct{}
-	consumeErr   error
-	consumeBlock chan struct{}
-	ackErr       error
-	ackBlock     chan struct{}
-	cancelBlock  chan struct{}
-	closeCalls   int
-	closeErr     error
-	cancelOnce   sync.Once
+	mu                 sync.Mutex
+	prefetch           int
+	globalQOS          bool
+	queue              string
+	consumer           string
+	autoAck            bool
+	exclusive          bool
+	noLocal            bool
+	noWait             bool
+	arguments          amqp.Table
+	exchangeName       string
+	exchangeKind       string
+	exchangeDurable    bool
+	exchangeAutoDelete bool
+	exchangeInternal   bool
+	exchangeErr        error
+	declareQueue       string
+	declareDurable     bool
+	declareAutoDelete  bool
+	declareExclusive   bool
+	declareArguments   amqp.Table
+	declaredQueueName  string
+	declareErr         error
+	bindQueue          string
+	bindRoutingKey     string
+	bindExchange       string
+	bindArguments      amqp.Table
+	bindErr            error
+	deliveries         chan amqp.Delivery
+	settled            chan fakeConsumerSettlement
+	onAck              func()
+	cancelCalls        int
+	cancelErr          error
+	qosErr             error
+	qosBlock           chan struct{}
+	consumeErr         error
+	consumeBlock       chan struct{}
+	consumeCalled      chan struct{}
+	consumeOnce        sync.Once
+	ackErr             error
+	ackBlock           chan struct{}
+	cancelBlock        chan struct{}
+	closeCalls         int
+	closeErr           error
+	cancelOnce         sync.Once
 }
 
 func newFakeConsumerChannel() *fakeConsumerChannel {
 	return &fakeConsumerChannel{
-		deliveries: make(chan amqp.Delivery, 16),
-		settled:    make(chan fakeConsumerSettlement, 16),
+		deliveries:    make(chan amqp.Delivery, 16),
+		settled:       make(chan fakeConsumerSettlement, 16),
+		consumeCalled: make(chan struct{}),
 	}
 }
 
@@ -486,6 +539,44 @@ func (channel *fakeConsumerChannel) Qos(prefetchCount, _ int, global bool) error
 		<-channel.qosBlock
 	}
 	return channel.qosErr
+}
+
+func (channel *fakeConsumerChannel) ExchangeDeclarePassive(
+	name, kind string,
+	durable, autoDelete, internal, _ bool,
+	_ amqp.Table,
+) error {
+	channel.exchangeName = name
+	channel.exchangeKind = kind
+	channel.exchangeDurable = durable
+	channel.exchangeAutoDelete = autoDelete
+	channel.exchangeInternal = internal
+	return channel.exchangeErr
+}
+
+func (channel *fakeConsumerChannel) QueueDeclare(
+	name string,
+	durable, autoDelete, exclusive, _ bool,
+	arguments amqp.Table,
+) (amqp.Queue, error) {
+	channel.declareQueue = name
+	channel.declareDurable = durable
+	channel.declareAutoDelete = autoDelete
+	channel.declareExclusive = exclusive
+	channel.declareArguments = arguments
+	return amqp.Queue{Name: channel.declaredQueueName}, channel.declareErr
+}
+
+func (channel *fakeConsumerChannel) QueueBind(
+	name, key, exchange string,
+	_ bool,
+	arguments amqp.Table,
+) error {
+	channel.bindQueue = name
+	channel.bindRoutingKey = key
+	channel.bindExchange = exchange
+	channel.bindArguments = arguments
+	return channel.bindErr
 }
 
 func (channel *fakeConsumerChannel) Consume(
@@ -502,6 +593,7 @@ func (channel *fakeConsumerChannel) Consume(
 	channel.noLocal = noLocal
 	channel.noWait = noWait
 	channel.arguments = arguments
+	channel.consumeOnce.Do(func() { close(channel.consumeCalled) })
 	if channel.consumeBlock != nil {
 		<-channel.consumeBlock
 	}

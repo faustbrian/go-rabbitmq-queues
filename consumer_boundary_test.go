@@ -98,6 +98,47 @@ func TestConsumerConstructorBoundsBlockedSetupAndRejectsNilDeliveryStream(t *tes
 	}
 }
 
+func TestTransientConsumerCleansEveryTopologySetupFailure(t *testing.T) {
+	t.Parallel()
+
+	config := testConsumerConfig()
+	config.Queue = QueueReference{
+		Type: QueueClassic,
+		Transient: &TransientQueue{
+			Exchange: Exchange{Name: "events", Kind: ExchangeFanout, Durable: true},
+		},
+	}
+	for name, configure := range map[string]func(*fakeConsumerChannel){
+		"exchange": func(channel *fakeConsumerChannel) { channel.exchangeErr = errors.New("exchange detail") },
+		"declaration": func(channel *fakeConsumerChannel) {
+			channel.declaredQueueName = "generated"
+			channel.declareErr = errors.New("declaration detail")
+		},
+		"invalid generated name": func(channel *fakeConsumerChannel) { channel.declaredQueueName = "bad\nname" },
+		"binding": func(channel *fakeConsumerChannel) {
+			channel.declaredQueueName = "generated"
+			channel.bindErr = errors.New("binding detail")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			channel := newFakeConsumerChannel()
+			configure(channel)
+			resource := &concurrentCountingCloser{}
+			consumer, err := newConsumerFromChannel(
+				t.Context(), config,
+				func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+				channel, resource,
+			)
+			if consumer != nil || !errors.Is(err, ErrConsumerUnavailable) ||
+				resource.count() != 1 || channel.closeCount() != 1 {
+				t.Fatalf("setup failure = (%#v, %v), cleanup resource %d channel %d",
+					consumer, err, resource.count(), channel.closeCount())
+			}
+		})
+	}
+}
+
 func TestConsumerTreatsHandlerDeadlineAndInvalidSettlementAsFailure(t *testing.T) {
 	t.Parallel()
 

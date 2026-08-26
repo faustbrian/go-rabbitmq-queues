@@ -232,14 +232,15 @@ type Topology struct {
 	Bindings  []Binding
 }
 
-// TopologyResult returns resolved queue names in Topology.Queues order. This is
-// relevant to development-only server-named queue declaration.
+// TopologyResult returns verified or declared queue names in Topology.Queues order.
 type TopologyResult struct {
 	QueueNames []string
 }
 
 // Validate checks graph bounds, identities, references, exchange-specific
-// binding rules, and the passive-binding protocol limitation.
+// binding rules, lifecycle-safe named queues, and the passive-binding protocol
+// limitation. Server-named exclusive queues belong to a consumer generation;
+// ApplyTopology cannot return one because it closes its connection on return.
 func (topology Topology) Validate(policy TopologyPolicy) error {
 	if err := policy.Validate(); err != nil {
 		return err
@@ -270,10 +271,7 @@ func (topology Topology) Validate(policy TopologyPolicy) error {
 			return err
 		}
 		if queue.Name == "" {
-			if policy.Mode != TopologyDeclare {
-				return ErrInvalidTopology
-			}
-			continue
+			return ErrInvalidTopology
 		}
 		if _, exists := queues[queue.Name]; exists {
 			return ErrInvalidTopology
@@ -284,32 +282,45 @@ func (topology Topology) Validate(policy TopologyPolicy) error {
 		kind, exchangeExists := exchanges[binding.Exchange]
 		_, queueExists := queues[binding.Queue]
 		if !exchangeExists || !queueExists || invalidIdentity(binding.Exchange, 255) ||
-			invalidIdentity(binding.Queue, 255) || len(binding.RoutingKey) > 255 ||
-			containsControl(binding.RoutingKey) || !validBindingArguments(binding.Arguments) {
+			invalidIdentity(binding.Queue, 255) ||
+			!validExchangeBinding(kind, binding.RoutingKey, binding.Arguments) {
 			return ErrInvalidTopology
-		}
-		switch kind {
-		case ExchangeDirect, ExchangeTopic:
-			if binding.RoutingKey == "" || len(binding.Arguments) != 0 {
-				return ErrInvalidTopology
-			}
-		case ExchangeFanout:
-			if binding.RoutingKey != "" || len(binding.Arguments) != 0 {
-				return ErrInvalidTopology
-			}
-		case ExchangeHeaders:
-			if binding.RoutingKey != "" || len(binding.Arguments) == 0 {
-				return ErrInvalidTopology
-			}
-		default:
-			return ErrUnsupportedExchangeKind
 		}
 	}
 	return nil
 }
 
+func validExchangeBinding(kind ExchangeKind, routingKey string, arguments []Header) bool {
+	return validExchangeBindingWithLimits(kind, routingKey, arguments, DefaultLimits())
+}
+
+func validExchangeBindingWithLimits(
+	kind ExchangeKind,
+	routingKey string,
+	arguments []Header,
+	limits Limits,
+) bool {
+	if len(routingKey) > limits.MaxRoutingKeyBytes || containsControl(routingKey) ||
+		!validBindingArgumentsWithLimits(arguments, limits) {
+		return false
+	}
+	switch kind {
+	case ExchangeDirect, ExchangeTopic:
+		return routingKey != "" && len(arguments) == 0
+	case ExchangeFanout:
+		return routingKey == "" && len(arguments) == 0
+	case ExchangeHeaders:
+		return routingKey == "" && len(arguments) > 0
+	default:
+		return false
+	}
+}
+
 func validBindingArguments(arguments []Header) bool {
-	limits := DefaultLimits()
+	return validBindingArgumentsWithLimits(arguments, DefaultLimits())
+}
+
+func validBindingArgumentsWithLimits(arguments []Header, limits Limits) bool {
 	if len(arguments) > limits.MaxHeaderEntries {
 		return false
 	}

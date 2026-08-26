@@ -36,6 +36,8 @@
   per-consumer QoS, explicit failure policy, and graceful drain/close.
 - Add signed consumer priority and classic-only exclusive-consumer policy with
   single-active-consumer conflict validation and recovery preservation.
+- Add explicit client-owned transient consumers that keep server-named classic
+  queue declaration, binding, consumption, and recovery on one connection.
 - Add bounded consumer runtime recovery with complete generation replacement,
   endpoint and credential rotation, and generation-owned settlement.
 - Add idempotent consumer pause/resume admission that preserves in-flight

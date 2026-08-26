@@ -19,10 +19,11 @@ race, leak, stress, and wrapper benchmark harnesses exercise TLS configuration,
 producer/consumer AMQP client boundaries, manual settlement policy,
 synchronous/asynchronous/batch outcome handling, bounded producer and consumer
 recovery seams, sanitized connection-blocked transitions, bounded health and
-observation seams, passive topology equivalence mapping, bounded delivery
-conversion, and lifecycle behavior without contacting a broker. No container,
-live TLS handshake, broker settlement, cluster, operator, runtime failure, or
-PHP interoperability claim is established by those tests.
+observation seams, passive topology equivalence mapping, connection-scoped
+transient-consumer setup, bounded delivery conversion, and lifecycle behavior
+without contacting a broker. No container, live TLS handshake, broker
+settlement, cluster, operator, runtime failure, or PHP interoperability claim is
+established by those tests.
 
 See [performance evidence](docs/performance.md) for workload targets, the local
 wrapper benchmark boundary, and the required live three-node profile.

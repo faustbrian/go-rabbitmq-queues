@@ -21,18 +21,41 @@ const (
 	deathHeader         = "x-death"
 )
 
-// QueueReference identifies an existing operator-owned queue and its expected
-// consumption semantics. SingleActiveConsumer records declaration intent for
-// policy validation; callers use passive topology verification when they need
-// broker evidence that the existing queue is equivalent.
+// TransientQueue describes an explicitly client-owned, connection-scoped,
+// server-named classic queue bound to an existing exchange. The consumer
+// declares and consumes it on the same connection so RabbitMQ can retain the
+// exclusive queue for exactly that generation.
+type TransientQueue struct {
+	Exchange   Exchange
+	RoutingKey string
+	Arguments  []Header
+}
+
+// QueueReference identifies either an existing operator-owned queue or an
+// explicitly client-owned transient queue. SingleActiveConsumer records
+// declaration intent for local policy validation; callers use passive topology
+// verification when they need broker evidence for a named queue.
 type QueueReference struct {
 	Name                 string
 	Type                 QueueType
 	SingleActiveConsumer bool
+	Transient            *TransientQueue
 }
 
 // Validate rejects missing queue identities and unsupported queue types.
 func (reference QueueReference) Validate() error {
+	if reference.Transient != nil {
+		if reference.Name != "" || reference.Type != QueueClassic || reference.SingleActiveConsumer ||
+			reference.Transient.Exchange.Validate() != nil ||
+			!validExchangeBinding(
+				reference.Transient.Exchange.Kind,
+				reference.Transient.RoutingKey,
+				reference.Transient.Arguments,
+			) {
+			return ErrInvalidConsumer
+		}
+		return nil
+	}
 	if invalidIdentity(reference.Name, 255) {
 		return ErrInvalidConsumer
 	}
@@ -66,6 +89,12 @@ type ConsumerConfig struct {
 // Validate rejects unbounded consumption and unsafe automatic failure outcomes.
 func (config ConsumerConfig) Validate() error {
 	if !config.Limits.valid() || config.Queue.Validate() != nil || invalidIdentity(config.Name, 255) ||
+		(config.Queue.Transient != nil && !validExchangeBindingWithLimits(
+			config.Queue.Transient.Exchange.Kind,
+			config.Queue.Transient.RoutingKey,
+			config.Queue.Transient.Arguments,
+			config.Limits,
+		)) ||
 		(config.Exclusive && (config.Queue.Type != QueueClassic || config.Queue.SingleActiveConsumer)) ||
 		config.Prefetch < 1 || config.Prefetch > MaxConsumerPrefetch ||
 		config.Concurrency < 1 || config.Concurrency > MaxConsumerConcurrency ||
@@ -82,6 +111,14 @@ func ownConsumerConfig(config ConsumerConfig) ConsumerConfig {
 	if config.Priority != nil {
 		priority := *config.Priority
 		config.Priority = &priority
+	}
+	if config.Queue.Transient != nil {
+		transient := *config.Queue.Transient
+		transient.Arguments = append([]Header(nil), transient.Arguments...)
+		for index := range transient.Arguments {
+			transient.Arguments[index].Bytes = append([]byte(nil), transient.Arguments[index].Bytes...)
+		}
+		config.Queue.Transient = &transient
 	}
 	return config
 }

@@ -49,6 +49,12 @@ target while RabbitMQ retries an unconfirmed internal transfer.
   explicit-zero intent. Exclusive consumption is rejected for quorum queues and
   for queue references marked single-active-consumer. The reference records
   expected topology; use passive topology verification for broker equivalence.
+- A consumer with `QueueReference.Transient` passively verifies the referenced
+  exchange and declares, binds, and consumes one non-durable, auto-delete,
+  exclusive, server-named classic queue on its owned connection. Recovery
+  creates a new queue and cannot recover messages deleted with the failed
+  connection. `ApplyTopology` rejects this lifecycle because it closes its
+  connection before returning.
 - `Pause` temporarily stops new handler admission without cancelling the broker
   consumer. Already admitted work settles normally, up to the configured
   prefetch may remain unsettled, runtime recovery continues, and `Resume`

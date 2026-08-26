@@ -12,6 +12,9 @@ import (
 )
 
 type consumerChannel interface {
+	ExchangeDeclarePassive(string, string, bool, bool, bool, bool, amqp.Table) error
+	QueueDeclare(string, bool, bool, bool, bool, amqp.Table) (amqp.Queue, error)
+	QueueBind(string, string, string, bool, amqp.Table) error
 	Qos(int, int, bool) error
 	Consume(string, string, bool, bool, bool, bool, amqp.Table) (<-chan amqp.Delivery, error)
 	Cancel(string, bool) error
@@ -129,6 +132,16 @@ func setupConsumerGeneration(
 ) (*consumerGeneration, error) {
 	setupContext, cancelSetup := context.WithTimeout(ctx, config.HandlerTimeout)
 	defer cancelSetup()
+	queueName := config.Queue.Name
+	if config.Queue.Transient != nil {
+		var err error
+		queueName, err = setupTransientQueue(
+			setupContext, config.HandlerTimeout, config.Queue.Transient, channel, resource,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := boundedConsumerSetup(setupContext, config.HandlerTimeout, resource, channel, func() error {
 		return channel.Qos(config.Prefetch, 0, false)
 	}); err != nil {
@@ -141,7 +154,7 @@ func setupConsumerGeneration(
 	consumed := make(chan consumeResult, 1)
 	go func() {
 		deliveries, err := channel.Consume(
-			config.Queue.Name,
+			queueName,
 			config.Name,
 			false,
 			config.Exclusive,
@@ -165,6 +178,57 @@ func setupConsumerGeneration(
 		_ = boundedCloseConsumerResources(resource, channel, consumerCleanupDeadline(setupContext, config.HandlerTimeout))
 		return nil, ErrConsumerUnavailable
 	}
+}
+
+func setupTransientQueue(
+	ctx context.Context,
+	fallback time.Duration,
+	transient *TransientQueue,
+	channel consumerChannel,
+	resource io.Closer,
+) (string, error) {
+	if err := boundedConsumerSetup(ctx, fallback, resource, channel, func() error {
+		return channel.ExchangeDeclarePassive(
+			transient.Exchange.Name,
+			string(transient.Exchange.Kind),
+			transient.Exchange.Durable,
+			transient.Exchange.AutoDelete,
+			transient.Exchange.Internal,
+			false,
+			nil,
+		)
+	}); err != nil {
+		return "", err
+	}
+	var declared amqp.Queue
+	if err := boundedConsumerSetup(ctx, fallback, resource, channel, func() error {
+		var err error
+		declared, err = channel.QueueDeclare(
+			"", false, true, true, false,
+			amqp.Table{"x-queue-type": string(QueueClassic)},
+		)
+		return err
+	}); err != nil {
+		return "", err
+	}
+	if invalidIdentity(declared.Name, 255) {
+		_ = boundedCloseConsumerResources(
+			resource, channel, consumerCleanupDeadline(ctx, fallback),
+		)
+		return "", ErrConsumerUnavailable
+	}
+	if err := boundedConsumerSetup(ctx, fallback, resource, channel, func() error {
+		return channel.QueueBind(
+			declared.Name,
+			transient.RoutingKey,
+			transient.Exchange.Name,
+			false,
+			bindingArguments(transient.Arguments),
+		)
+	}); err != nil {
+		return "", err
+	}
+	return declared.Name, nil
 }
 
 func consumerArguments(config ConsumerConfig) amqp.Table {

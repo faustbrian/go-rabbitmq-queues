@@ -285,27 +285,21 @@ func TestApplyTopologyDeclaresDevelopmentTopologyWithExplicitArgumentsAndBinding
 	}
 }
 
-func TestApplyTopologyReturnsDevelopmentServerNamedQueue(t *testing.T) {
+func TestApplyTopologyRejectsServerNamedQueueItCannotKeepAlive(t *testing.T) {
 	t.Parallel()
 
-	channel := &fakeTopologyChannel{queueDeclare: func(
-		name string, durable, autoDelete, exclusive bool, arguments amqp.Table,
-	) (amqp.Queue, error) {
-		if name != "" || durable || !autoDelete || !exclusive || arguments["x-queue-type"] != "classic" {
-			t.Fatalf("server-named declaration = %q %t %t %t %#v", name, durable, autoDelete, exclusive, arguments)
-		}
-		return amqp.Queue{Name: "generated-reply-queue"}, nil
-	}}
+	dialed := false
 	result, err := applyTopologyWith(
 		t.Context(), testConnectionConfig(),
 		TopologyPolicy{Mode: TopologyDeclare, Development: PermitDevelopmentTopology()},
 		Topology{Queues: []Queue{{Type: QueueClassic, Exclusive: true, AutoDelete: true}}},
 		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
-			return channel, &concurrentCountingCloser{}, nil
+			dialed = true
+			return &fakeTopologyChannel{}, &concurrentCountingCloser{}, nil
 		},
 	)
-	if err != nil || len(result.QueueNames) != 1 || result.QueueNames[0] != "generated-reply-queue" {
-		t.Fatalf("applyTopologyWith() = (%#v, %v)", result, err)
+	if !errors.Is(err, ErrInvalidTopology) || len(result.QueueNames) != 0 || dialed {
+		t.Fatalf("applyTopologyWith() = (%#v, %v), dialed %t", result, err, dialed)
 	}
 }
 

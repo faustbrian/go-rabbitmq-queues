@@ -119,6 +119,54 @@ func TestConsumerConfigModelsQueueSpecificPriorityAndExclusivity(t *testing.T) {
 	}
 }
 
+func TestConsumerConfigModelsClientOwnedTransientQueue(t *testing.T) {
+	t.Parallel()
+
+	valid := testConsumerConfig()
+	valid.Queue = QueueReference{
+		Type: QueueClassic,
+		Transient: &TransientQueue{
+			Exchange: Exchange{Name: "events", Kind: ExchangeFanout, Durable: true},
+		},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid transient consumer: %v", err)
+	}
+
+	tests := map[string]func(*ConsumerConfig){
+		"named transient queue":  func(config *ConsumerConfig) { config.Queue.Name = "orders" },
+		"quorum transient queue": func(config *ConsumerConfig) { config.Queue.Type = QueueQuorum },
+		"single active transient queue": func(config *ConsumerConfig) {
+			config.Queue.SingleActiveConsumer = true
+		},
+		"invalid exchange":   func(config *ConsumerConfig) { config.Queue.Transient.Exchange.Name = "" },
+		"fanout routing key": func(config *ConsumerConfig) { config.Queue.Transient.RoutingKey = "events.created" },
+		"headers without arguments": func(config *ConsumerConfig) {
+			config.Queue.Transient.Exchange.Kind = ExchangeHeaders
+		},
+		"direct without routing key": func(config *ConsumerConfig) {
+			config.Queue.Transient.Exchange.Kind = ExchangeDirect
+		},
+		"arguments exceed consumer limit": func(config *ConsumerConfig) {
+			config.Queue.Transient.Exchange.Kind = ExchangeHeaders
+			config.Queue.Transient.Arguments = []Header{StringHeader("format", "json")}
+			config.Limits.MaxHeaderBytes = 1
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := valid
+			transient := *valid.Queue.Transient
+			transient.Arguments = append([]Header(nil), transient.Arguments...)
+			config.Queue.Transient = &transient
+			mutate(&config)
+			if err := config.Validate(); !errors.Is(err, ErrInvalidConsumer) {
+				t.Fatalf("Validate() error = %v, want invalid consumer", err)
+			}
+		})
+	}
+}
+
 func TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory(t *testing.T) {
 	t.Parallel()
 

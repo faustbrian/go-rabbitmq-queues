@@ -92,6 +92,55 @@ func TestOpenConsumerRecoversRuntimeLossWithoutDuplicatingConsumer(t *testing.T)
 	}
 }
 
+func TestTransientConsumerRecoveryRecreatesOwnedQueueAndBinding(t *testing.T) {
+	t.Parallel()
+
+	connection := testConnectionConfig()
+	connection.Recovery = RecoveryPolicy{MaxAttempts: 1, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
+	arguments := []Header{BytesHeader("tenant", []byte("north"))}
+	config := testConsumerConfig()
+	config.Queue = QueueReference{
+		Type: QueueClassic,
+		Transient: &TransientQueue{
+			Exchange:  Exchange{Name: "events", Kind: ExchangeHeaders, Durable: true},
+			Arguments: arguments,
+		},
+	}
+	first := newFakeConsumerChannel()
+	first.declaredQueueName = "generated-first"
+	second := newFakeConsumerChannel()
+	second.declaredQueueName = "generated-second"
+	var calls atomic.Int32
+	consumer, err := openConsumerWith(
+		t.Context(), connection, config,
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (consumerChannel, io.Closer, error) {
+			if calls.Add(1) == 1 {
+				return first, &concurrentCountingCloser{}, nil
+			}
+			return second, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("openConsumerWith(): %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	config.Queue.Transient.Exchange.Name = "mutated"
+	arguments[0].Bytes[0] = 'X'
+	first.cancelOnce.Do(func() { close(first.deliveries) })
+	select {
+	case <-second.consumeCalled:
+	case <-time.After(time.Second):
+		t.Fatal("transient recovery did not consume from the replacement queue")
+	}
+	boundTenant, ok := second.bindArguments["tenant"].([]byte)
+	if second.exchangeName != "events" || second.bindExchange != "events" ||
+		second.bindQueue != "generated-second" || second.queue != "generated-second" ||
+		!ok || string(boundTenant) != "north" {
+		t.Fatalf("recovered transient policy = %#v", second)
+	}
+}
+
 func TestPausedConsumerRecoversClosedDeliveryStreamBeforeResume(t *testing.T) {
 	t.Parallel()
 
