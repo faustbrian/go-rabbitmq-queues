@@ -12,11 +12,11 @@ The repository contains connection, topology, message, publisher-outcome,
 delivery, and settlement policy foundations plus independent synchronous
 producer and consumer resources. The producer uses mandatory routing, exact
 confirm/return correlation, bounded startup retry, credential refresh, and
-verified TLS. The consumer uses manual settlement, bounded QoS and concurrency,
-bounded delivery snapshots, explicit failure policy, and graceful drain/close.
-Bounded asynchronous publishing, runtime recovery, health, observability,
-broker and failover evidence, PHP interoperability, and optional OpenTelemetry
-remain in progress.
+verified TLS, bounded asynchronous admission, and ordered non-atomic batches.
+The consumer uses manual settlement, bounded QoS and concurrency, bounded
+delivery snapshots, explicit failure policy, and graceful drain/close. Runtime
+recovery, health, observability, broker and failover evidence, PHP
+interoperability, and optional OpenTelemetry remain in progress.
 
 ## Policy example
 
@@ -84,6 +84,11 @@ topology-management mechanism.
 - Publisher confirmation and consumer acknowledgement are separate effects.
 - Cancellation or connection loss after transmission can be ambiguous.
 - Mandatory returns must be reconciled with confirms before acceptance.
+- Asynchronous publishing owns the admitted publication and emits exactly one
+  terminal outcome; a full admission window rejects new work without spawning
+  another worker.
+- Batches validate every item before publishing, preserve input order, and
+  report independent per-item outcomes; they are not atomic broker operations.
 - The current producer retries bounded startup attempts but reaches a terminal
   unavailable state after runtime channel or connection loss.
 - The current consumer retries bounded startup attempts but reaches a terminal

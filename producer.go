@@ -11,7 +11,10 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const MaxOutstandingConfirms = 4096
+const (
+	MaxOutstandingConfirms = 4096
+	MaxPublishBatchSize    = 1024
+)
 
 // ProducerConfig bounds synchronous producer work and confirmation state.
 type ProducerConfig struct {
@@ -147,7 +150,78 @@ func (producer *Producer) Publish(ctx context.Context, publication Publication) 
 		return PublishResult{State: PublishNotSent}, err
 	}
 	defer producer.release()
+	return producer.publishAdmitted(ctx, publication)
+}
 
+// PublishAsync admits one bounded publication and returns a channel that emits
+// exactly one terminal outcome. Admission failures do not create goroutines.
+func (producer *Producer) PublishAsync(ctx context.Context, publication Publication) (<-chan PublishOutcome, error) {
+	if ctx == nil {
+		return nil, ErrContextRequired
+	}
+	if err := publication.Validate(producer.config.Limits); err != nil {
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	if err := producer.admit(); err != nil {
+		return nil, err
+	}
+	publication = ownPublication(publication)
+	future := make(chan PublishOutcome, 1)
+	go func() {
+		defer producer.release()
+		result, err := producer.publishAdmitted(ctx, publication)
+		future <- PublishOutcome{Result: result, Err: err}
+		close(future)
+	}()
+	return future, nil
+}
+
+func ownPublication(publication Publication) Publication {
+	publication.Message.Body = append([]byte(nil), publication.Message.Body...)
+	publication.Message.Headers = append([]Header(nil), publication.Message.Headers...)
+	for index := range publication.Message.Headers {
+		publication.Message.Headers[index].Bytes = append([]byte(nil), publication.Message.Headers[index].Bytes...)
+	}
+	if publication.Message.Priority != nil {
+		priority := *publication.Message.Priority
+		publication.Message.Priority = &priority
+	}
+	return publication
+}
+
+// PublishBatch validates the complete bounded batch before publishing each
+// item. Outcomes preserve input order; the batch is not an atomic broker unit.
+func (producer *Producer) PublishBatch(ctx context.Context, publications []Publication) ([]PublishOutcome, error) {
+	if ctx == nil {
+		return nil, ErrContextRequired
+	}
+	if len(publications) == 0 || len(publications) > MaxPublishBatchSize {
+		return nil, ErrInvalidBatch
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	for _, publication := range publications {
+		if err := publication.Validate(producer.config.Limits); err != nil {
+			return nil, errors.Join(ErrInvalidBatch, err)
+		}
+	}
+	outcomes := make([]PublishOutcome, len(publications))
+	for index, publication := range publications {
+		result, err := producer.Publish(ctx, publication)
+		outcomes[index] = PublishOutcome{Result: result, Err: err}
+	}
+	return outcomes, nil
+}
+
+func (producer *Producer) publishAdmitted(ctx context.Context, publication Publication) (PublishResult, error) {
 	publishContext, cancel := context.WithTimeout(ctx, producer.config.PublishTimeout)
 	defer cancel()
 	select {
@@ -243,6 +317,9 @@ func (producer *Producer) admit() error {
 	}
 	if producer.unavailable {
 		return ErrProducerUnavailable
+	}
+	if producer.active >= producer.config.MaxOutstanding {
+		return ErrOutstandingConfirmLimit
 	}
 	producer.active++
 	return nil

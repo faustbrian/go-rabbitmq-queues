@@ -36,6 +36,13 @@ type PublishResult struct {
 	Return *Return
 }
 
+// PublishOutcome pairs one terminal result with its sanitized operation error.
+// Batch outcomes preserve input order; asynchronous outcomes are delivered once.
+type PublishOutcome struct {
+	Result PublishResult
+	Err    error
+}
+
 // Valid reports whether the state and mandatory-return detail form a canonical outcome.
 func (result PublishResult) Valid() bool {
 	if !result.State.Valid() {

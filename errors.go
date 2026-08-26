@@ -39,6 +39,8 @@ var (
 	ErrInvalidPublication = errors.New("rabbitmqqueue: invalid publication")
 	// ErrOutstandingConfirmLimit means the bounded in-flight publish window is full.
 	ErrOutstandingConfirmLimit = errors.New("rabbitmqqueue: outstanding confirm limit reached")
+	// ErrInvalidBatch means a publish batch is empty, oversized, or contains invalid work.
+	ErrInvalidBatch = errors.New("rabbitmqqueue: invalid publish batch")
 	// ErrInvalidPublishCorrelation means a publish sequence or internal token is invalid or reused.
 	ErrInvalidPublishCorrelation = errors.New("rabbitmqqueue: invalid publish correlation")
 	// ErrContextRequired means an operation received a nil context.
