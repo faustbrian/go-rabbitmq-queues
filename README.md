@@ -123,5 +123,6 @@ topology-management mechanism.
 - The package does not implement RabbitMQ Streams, application schemas,
   exactly-once processing, an outbox, or a generic messaging interface.
 
-See [the capability matrix](docs/capability-matrix.md) and
+See [the capability matrix](docs/capability-matrix.md),
+[performance evidence](docs/performance.md), and
 [pinned compatibility evidence](COMPATIBILITY.md).

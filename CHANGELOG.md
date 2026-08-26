@@ -25,4 +25,6 @@
   contracts that distinguish temporary recovery from terminal failure.
 - Add bounded low-cardinality producer and consumer observation streams with
   explicit loss reporting and no message, route, credential, or broker text.
+- Add leak, fuzz, deterministic concurrency stress, clean-consumer, and local
+  wrapper benchmark harnesses with explicit live-broker evidence boundaries.
 - Pin RabbitMQ 4.3 compatibility research and queue capability distinctions.
