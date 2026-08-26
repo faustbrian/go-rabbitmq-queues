@@ -128,6 +128,7 @@ func TestQueuePolicyModelsTTLLengthOverflowAndDeadLetterCapabilities(t *testing.
 func TestQueuePolicyModelsQueueTypeCapabilities(t *testing.T) {
 	t.Parallel()
 
+	deliveryLimit := QueueDeliveryLimit(20)
 	tests := map[string]struct {
 		queue Queue
 		want  error
@@ -143,7 +144,10 @@ func TestQueuePolicyModelsQueueTypeCapabilities(t *testing.T) {
 			want:  ErrUnsupportedQueuePolicy,
 		},
 		"durable quorum with delivery limit": {
-			queue: Queue{Name: "orders", Type: QueueQuorum, Durable: true, DeliveryLimit: 20},
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DeliveryLimit: &deliveryLimit,
+			},
 		},
 		"quorum must be durable": {
 			queue: Queue{Name: "orders", Type: QueueQuorum},
@@ -154,8 +158,11 @@ func TestQueuePolicyModelsQueueTypeCapabilities(t *testing.T) {
 			want:  ErrUnsupportedQueuePolicy,
 		},
 		"classic has no broker delivery limit": {
-			queue: Queue{Name: "orders", Type: QueueClassic, Durable: true, DeliveryLimit: 20},
-			want:  ErrUnsupportedQueuePolicy,
+			queue: Queue{
+				Name: "orders", Type: QueueClassic, Durable: true,
+				DeliveryLimit: &deliveryLimit,
+			},
+			want: ErrUnsupportedQueuePolicy,
 		},
 		"classic priority is explicitly bounded": {
 			queue: Queue{Name: "orders", Type: QueueClassic, Durable: true, MaxPriority: 5},
@@ -173,6 +180,33 @@ func TestQueuePolicyModelsQueueTypeCapabilities(t *testing.T) {
 			err := test.queue.Validate()
 			if !errors.Is(err, test.want) {
 				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
+func TestQueuePolicyDistinguishesOmittedAndExplicitQuorumDeliveryLimit(t *testing.T) {
+	t.Parallel()
+
+	zero := QueueDeliveryLimit(0)
+	configured := QueueDeliveryLimit(50)
+
+	for name, queue := range map[string]Queue{
+		"broker default": {
+			Name: "orders", Type: QueueQuorum, Durable: true,
+		},
+		"first failed redelivery exceeds zero": {
+			Name: "orders", Type: QueueQuorum, Durable: true, DeliveryLimit: &zero,
+		},
+		"configured bounded redeliveries": {
+			Name: "orders", Type: QueueQuorum, Durable: true, DeliveryLimit: &configured,
+		},
+	} {
+		queue := queue
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := queue.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
 			}
 		})
 	}

@@ -17,6 +17,7 @@ import (
 func TestApplyTopologyPassivelyVerifiesExchangeAndQueueWithoutMutation(t *testing.T) {
 	t.Parallel()
 
+	deliveryLimit := QueueDeliveryLimit(20)
 	channel := &fakeTopologyChannel{}
 	channel.exchangePassive = func(name, kind string, durable, autoDelete, internal bool) error {
 		if name != "events" || kind != "topic" || !durable || autoDelete || internal {
@@ -36,7 +37,7 @@ func TestApplyTopologyPassivelyVerifiesExchangeAndQueueWithoutMutation(t *testin
 		Exchanges: []Exchange{{Name: "events", Kind: ExchangeTopic, Durable: true}},
 		Queues: []Queue{{
 			Name: "orders", Type: QueueQuorum, Durable: true,
-			SingleActiveConsumer: true, DeliveryLimit: 20,
+			SingleActiveConsumer: true, DeliveryLimit: &deliveryLimit,
 		}},
 	}
 	result, err := applyTopologyWith(
@@ -56,6 +57,24 @@ func TestApplyTopologyPassivelyVerifiesExchangeAndQueueWithoutMutation(t *testin
 	}
 	if channel.closeCount() != 1 || resource.count() != 1 {
 		t.Fatalf("close calls = channel %d resource %d", channel.closeCount(), resource.count())
+	}
+}
+
+func TestQueueArgumentsDistinguishesOmittedAndExplicitZeroDeliveryLimit(t *testing.T) {
+	t.Parallel()
+
+	omitted := queueArguments(Queue{Name: "orders", Type: QueueQuorum, Durable: true})
+	if _, exists := omitted["x-delivery-limit"]; exists {
+		t.Fatal("omitted delivery limit was declared")
+	}
+
+	zero := QueueDeliveryLimit(0)
+	explicit := queueArguments(Queue{
+		Name: "orders", Type: QueueQuorum, Durable: true, DeliveryLimit: &zero,
+	})
+	value, exists := explicit["x-delivery-limit"]
+	if !exists || value != int64(0) {
+		t.Fatalf("explicit zero delivery limit = %#v", explicit)
 	}
 }
 
@@ -269,6 +288,7 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 	queueExpires := 10 * time.Minute
 	consumerTimeout := 5 * time.Minute
 	disconnectedConsumerTimeout := time.Minute
+	deliveryLimit := QueueDeliveryLimit(20)
 	delayedRetryMaximum := 30 * time.Second
 	delayedRetry := &QueueDelayedRetry{
 		Type: DelayedRetryAll, Minimum: time.Second, Maximum: &delayedRetryMaximum,
@@ -290,7 +310,8 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 		t.Context(), testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
 		Topology{Queues: []Queue{{
 			Name: "orders", Type: QueueQuorum, Durable: true,
-			MessageTTL: &messageTTL, Expires: &queueExpires, ConsumerTimeout: &consumerTimeout,
+			DeliveryLimit: &deliveryLimit,
+			MessageTTL:    &messageTTL, Expires: &queueExpires, ConsumerTimeout: &consumerTimeout,
 			DisconnectedConsumerTimeout: &disconnectedConsumerTimeout,
 			DelayedRetry:                delayedRetry,
 			MaxLength:                   &maxLength, MaxLengthBytes: &maxLengthBytes,
@@ -301,6 +322,7 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 			queueExpires = 0
 			consumerTimeout = time.Minute - time.Millisecond
 			disconnectedConsumerTimeout = -time.Millisecond
+			deliveryLimit = 0
 			delayedRetryMaximum = time.Millisecond
 			delayedRetry.Type = DelayedRetryType("mutated")
 			delayedRetry.Minimum = time.Microsecond
@@ -316,6 +338,7 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 		t.Fatalf("applyTopologyWith() error = %v", err)
 	}
 	if captured["x-message-ttl"] != int64(30_000) ||
+		captured["x-delivery-limit"] != int64(20) ||
 		captured["x-expires"] != int64(600_000) ||
 		captured["x-consumer-timeout"] != int64(300_000) ||
 		captured["x-consumer-disconnected-timeout"] != int64(60_000) ||

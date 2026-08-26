@@ -75,6 +75,12 @@ internal transfer.
   reply queues or provide an RPC lifecycle abstraction.
 - Handler, settlement, and shutdown work is bounded by the configured handler
   timeout; handlers must observe cancellation for graceful draining.
+- `Queue.DeliveryLimit` models RabbitMQ 4.3's quorum-only failed-redelivery
+  bound. Omission leaves the broker policy or default of 20 effective, while an
+  explicit zero makes the first failed redelivery exceed the limit. The package
+  does not expose RabbitMQ's `-1` unlimited compatibility mode. RabbitMQ 4.3
+  `basic.nack` returns do not increment `x-delivery-count`, so applications
+  still need the package's bounded requeue policy.
 - `Queue.ConsumerTimeout` models RabbitMQ 4.3's quorum-only broker deadline for
   delivery acknowledgement. It is omitted by default, must be at least one
   minute, and is independent of `ConsumerConfig.HandlerTimeout`. When the

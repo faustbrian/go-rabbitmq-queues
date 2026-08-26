@@ -17,7 +17,7 @@ row is implemented yet. The source snapshot and products are pinned in
 | Consumer priority | Signed `x-priority`; higher active consumers receive first | Signed `x-priority`; also affects SAC promotion | Consumer groups differ |
 | Exclusive consumer | Yes; application must replace a failed consumer | No; broker ignores the flag, so client policy rejects it | No |
 | Single active consumer | Yes | Yes | Single active consumer per partition differs |
-| Broker delivery limit | No poison-message counter | Default 20; `x-delivery-count` semantics changed in 4.3 | No queue delivery limit |
+| Broker delivery limit | No poison-message counter | Default 20; explicit bounded values include zero; `x-delivery-count` semantics changed in 4.3 | No queue delivery limit |
 | Dead lettering | Yes; no at-least-once dead-lettering | Yes; at-least-once mode when configured | Not a queue/DLX model |
 | Consumer timeout in 4.3 | No queue-specific support | Yes | Different protocol lifecycle |
 | Disconnected-consumer timeout in 4.3 | No | Yes; broker default is 60 seconds | Different protocol lifecycle |
@@ -36,6 +36,11 @@ Important RabbitMQ 4.3 distinctions:
   overshoot a length limit by in-flight messages;
 - requeue loops remain an application/client-policy risk even where a quorum
   delivery limit exists;
+- `Queue.DeliveryLimit` distinguishes omission from an explicit zero. Omission
+  leaves the RabbitMQ policy or 4.3 default of 20 effective; zero makes the
+  first failed redelivery exceed the limit. The package intentionally cannot
+  declare RabbitMQ's `-1` unlimited compatibility mode because unbounded
+  failure redelivery conflicts with its retry-loop safety policy;
 - an omitted consumer priority uses RabbitMQ's default zero, while an explicit
   zero is emitted as a signed `x-priority` argument; positive and negative
   priorities are supported on classic and quorum queues;
@@ -93,15 +98,15 @@ topology; its exchange remains pre-existing and is passively verified.
 
 ## Declaration-equivalent queue policy
 
-`Queue` can represent RabbitMQ declaration arguments for per-queue message TTL,
-unused-queue expiry, quorum delivery-acknowledgement and disconnected-consumer
-timeouts, quorum delayed retry, maximum ready-message count, maximum
-ready-message bytes, overflow behavior, dead-letter exchange and routing key,
-and quorum dead-letter strategy. Optional numeric fields distinguish an
-explicit zero from an omitted argument and are bounded to millisecond or signed
-AMQP integer values. A nil dead-letter routing key preserves the broker's
-original-routing-key behavior, while a pointer to an empty string represents an
-explicit empty argument.
+`Queue` can represent RabbitMQ declaration arguments for quorum delivery limit,
+per-queue message TTL, unused-queue expiry, quorum delivery-acknowledgement and
+disconnected-consumer timeouts, quorum delayed retry, maximum ready-message
+count, maximum ready-message bytes, overflow behavior, dead-letter exchange and
+routing key, and quorum dead-letter strategy. Optional numeric fields
+distinguish an explicit zero from an omitted argument and are bounded to
+millisecond or signed AMQP integer values. A nil dead-letter routing key
+preserves the broker's original-routing-key behavior, while a pointer to an
+empty string represents an explicit empty argument.
 
 Queue-type validation preserves the RabbitMQ 4.3 distinctions:
 
@@ -110,6 +115,8 @@ Queue-type validation preserves the RabbitMQ 4.3 distinctions:
   `reject-publish-dlx`, but not an explicit dead-letter strategy;
 - quorum queues support `drop-head` and `reject-publish`, but not
   `reject-publish-dlx`;
+- quorum delivery limit is optional, accepts bounded unsigned values including
+  zero, and is rejected for classic queues;
 - quorum consumer timeout is optional, must be at least one minute, and is
   rejected for classic queues;
 - quorum disconnected-consumer timeout is optional, accepts non-negative

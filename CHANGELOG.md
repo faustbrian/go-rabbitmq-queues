@@ -17,6 +17,8 @@
 - Add explicit classic/quorum queue and passive/development topology policy.
 - Add bounded declaration-equivalent queue TTL, expiry, length, overflow, and
   dead-letter policy with explicit RabbitMQ 4.3 queue-type restrictions.
+- Distinguish an omitted quorum delivery limit from explicit bounded values,
+  including zero, without exposing RabbitMQ's unlimited compatibility mode.
 - Add quorum-only delivery-acknowledgement timeout policy with RabbitMQ 4.3
   minimum and declaration-equivalence validation.
 - Add quorum-only disconnected-consumer timeout policy with explicit RabbitMQ

@@ -83,6 +83,10 @@ type QueueDeadLetter struct {
 	Strategy   DeadLetterStrategy
 }
 
+// QueueDeliveryLimit bounds RabbitMQ quorum failed redeliveries. The unsigned
+// policy intentionally cannot represent RabbitMQ's unsafe unlimited value -1.
+type QueueDeliveryLimit uint32
+
 // DelayedRetryType selects which RabbitMQ 4.3 quorum redeliveries receive
 // broker-managed linear backoff.
 type DelayedRetryType string
@@ -107,6 +111,8 @@ type QueueDelayedRetry struct {
 // server-generated name and is valid only for an exclusive classic queue.
 // MessageTTL and the length pointers distinguish an explicit zero argument
 // from omission. Expires, when present, must be a positive millisecond value.
+// A nil DeliveryLimit preserves the broker policy or default; a pointer emits
+// an explicit bounded value, including zero.
 // ConsumerTimeout is RabbitMQ 4.3's quorum-only delivery-acknowledgement
 // timeout and must be at least one minute with millisecond precision.
 // DisconnectedConsumerTimeout is RabbitMQ 4.3's quorum-only wait before held
@@ -119,7 +125,7 @@ type Queue struct {
 	AutoDelete                  bool
 	Exclusive                   bool
 	SingleActiveConsumer        bool
-	DeliveryLimit               uint32
+	DeliveryLimit               *QueueDeliveryLimit
 	MaxPriority                 uint8
 	MessageTTL                  *time.Duration
 	Expires                     *time.Duration
@@ -144,7 +150,7 @@ func (queue Queue) Validate() error {
 
 	switch queue.Type {
 	case QueueClassic:
-		if queue.DeliveryLimit != 0 || (queue.Exclusive && queue.Durable) ||
+		if queue.DeliveryLimit != nil || (queue.Exclusive && queue.Durable) ||
 			(!queue.Durable && !queue.Exclusive) ||
 			queue.ConsumerTimeout != nil ||
 			queue.DisconnectedConsumerTimeout != nil ||

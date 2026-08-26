@@ -311,8 +311,8 @@ func queueArguments(queue Queue) amqp.Table {
 	if queue.SingleActiveConsumer {
 		arguments["x-single-active-consumer"] = true
 	}
-	if queue.DeliveryLimit > 0 {
-		arguments["x-delivery-limit"] = int64(queue.DeliveryLimit)
+	if queue.DeliveryLimit != nil {
+		arguments["x-delivery-limit"] = int64(*queue.DeliveryLimit)
 	}
 	if queue.MaxPriority > 0 {
 		arguments["x-max-priority"] = int32(queue.MaxPriority)
@@ -381,6 +381,10 @@ func ownTopology(topology Topology) Topology {
 	topology.Queues = append([]Queue(nil), topology.Queues...)
 	for index := range topology.Queues {
 		queue := &topology.Queues[index]
+		if queue.DeliveryLimit != nil {
+			value := *queue.DeliveryLimit
+			queue.DeliveryLimit = &value
+		}
 		if queue.MessageTTL != nil {
 			value := *queue.MessageTTL
 			queue.MessageTTL = &value
