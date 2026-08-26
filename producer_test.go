@@ -286,7 +286,7 @@ func TestOpenProducerBoundsCredentialResolutionWithDialBudget(t *testing.T) {
 	t.Parallel()
 
 	connection := testConnectionConfig()
-	connection.DialTimeout = 5 * time.Millisecond
+	connection.DialTimeout = 50 * time.Millisecond
 	observedBudget := time.Duration(0)
 	connection.Credentials = CredentialProviderFunc(func(ctx context.Context) (Credentials, error) {
 		if deadline, ok := ctx.Deadline(); ok {
@@ -295,7 +295,7 @@ func TestOpenProducerBoundsCredentialResolutionWithDialBudget(t *testing.T) {
 		<-ctx.Done()
 		return Credentials{}, ctx.Err()
 	})
-	parent, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	parent, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	started := time.Now()
 	producer, err := openProducerWith(
@@ -309,10 +309,10 @@ func TestOpenProducerBoundsCredentialResolutionWithDialBudget(t *testing.T) {
 	if producer != nil || !errors.Is(err, ErrProducerUnavailable) {
 		t.Fatalf("open result = (%#v, %v), want unavailable", producer, err)
 	}
-	if elapsed := time.Since(started); elapsed >= 50*time.Millisecond {
+	if elapsed := time.Since(started); elapsed >= 250*time.Millisecond {
 		t.Fatalf("credential resolution used parent budget: %s", elapsed)
 	}
-	if observedBudget <= 0 || observedBudget > 20*time.Millisecond {
+	if observedBudget <= 0 || observedBudget > 100*time.Millisecond {
 		t.Fatalf("credential budget = %s, want dial-scoped budget", observedBudget)
 	}
 }

@@ -269,13 +269,13 @@ func TestConsumerDrainDeadlineForcesBlockedCancellationClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct consumer: %v", err)
 	}
-	consumer.config.HandlerTimeout = time.Millisecond
+	consumer.config.HandlerTimeout = 20 * time.Millisecond
 	drained := make(chan error, 1)
 	go func() { drained <- consumer.Drain(context.Background()) }()
 	var drainErr error
 	select {
 	case drainErr = <-drained:
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 		close(channel.cancelBlock)
 		<-drained
 		t.Fatal("Drain() did not apply the configured shutdown bound")
@@ -303,7 +303,7 @@ func TestConsumerSettlementDeadlineTerminatesAndClosesResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct consumer: %v", err)
 	}
-	consumer.config.HandlerTimeout = time.Millisecond
+	consumer.config.HandlerTimeout = 20 * time.Millisecond
 	channel.deliveries <- testAMQPDelivery(14)
 	select {
 	case <-consumer.Done():

@@ -17,9 +17,9 @@ admission, and ordered non-atomic batches.
 The consumer uses manual settlement, bounded QoS and concurrency, bounded
 delivery snapshots, explicit failure policy, bounded runtime replacement, and
 graceful drain/close. Producer and consumer resources expose separate liveness,
-readiness, and dependency-health snapshots. Broader observability, broker and
-failover evidence, PHP interoperability, and optional OpenTelemetry remain in
-progress.
+readiness, and dependency-health snapshots plus bounded low-cardinality
+observation streams. Broker and failover evidence, PHP interoperability, and
+optional OpenTelemetry remain in progress.
 
 ## Policy example
 
@@ -102,6 +102,12 @@ topology-management mechanism.
   Bounded recovery and broker blocking remove readiness without declaring the
   process dead; exhausted recovery is a failed liveness state suitable for
   supervision.
+- `Observations` exposes bounded best-effort producer and consumer events with
+  fixed resource, kind, and outcome values. Events never contain credentials,
+  certificates, payloads, headers, routes, broker reason text, or identifiers.
+  Slow readers do not block delivery correctness; the next delivered event
+  reports how many observations were dropped while its stream was full. Stream
+  closure reserves a terminal event so undisclosed tail drops remain visible.
 - The consumer closes a failed generation before bounded replacement, reapplies
   QoS and consumer identity, and refreshes endpoints and credentials. Work from
   the failed generation is never settled on its replacement; exhausted recovery

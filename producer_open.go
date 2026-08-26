@@ -184,6 +184,7 @@ func (producer *Producer) recoverRuntime() bool {
 				delay *= 2
 			}
 		}
+		producer.observe(Observation{Kind: ObservationReconnect, Outcome: ObservationAttempted})
 		attemptContext, cancel := context.WithTimeout(producer.eventsContext, producer.recovery.connection.DialTimeout)
 		deadline, _ := attemptContext.Deadline()
 		credentials, credentialErr := producer.recovery.connection.Credentials.Credentials(attemptContext)

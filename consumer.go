@@ -57,6 +57,7 @@ type Consumer struct {
 	stopRecovery    context.CancelFunc
 	jobs            chan consumerEnvelope
 	done            chan struct{}
+	observations    *observationStream
 
 	stateMu     sync.Mutex
 	stopping    bool
@@ -105,8 +106,10 @@ func newConsumerFromChannelWithRecovery(
 		lifetimeContext: lifetimeContext, stopLifetime: stopLifetime,
 		recoveryContext: recoveryContext, stopRecovery: stopRecovery,
 		jobs: make(chan consumerEnvelope, config.Prefetch), done: make(chan struct{}),
-		generation: generation,
+		observations: newObservationStream(ObservationConsumer, observationBufferSize),
+		generation:   generation,
 	}
+	consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationConnected})
 	go consumer.run(generation)
 	return consumer, nil
 }
@@ -215,6 +218,8 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 	consumer.recovering = false
 	consumer.stopped = true
 	consumer.stateMu.Unlock()
+	consumer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownCompleted})
+	consumer.observations.close()
 	close(consumer.done)
 }
 
@@ -225,12 +230,22 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 			if !open {
 				return !consumer.isStopping()
 			}
+			consumer.observe(Observation{Kind: ObservationDelivery, Outcome: ObservationDelivered})
+			if source.Redelivered {
+				consumer.observe(Observation{Kind: ObservationRedelivery, Outcome: ObservationRedelivered})
+			}
 			delivery, err := deliveryFromAMQP(source, consumer.config)
 			if err != nil {
 				if consumer.settle(generation, source.DeliveryTag, Reject(false)) != nil {
 					return true
 				}
 				continue
+			}
+			if len(delivery.Deaths) > 0 {
+				consumer.observe(Observation{Kind: ObservationDeadLetter, Outcome: ObservationDeadLettered})
+			}
+			if len(consumer.jobs) == cap(consumer.jobs) {
+				consumer.observe(Observation{Kind: ObservationBacklogPressure, Outcome: ObservationBacklogFull})
 			}
 			select {
 			case consumer.jobs <- consumerEnvelope{delivery: delivery, tag: source.DeliveryTag, generation: generation}:
@@ -251,6 +266,7 @@ func (consumer *Consumer) handle(envelope consumerEnvelope) {
 	contextErr := handlerContext.Err()
 	cancel()
 	if err != nil || contextErr != nil || requested.Validate() != nil {
+		consumer.observe(Observation{Kind: ObservationHandlerFailure, Outcome: ObservationHandlerFailed})
 		requested = consumer.config.Failure
 	}
 	if requested.Method == SettlementDelegate {
@@ -269,6 +285,19 @@ func (consumer *Consumer) settle(generation *consumerGeneration, tag uint64, set
 	defer cancel()
 	select {
 	case err := <-settled:
+		if err == nil {
+			outcome := ObservationRejected
+			switch settlement.Method {
+			case SettlementAcknowledge:
+				outcome = ObservationAcknowledged
+			case SettlementNegativeAcknowledge:
+				outcome = ObservationNegativeAcknowledged
+			}
+			consumer.observe(Observation{Kind: ObservationSettlement, Outcome: outcome})
+			if settlement.Method == SettlementAcknowledge {
+				consumer.observe(Observation{Kind: ObservationAcknowledgement, Outcome: outcome})
+			}
+		}
 		return err
 	case <-ctx.Done():
 		_ = consumer.closeGeneration(generation, deadlineFor(ctx, consumer.config.HandlerTimeout))
@@ -292,12 +321,16 @@ func applySettlement(channel consumerChannel, tag uint64, settlement Settlement)
 func (consumer *Consumer) failGeneration(generation *consumerGeneration) {
 	consumer.stateMu.Lock()
 	current := consumer.generation == generation
-	if current && !consumer.stopping && consumer.terminalErr == nil {
+	changed := current && !consumer.stopping && consumer.terminalErr == nil && !consumer.recovering
+	if changed {
 		consumer.recovering = true
 	}
 	consumer.stateMu.Unlock()
 	if !current {
 		return
+	}
+	if changed {
+		consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationRecovering})
 	}
 	select {
 	case generation.failure <- struct{}{}:
@@ -307,16 +340,21 @@ func (consumer *Consumer) failGeneration(generation *consumerGeneration) {
 
 func (consumer *Consumer) beginRecovery() {
 	consumer.stateMu.Lock()
-	if !consumer.stopping && consumer.terminalErr == nil {
+	changed := !consumer.stopping && consumer.terminalErr == nil && !consumer.recovering
+	if changed {
 		consumer.recovering = true
 	}
 	consumer.stateMu.Unlock()
+	if changed {
+		consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationRecovering})
+	}
 }
 
 func (consumer *Consumer) finishRecovery() {
 	consumer.stateMu.Lock()
 	consumer.recovering = false
 	consumer.stateMu.Unlock()
+	consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationRecovered})
 }
 
 func (consumer *Consumer) isStopping() bool {
@@ -327,10 +365,14 @@ func (consumer *Consumer) isStopping() bool {
 
 func (consumer *Consumer) setTerminalError(err error) {
 	consumer.stateMu.Lock()
+	changed := consumer.terminalErr == nil
 	if consumer.terminalErr == nil {
 		consumer.terminalErr = err
 	}
 	consumer.stateMu.Unlock()
+	if changed {
+		consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationUnavailable})
+	}
 }
 
 func (consumer *Consumer) setResourceError(err error) {
@@ -367,9 +409,13 @@ func (consumer *Consumer) Drain(ctx context.Context) error {
 	drainContext, cancelDrain := context.WithDeadline(ctx, deadlineFor(ctx, consumer.config.HandlerTimeout))
 	defer cancelDrain()
 	consumer.stateMu.Lock()
+	firstDrain := !consumer.stopping
 	consumer.stopping = true
 	generation := consumer.generation
 	consumer.stateMu.Unlock()
+	if firstDrain {
+		consumer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownStarted})
+	}
 	consumer.stopRecovery()
 	if err := consumer.cancelGeneration(drainContext, generation); err != nil {
 		consumer.stopLifetime()
@@ -384,6 +430,16 @@ func (consumer *Consumer) Drain(ctx context.Context) error {
 		_ = consumer.closeGeneration(generation, deadlineFor(drainContext, consumer.config.HandlerTimeout))
 		return drainContext.Err()
 	}
+}
+
+// Observations returns the bounded best-effort consumer event stream. It closes
+// after broker intake and all admitted handlers stop.
+func (consumer *Consumer) Observations() <-chan Observation {
+	return consumer.observations.channel
+}
+
+func (consumer *Consumer) observe(observation Observation) {
+	consumer.observations.emit(observation)
 }
 
 func (consumer *Consumer) cancelGeneration(ctx context.Context, generation *consumerGeneration) error {

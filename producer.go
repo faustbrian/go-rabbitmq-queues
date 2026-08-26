@@ -62,6 +62,7 @@ type Producer struct {
 	eventsDone        chan struct{}
 	failure           chan struct{}
 	blockedEvents     chan ConnectionBlockedState
+	observations      *observationStream
 
 	publishMu    sync.Mutex
 	stateMu      sync.Mutex
@@ -132,12 +133,14 @@ func newProducerFromChannelWithRecovery(
 		eventsDone:      make(chan struct{}),
 		failure:         make(chan struct{}, 1),
 		blockedEvents:   make(chan ConnectionBlockedState, 1),
+		observations:    newObservationStream(ObservationProducer, observationBufferSize),
 		drained:         make(chan struct{}),
 	}
 	producer.returns = returns
 	producer.confirms = confirms
 	producer.connectionClosed = connectionClosed
 	producer.connectionBlocked = connectionBlocked
+	producer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationConnected})
 	go producer.runEvents(
 		producer.returns,
 		producer.confirms,
@@ -149,7 +152,6 @@ func newProducerFromChannelWithRecovery(
 		producer.resource,
 		producer.generationClose,
 	)
-
 	return producer, nil
 }
 
@@ -244,7 +246,9 @@ func (producer *Producer) PublishBatch(ctx context.Context, publications []Publi
 	return outcomes, nil
 }
 
-func (producer *Producer) publishAdmitted(ctx context.Context, publication Publication) (PublishResult, error) {
+func (producer *Producer) publishAdmitted(ctx context.Context, publication Publication) (result PublishResult, resultErr error) {
+	var confirmationStarted time.Time
+	defer func() { producer.observePublish(result, confirmationStarted) }()
 	publishContext, cancel := context.WithTimeout(ctx, producer.config.PublishTimeout)
 	defer cancel()
 	select {
@@ -271,6 +275,7 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 		return PublishResult{State: PublishNotSent}, err
 	}
 	sent := make(chan error, 1)
+	confirmationStarted = time.Now()
 	go func() {
 		sent <- channel.PublishWithContext(
 			publishContext,
@@ -354,6 +359,7 @@ func (producer *Producer) admit() error {
 		return ErrProducerUnavailable
 	}
 	if producer.active >= producer.config.MaxOutstanding {
+		producer.observe(Observation{Kind: ObservationBacklogPressure, Outcome: ObservationBacklogFull})
 		return ErrOutstandingConfirmLimit
 	}
 	producer.active++
@@ -362,20 +368,30 @@ func (producer *Producer) admit() error {
 
 func (producer *Producer) markRecovering() {
 	producer.stateMu.Lock()
-	producer.unavailable = true
-	if !producer.closed {
+	changed := !producer.closed && !producer.recovering
+	if changed {
+		producer.unavailable = true
 		producer.recovering = true
 	}
 	producer.stateMu.Unlock()
+	if changed {
+		producer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationRecovering})
+	}
 }
 
 func (producer *Producer) finishRecovery(recovered bool) {
 	producer.stateMu.Lock()
 	producer.recovering = false
-	if !recovered && !producer.closed {
+	terminal := !recovered && !producer.closed
+	if terminal {
 		producer.terminal = true
 	}
 	producer.stateMu.Unlock()
+	if recovered {
+		producer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationRecovered})
+	} else if terminal {
+		producer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationUnavailable})
+	}
 }
 
 // failGeneration is called while publishMu owns the generation snapshot.
@@ -513,6 +529,11 @@ func (producer *Producer) runGeneration(
 				return true
 			}
 			producer.drainReturns(tracker, returns)
+			outcome := ObservationRejected
+			if confirmation.Ack {
+				outcome = ObservationConfirmed
+			}
+			producer.observe(Observation{Kind: ObservationConfirm, Outcome: outcome})
 			tracker.confirm(confirmation.DeliveryTag, confirmation.Ack)
 		case <-connectionClosed:
 			return true
@@ -552,6 +573,11 @@ func (producer *Producer) setBlocked(active bool) {
 	}
 	producer.blocked = active
 	producer.stateMu.Unlock()
+	outcome := ObservationUnblocked
+	if active {
+		outcome = ObservationBlocked
+	}
+	producer.observe(Observation{Kind: ObservationConnectionBlocked, Outcome: outcome})
 	state := ConnectionBlockedState{Active: active}
 	select {
 	case producer.blockedEvents <- state:
@@ -583,6 +609,7 @@ func (producer *Producer) drainReturns(tracker *publishTracker, returns <-chan a
 }
 
 func (producer *Producer) applyReturn(tracker *publishTracker, returned amqp.Return) {
+	producer.observe(Observation{Kind: ObservationReturn, Outcome: ObservationReturned})
 	token, ok := returned.Headers[publishTokenHeader].(string)
 	if !ok {
 		return
@@ -607,18 +634,24 @@ func (producer *Producer) Close(ctx context.Context) error {
 		return ErrContextRequired
 	}
 	producer.stateMu.Lock()
+	firstClose := !producer.closed
 	producer.closed = true
 	if producer.active == 0 {
 		producer.drainedOnce.Do(func() { close(producer.drained) })
 	}
 	drained := producer.drained
 	producer.stateMu.Unlock()
+	if firstClose {
+		producer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownStarted})
+	}
 	select {
 	case <-ctx.Done():
 		producer.closeOwnedResources(producer.closeDeadline(ctx))
 		producer.stateMu.Lock()
 		producer.stopped = true
 		producer.stateMu.Unlock()
+		producer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownCompleted})
+		producer.observations.close()
 		return ctx.Err()
 	case <-drained:
 	}
@@ -627,7 +660,35 @@ func (producer *Producer) Close(ctx context.Context) error {
 	producer.stateMu.Lock()
 	producer.stopped = true
 	producer.stateMu.Unlock()
+	producer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownCompleted})
+	producer.observations.close()
 	return producer.resourceErr
+}
+
+// Observations returns the bounded best-effort producer event stream. The
+// stream closes after Close completes; terminal recovery alone does not release
+// caller-owned observation consumption.
+func (producer *Producer) Observations() <-chan Observation {
+	return producer.observations.channel
+}
+
+func (producer *Producer) observe(observation Observation) {
+	producer.observations.emit(observation)
+}
+
+func (producer *Producer) observePublish(result PublishResult, confirmationStarted time.Time) {
+	outcome := publishObservationOutcome(result.State)
+	producer.observe(Observation{Kind: ObservationPublish, Outcome: outcome})
+	if result.State == PublishAmbiguous {
+		producer.observe(Observation{Kind: ObservationAmbiguous, Outcome: ObservationAmbiguousOutcome})
+	}
+	if confirmationStarted.IsZero() || (result.State != PublishConfirmed && result.State != PublishRejected && result.State != PublishReturned) {
+		return
+	}
+	producer.observe(Observation{
+		Kind: ObservationConfirmationLatency, Outcome: outcome,
+		Duration: time.Since(confirmationStarted),
+	})
 }
 
 func (producer *Producer) closeDeadline(ctx context.Context) time.Time {

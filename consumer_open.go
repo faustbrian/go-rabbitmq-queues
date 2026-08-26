@@ -136,6 +136,7 @@ func (consumer *Consumer) recoverRuntime() (*consumerGeneration, bool) {
 				delay *= 2
 			}
 		}
+		consumer.observe(Observation{Kind: ObservationReconnect, Outcome: ObservationAttempted})
 		attemptContext, cancel := context.WithTimeout(
 			consumer.recoveryContext,
 			consumer.recovery.connection.DialTimeout,
