@@ -1,0 +1,37 @@
+package rabbitmqqueue
+
+// PublishState distinguishes broker outcomes without collapsing post-send
+// cancellation or connection loss into a definitive result.
+type PublishState string
+
+const (
+	PublishNotSent   PublishState = "not_sent"
+	PublishRejected  PublishState = "rejected"
+	PublishReturned  PublishState = "returned"
+	PublishConfirmed PublishState = "confirmed"
+	PublishAmbiguous PublishState = "ambiguous"
+)
+
+// Valid reports whether state is a defined publication outcome.
+func (state PublishState) Valid() bool {
+	switch state {
+	case PublishNotSent, PublishRejected, PublishReturned, PublishConfirmed, PublishAmbiguous:
+		return true
+	default:
+		return false
+	}
+}
+
+// Return describes a mandatory unroutable outcome without carrying payloads or headers.
+type Return struct {
+	Code       uint16
+	Reason     string
+	Exchange   string
+	RoutingKey string
+}
+
+// PublishResult is the terminal observed state for exactly one publish attempt.
+type PublishResult struct {
+	State  PublishState
+	Return *Return
+}

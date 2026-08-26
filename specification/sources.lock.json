@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "accessed": "2026-08-26",
+  "sources": [
+    {
+      "name": "RabbitMQ server",
+      "version": "4.3.5",
+      "revision": "0dde27bfdd1984ff7e157226fd97656854a7f359",
+      "url": "https://github.com/rabbitmq/rabbitmq-server"
+    },
+    {
+      "name": "RabbitMQ documentation",
+      "version": "4.3",
+      "revision": "1c99c9687f012ad700385c1e9a6990f6520720d3",
+      "url": "https://github.com/rabbitmq/rabbitmq-website"
+    },
+    {
+      "name": "amqp091-go",
+      "version": "1.14.0",
+      "revision": "387d77a50ea8b8c38705bb18cc80f5d6599a8477",
+      "url": "https://github.com/rabbitmq/amqp091-go"
+    },
+    {
+      "name": "RabbitMQ Cluster Operator",
+      "version": "2.22.5",
+      "revision": "17dd297f71de40a722baf69167b8af511072175e",
+      "url": "https://github.com/rabbitmq/cluster-operator"
+    },
+    {
+      "name": "RabbitMQ Messaging Topology Operator",
+      "version": "1.20.2",
+      "revision": "58cdfa3610a8bbac51a0fc8a7fd90f2fa448b960",
+      "url": "https://github.com/rabbitmq/messaging-topology-operator"
+    },
+    {
+      "name": "RabbitMQ container linux arm64",
+      "version": "4.3.5-management-alpine",
+      "revision": "sha256:aa626c7c8b7d41c708796b336ff721897b176ab29c94d944a26eb2b1b2e3a455",
+      "url": "https://hub.docker.com/_/rabbitmq"
+    },
+    {
+      "name": "Go",
+      "version": "1.27.0",
+      "revision": "go1.27.0",
+      "url": "https://go.dev/dl/"
+    }
+  ]
+}

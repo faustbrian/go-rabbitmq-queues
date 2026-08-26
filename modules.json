@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "repository": "github.com/faustbrian/go-rabbitmq-queues",
+  "go_version": "1.27.0",
+  "modules": [
+    {
+      "directory": ".",
+      "module_path": "github.com/faustbrian/go-rabbitmq-queues",
+      "go_version": "1.27.0",
+      "packages": [
+        {
+          "module_directory": ".",
+          "directory": ".",
+          "name": "rabbitmqqueue",
+          "import_path": "github.com/faustbrian/go-rabbitmq-queues",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        }
+      ],
+      "purpose": "RabbitMQ-native AMQP 0-9-1 classic and quorum queue policy for bounded publishing, consumption, settlement, recovery, topology verification, health, and observations.",
+      "lifecycle": "experimental",
+      "kind": "public library",
+      "releasable": true,
+      "version": "0.1.0",
+      "tag_prefix": "v",
+      "owned_dependencies": [],
+      "reverse_owned_dependencies": [],
+      "external_runtime_dependencies": [],
+      "required_services": [],
+      "build_tags": [],
+      "test_tags": [],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [],
+      "goal_status": "not-applicable",
+      "goal_evidence": [],
+      "gates": {
+        "api_compatibility": true,
+        "benchmarks": true,
+        "conformance": true,
+        "coverage": true,
+        "documentation": true,
+        "fuzz": true,
+        "lint": true,
+        "mutation": true,
+        "race": true,
+        "security": true,
+        "tests": true
+      }
+    }
+  ]
+}
