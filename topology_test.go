@@ -178,6 +178,67 @@ func TestQueuePolicyModelsQueueTypeCapabilities(t *testing.T) {
 	}
 }
 
+func TestQueuePolicyModelsQuorumConsumerTimeout(t *testing.T) {
+	t.Parallel()
+
+	minimum := time.Minute
+	recommended := 5 * time.Minute
+	belowMinimum := time.Minute - time.Millisecond
+	subMillisecond := time.Minute + time.Microsecond
+
+	tests := map[string]struct {
+		queue Queue
+		want  error
+	}{
+		"omitted quorum timeout": {
+			queue: Queue{Name: "orders", Type: QueueQuorum, Durable: true},
+		},
+		"minimum quorum timeout": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				ConsumerTimeout: &minimum,
+			},
+		},
+		"recommended quorum timeout": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				ConsumerTimeout: &recommended,
+			},
+		},
+		"classic timeout is unsupported in RabbitMQ 4.3": {
+			queue: Queue{
+				Name: "orders", Type: QueueClassic, Durable: true,
+				ConsumerTimeout: &recommended,
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"timeout below broker minimum": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				ConsumerTimeout: &belowMinimum,
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"timeout outside millisecond precision": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				ConsumerTimeout: &subMillisecond,
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := test.queue.Validate(); !errors.Is(err, test.want) {
+				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestTopologyMutationRequiresExplicitDevelopmentPermit(t *testing.T) {
 	t.Parallel()
 

@@ -37,6 +37,10 @@ Important RabbitMQ 4.3 distinctions:
 - an omitted consumer priority uses RabbitMQ's default zero, while an explicit
   zero is emitted as a signed `x-priority` argument; positive and negative
   priorities are supported on classic and quorum queues;
+- per-queue delivery-acknowledgement timeout is quorum-only in 4.3;
+  `ConsumerTimeout` emits `x-consumer-timeout`, accepts the broker minimum of
+  one minute at millisecond precision, and remains distinct from the package's
+  handler deadline;
 - exclusive consumption is classic-only and mutually exclusive with a queue's
   single-active-consumer declaration; `QueueReference.SingleActiveConsumer`
   records the expected topology semantic for local validation but is not live
@@ -77,12 +81,13 @@ topology; its exchange remains pre-existing and is passively verified.
 ## Declaration-equivalent queue policy
 
 `Queue` can represent RabbitMQ declaration arguments for per-queue message TTL,
-unused-queue expiry, maximum ready-message count, maximum ready-message bytes,
-overflow behavior, dead-letter exchange and routing key, and quorum dead-letter
-strategy. Optional numeric fields distinguish an explicit zero from an omitted
-argument and are bounded to millisecond or signed AMQP integer values. A nil
-dead-letter routing key preserves the broker's original-routing-key behavior,
-while a pointer to an empty string represents an explicit empty argument.
+unused-queue expiry, quorum delivery-acknowledgement timeout, maximum
+ready-message count, maximum ready-message bytes, overflow behavior,
+dead-letter exchange and routing key, and quorum dead-letter strategy. Optional
+numeric fields distinguish an explicit zero from an omitted argument and are
+bounded to millisecond or signed AMQP integer values. A nil dead-letter routing
+key preserves the broker's original-routing-key behavior, while a pointer to an
+empty string represents an explicit empty argument.
 
 Queue-type validation preserves the RabbitMQ 4.3 distinctions:
 
@@ -91,6 +96,8 @@ Queue-type validation preserves the RabbitMQ 4.3 distinctions:
   `reject-publish-dlx`, but not an explicit dead-letter strategy;
 - quorum queues support `drop-head` and `reject-publish`, but not
   `reject-publish-dlx`;
+- quorum consumer timeout is optional, must be at least one minute, and is
+  rejected for classic queues;
 - quorum at-least-once dead-lettering requires a dead-letter exchange and
   `reject-publish` overflow; and
 - quorum priority remains intrinsic and does not emit `x-max-priority`.

@@ -103,6 +103,36 @@ func TestApplyTopologyMapsBoundedQuorumQueuePolicyArguments(t *testing.T) {
 	}
 }
 
+func TestApplyTopologyMapsQuorumConsumerTimeout(t *testing.T) {
+	t.Parallel()
+
+	consumerTimeout := 5 * time.Minute
+	var captured amqp.Table
+	channel := &fakeTopologyChannel{queuePassive: func(
+		_ string, _, _, _ bool, arguments amqp.Table,
+	) (amqp.Queue, error) {
+		captured = arguments
+		return amqp.Queue{Name: "orders"}, nil
+	}}
+	_, err := applyTopologyWith(
+		t.Context(), testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
+		Topology{Queues: []Queue{{
+			Name: "orders", Type: QueueQuorum, Durable: true,
+			ConsumerTimeout: &consumerTimeout,
+		}}},
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
+			return channel, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("applyTopologyWith() error = %v", err)
+	}
+	if len(captured) != 2 || captured["x-queue-type"] != "quorum" ||
+		captured["x-consumer-timeout"] != int64(300_000) {
+		t.Fatalf("passive queue arguments = %#v", captured)
+	}
+}
+
 func TestApplyTopologyMapsLegacyClassicDeadLetterArgumentsWithoutQuorumStrategy(t *testing.T) {
 	t.Parallel()
 
@@ -164,6 +194,7 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 
 	messageTTL := 30 * time.Second
 	queueExpires := 10 * time.Minute
+	consumerTimeout := 5 * time.Minute
 	maxLength := uint64(10_000)
 	maxLengthBytes := uint64(64 << 20)
 	routingKey := "orders.failed"
@@ -181,13 +212,14 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 		t.Context(), testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
 		Topology{Queues: []Queue{{
 			Name: "orders", Type: QueueQuorum, Durable: true,
-			MessageTTL: &messageTTL, Expires: &queueExpires,
+			MessageTTL: &messageTTL, Expires: &queueExpires, ConsumerTimeout: &consumerTimeout,
 			MaxLength: &maxLength, MaxLengthBytes: &maxLengthBytes,
 			Overflow: QueueOverflowRejectPublish, DeadLetter: deadLetter,
 		}}},
 		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
 			messageTTL = -time.Millisecond
 			queueExpires = 0
+			consumerTimeout = time.Minute - time.Millisecond
 			maxLength = uint64(math.MaxInt64) + 1
 			maxLengthBytes = uint64(math.MaxInt64) + 1
 			routingKey = "mutated\nroute"
@@ -201,6 +233,7 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 	}
 	if captured["x-message-ttl"] != int64(30_000) ||
 		captured["x-expires"] != int64(600_000) ||
+		captured["x-consumer-timeout"] != int64(300_000) ||
 		captured["x-max-length"] != int64(10_000) ||
 		captured["x-max-length-bytes"] != int64(64<<20) ||
 		captured["x-dead-letter-exchange"] != "orders.dead" ||

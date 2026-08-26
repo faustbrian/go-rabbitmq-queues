@@ -323,6 +323,9 @@ func queueArguments(queue Queue) amqp.Table {
 	if queue.Expires != nil {
 		arguments["x-expires"] = queue.Expires.Milliseconds()
 	}
+	if queue.ConsumerTimeout != nil {
+		arguments["x-consumer-timeout"] = queue.ConsumerTimeout.Milliseconds()
+	}
 	if queue.MaxLength != nil {
 		arguments["x-max-length"] = int64(*queue.MaxLength)
 	}
@@ -373,6 +376,10 @@ func ownTopology(topology Topology) Topology {
 		if queue.Expires != nil {
 			value := *queue.Expires
 			queue.Expires = &value
+		}
+		if queue.ConsumerTimeout != nil {
+			value := *queue.ConsumerTimeout
+			queue.ConsumerTimeout = &value
 		}
 		if queue.MaxLength != nil {
 			value := *queue.MaxLength

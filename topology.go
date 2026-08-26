@@ -87,6 +87,8 @@ type QueueDeadLetter struct {
 // server-generated name and is valid only for an exclusive classic queue.
 // MessageTTL and the length pointers distinguish an explicit zero argument
 // from omission. Expires, when present, must be a positive millisecond value.
+// ConsumerTimeout is RabbitMQ 4.3's quorum-only delivery-acknowledgement
+// timeout and must be at least one minute with millisecond precision.
 type Queue struct {
 	Name                 string
 	Type                 QueueType
@@ -98,6 +100,7 @@ type Queue struct {
 	MaxPriority          uint8
 	MessageTTL           *time.Duration
 	Expires              *time.Duration
+	ConsumerTimeout      *time.Duration
 	MaxLength            *uint64
 	MaxLengthBytes       *uint64
 	Overflow             QueueOverflow
@@ -118,6 +121,7 @@ func (queue Queue) Validate() error {
 	case QueueClassic:
 		if queue.DeliveryLimit != 0 || (queue.Exclusive && queue.Durable) ||
 			(!queue.Durable && !queue.Exclusive) ||
+			queue.ConsumerTimeout != nil ||
 			(queue.DeadLetter != nil && queue.DeadLetter.Strategy != "") {
 			return ErrUnsupportedQueuePolicy
 		}
@@ -131,6 +135,7 @@ func (queue Queue) Validate() error {
 	}
 
 	if !validQueueDuration(queue.MessageTTL, true) || !validQueueDuration(queue.Expires, false) ||
+		!validConsumerTimeout(queue.ConsumerTimeout) ||
 		!validQueueLength(queue.MaxLength) || !validQueueLength(queue.MaxLengthBytes) {
 		return ErrUnsupportedQueuePolicy
 	}
@@ -167,6 +172,10 @@ func validQueueDuration(value *time.Duration, allowZero bool) bool {
 		return true
 	}
 	return (*value > 0 || (allowZero && *value == 0)) && *value%time.Millisecond == 0
+}
+
+func validConsumerTimeout(value *time.Duration) bool {
+	return value == nil || (*value >= time.Minute && *value%time.Millisecond == 0)
 }
 
 func validQueueLength(value *uint64) bool {
