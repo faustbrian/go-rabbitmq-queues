@@ -76,6 +76,7 @@ type Message struct {
 	Body            []byte
 	MessageID       string
 	CorrelationID   string
+	ReplyTo         string
 	ContentType     string
 	ContentEncoding string
 	Type            string
@@ -121,7 +122,7 @@ func (publication Publication) Validate(limits Limits) error {
 	if len(message.Body) > limits.MaxPayloadBytes {
 		return ErrPayloadTooLarge
 	}
-	for _, value := range []string{message.MessageID, message.CorrelationID, message.ContentType,
+	for _, value := range []string{message.MessageID, message.CorrelationID, message.ReplyTo, message.ContentType,
 		message.ContentEncoding, message.Type, message.AppID} {
 		if len(value) > limits.MaxNameBytes || containsControl(value) {
 			return ErrInvalidPublication

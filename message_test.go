@@ -2,6 +2,7 @@ package rabbitmqqueue
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,6 +26,7 @@ func TestPublicationValidation(t *testing.T) {
 			Body:          []byte("payload"),
 			MessageID:     "event-1",
 			CorrelationID: "request-1",
+			ReplyTo:       "rpc.responses",
 			ContentType:   "application/json",
 			Timestamp:     time.Unix(1, 0).UTC(),
 			Headers: []Header{
@@ -36,6 +38,11 @@ func TestPublicationValidation(t *testing.T) {
 
 	if err := valid.Validate(limits); err != nil {
 		t.Fatalf("valid publication rejected: %v", err)
+	}
+	exactReplyToLimit := valid
+	exactReplyToLimit.Message.ReplyTo = strings.Repeat("r", limits.MaxNameBytes)
+	if err := exactReplyToLimit.Validate(limits); err != nil {
+		t.Fatalf("maximum-length reply-to rejected: %v", err)
 	}
 
 	tests := map[string]struct {
@@ -76,6 +83,16 @@ func TestPublicationValidation(t *testing.T) {
 		"expiration preserves milliseconds": {
 			mutate: func(publication *Publication) { publication.Message.Expiration = 1500 * time.Microsecond },
 			want:   ErrInvalidExpiration,
+		},
+		"reply to rejects control characters": {
+			mutate: func(publication *Publication) { publication.Message.ReplyTo = "rpc\nresponses" },
+			want:   ErrInvalidPublication,
+		},
+		"reply to is bounded": {
+			mutate: func(publication *Publication) {
+				publication.Message.ReplyTo = strings.Repeat("r", limits.MaxNameBytes+1)
+			},
+			want: ErrInvalidPublication,
 		},
 	}
 

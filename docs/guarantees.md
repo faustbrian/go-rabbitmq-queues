@@ -45,6 +45,9 @@ when a later declaration fails.
   is still completing. Applications must tolerate concurrent duplicates.
 - Manual settlement provides at-least-once processing; applications remain
   responsible for idempotency.
+- Publications and deliveries preserve bounded `reply-to` and correlation
+  metadata for application-owned request/reply flows. The package does not own
+  reply queues or provide an RPC lifecycle abstraction.
 - Handler, settlement, and shutdown work is bounded by the configured handler
   timeout; handlers must observe cancellation for graceful draining.
 - Requeue is bounded by delivery state and configured policy. The package does

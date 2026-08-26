@@ -25,6 +25,7 @@ or establish PHP, Laravel, TLS, routing, confirmation, or settlement behavior.
 | `properties.content_encoding` | `content-encoding` | Application-defined encoding name |
 | `properties.message_id` | `message-id` | Stable application message identity |
 | `properties.correlation_id` | `correlation-id` | Application request or workflow correlation |
+| `properties.reply_to` | `reply-to` | Application-owned reply queue or routing identity for request/reply |
 | `properties.timestamp` | `timestamp` | UTC RFC 3339 input, represented at AMQP second precision |
 | `properties.type` | `type` | Application message type |
 | `properties.app_id` | `app-id` | Publishing application identity |
@@ -39,6 +40,10 @@ W3C semantics and trust policy remain application responsibilities.
 package-mandated schema mechanism. The package-owned publish-correlation header
 is deliberately absent from public deliveries and must never become part of an
 interoperability contract.
+
+`reply-to` and `correlation-id` expose the AMQP metadata needed for an
+application-owned request/reply flow. The package does not create reply queues,
+dispatch responses, enforce RPC timeouts, or claim exactly-once RPC behavior.
 
 ## PHP proof gate
 

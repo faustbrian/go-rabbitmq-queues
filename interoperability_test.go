@@ -25,6 +25,7 @@ type interoperabilityFixture struct {
 		ContentEncoding string `json:"content_encoding"`
 		MessageID       string `json:"message_id"`
 		CorrelationID   string `json:"correlation_id"`
+		ReplyTo         string `json:"reply_to"`
 		Timestamp       string `json:"timestamp"`
 		Type            string `json:"type"`
 		AppID           string `json:"app_id"`
@@ -56,6 +57,7 @@ func TestLanguageNeutralInteroperabilityFixturePreservesAMQPMetadataAndBytes(t *
 		Headers: published.Headers, ContentType: published.ContentType,
 		ContentEncoding: published.ContentEncoding, DeliveryMode: published.DeliveryMode,
 		Priority: published.Priority, CorrelationId: published.CorrelationId,
+		ReplyTo:    published.ReplyTo,
 		Expiration: published.Expiration, MessageId: published.MessageId,
 		Timestamp: published.Timestamp, Type: published.Type, AppId: published.AppId,
 		ConsumerTag: "interop-consumer", DeliveryTag: 1,
@@ -68,6 +70,7 @@ func TestLanguageNeutralInteroperabilityFixturePreservesAMQPMetadataAndBytes(t *
 	message := publication.Message
 	if !bytes.Equal(delivery.Body, message.Body) || delivery.MessageID != message.MessageID ||
 		delivery.CorrelationID != message.CorrelationID || delivery.ContentType != message.ContentType ||
+		delivery.ReplyTo != message.ReplyTo ||
 		delivery.ContentEncoding != message.ContentEncoding || delivery.Type != message.Type ||
 		delivery.AppID != message.AppID || !delivery.Timestamp.Equal(message.Timestamp) ||
 		delivery.Expiration != message.Expiration || delivery.Priority != uint8(*message.Priority) ||
@@ -121,7 +124,8 @@ func fixturePublication(t *testing.T, fixture interoperabilityFixture) Publicati
 		t.Fatalf("fixture delivery mode = %q, want persistent", fixture.Properties.DeliveryMode)
 	}
 	if fixture.Properties.ContentType == "" || fixture.Properties.ContentEncoding == "" ||
-		fixture.Properties.CorrelationID == "" || fixture.Properties.Type == "" ||
+		fixture.Properties.CorrelationID == "" || fixture.Properties.ReplyTo == "" ||
+		fixture.Properties.Type == "" ||
 		fixture.Properties.AppID == "" || fixture.Properties.ExpirationMS < 0 {
 		t.Fatal("fixture is missing required language-neutral metadata")
 	}
@@ -160,6 +164,7 @@ func fixturePublication(t *testing.T, fixture interoperabilityFixture) Publicati
 		Message: Message{
 			Body: body, MessageID: fixture.Properties.MessageID,
 			CorrelationID: fixture.Properties.CorrelationID,
+			ReplyTo:       fixture.Properties.ReplyTo,
 			ContentType:   fixture.Properties.ContentType, ContentEncoding: fixture.Properties.ContentEncoding,
 			Type: fixture.Properties.Type, AppID: fixture.Properties.AppID, Timestamp: timestamp,
 			Expiration: time.Duration(fixture.Properties.ExpirationMS) * time.Millisecond,

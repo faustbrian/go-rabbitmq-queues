@@ -501,6 +501,7 @@ func TestAMQPPublishingOwnsPayloadAndMapsStableHeaders(t *testing.T) {
 	bytesHeader := []byte{1, 2}
 	message := Message{
 		Body: body, MessageID: "id", CorrelationID: "correlation",
+		ReplyTo:     "rpc.responses",
 		ContentType: "application/octet-stream", ContentEncoding: "identity",
 		Type: "event", AppID: "orders", Timestamp: time.Unix(1, 0),
 		Expiration: 1500 * time.Millisecond, Priority: &priority,
@@ -517,6 +518,7 @@ func TestAMQPPublishingOwnsPayloadAndMapsStableHeaders(t *testing.T) {
 	if string(publishing.Body) != "body" || publishing.DeliveryMode != amqp.Persistent ||
 		publishing.Priority != 255 || publishing.Expiration != "1500" ||
 		publishing.MessageId != "id" || publishing.CorrelationId != "correlation" ||
+		publishing.ReplyTo != "rpc.responses" ||
 		publishing.ContentType != "application/octet-stream" || publishing.ContentEncoding != "identity" ||
 		publishing.Type != "event" || publishing.AppId != "orders" || !publishing.Timestamp.Equal(time.Unix(1, 0)) {
 		t.Fatal("AMQP property mapping did not preserve the bounded contract")

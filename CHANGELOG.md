@@ -16,6 +16,8 @@
 - Add a language-neutral AMQP message corpus for byte-preserving interoperability
   checks without claiming broker or PHP evidence.
 - Add bounded AMQP publication metadata and distinct publisher outcome states.
+- Add bounded AMQP reply-to publication metadata for application-owned
+  request/reply flows.
 - Add bounded exact correlation for confirmations, mandatory returns, late
   events, and ambiguous channel-generation failure.
 - Add an independent synchronous producer with mandatory routing, publisher

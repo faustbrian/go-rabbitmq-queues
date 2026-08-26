@@ -780,6 +780,7 @@ func amqpPublishing(message Message, mode DeliveryMode, token string) amqp.Publi
 		DeliveryMode:    uint8(mode),
 		Priority:        priority,
 		CorrelationId:   message.CorrelationID,
+		ReplyTo:         message.ReplyTo,
 		Expiration:      expiration,
 		MessageId:       message.MessageID,
 		Timestamp:       message.Timestamp,

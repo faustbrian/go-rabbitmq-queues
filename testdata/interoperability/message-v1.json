@@ -11,6 +11,7 @@
     "content_encoding": "identity",
     "message_id": "event-20260826-0001",
     "correlation_id": "request-20260826-0001",
+    "reply_to": "rpc.orders.responses",
     "timestamp": "2026-08-26T09:10:11Z",
     "type": "order.created",
     "app_id": "orders-api",
