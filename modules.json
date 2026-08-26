@@ -39,7 +39,9 @@
       "test_tags": [],
       "interoperability_tools": [],
       "specifications": [],
-      "conformance_corpora": [],
+      "conformance_corpora": [
+        "Language-neutral AMQP fixture and Go boundary contract at testdata/interoperability/message-v1.json"
+      ],
       "provenance": [],
       "goal_files": [],
       "goal_status": "not-applicable",

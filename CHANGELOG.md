@@ -8,6 +8,8 @@
 - Add explicit classic/quorum queue and passive/development topology policy.
 - Add bounded passive exchange and queue equivalence checks plus explicit
   development-only binding declaration without mutating production bindings.
+- Add a language-neutral AMQP message corpus for byte-preserving interoperability
+  checks without claiming broker or PHP evidence.
 - Add bounded AMQP publication metadata and distinct publisher outcome states.
 - Add bounded exact correlation for confirmations, mandatory returns, late
   events, and ambiguous channel-generation failure.

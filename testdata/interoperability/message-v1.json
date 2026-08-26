@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "routing": {
+    "exchange": "events",
+    "routing_key": "orders.created",
+    "mandatory": true
+  },
+  "properties": {
+    "delivery_mode": "persistent",
+    "content_type": "application/octet-stream",
+    "content_encoding": "identity",
+    "message_id": "event-20260826-0001",
+    "correlation_id": "request-20260826-0001",
+    "timestamp": "2026-08-26T09:10:11Z",
+    "type": "order.created",
+    "app_id": "orders-api",
+    "expiration_ms": 30000,
+    "priority": 5
+  },
+  "headers": [
+    {
+      "key": "traceparent",
+      "type": "string",
+      "string": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    },
+    {
+      "key": "tracestate",
+      "type": "string",
+      "string": "shipit=opaque"
+    },
+    {
+      "key": "schema-version",
+      "type": "int64",
+      "int64": 1
+    },
+    {
+      "key": "sampled",
+      "type": "bool",
+      "bool": true
+    },
+    {
+      "key": "binary-context",
+      "type": "bytes",
+      "base64": "3q2+7w=="
+    }
+  ],
+  "body_base64": "AAEC/4A="
+}

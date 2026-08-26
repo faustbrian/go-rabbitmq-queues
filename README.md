@@ -144,4 +144,6 @@ can leave a partial test topology when a later declaration fails.
 
 See [the capability matrix](docs/capability-matrix.md),
 [performance evidence](docs/performance.md), and
-[pinned compatibility evidence](COMPATIBILITY.md).
+[pinned compatibility evidence](COMPATIBILITY.md). The
+[language-neutral interoperability corpus](docs/interoperability.md) defines
+the byte and metadata mapping that future PHP broker evidence must exercise.
