@@ -28,6 +28,10 @@ func TestOpenConsumerRecoversRuntimeLossWithoutDuplicatingConsumer(t *testing.T)
 	firstResource := &concurrentCountingCloser{err: amqp.ErrClosed}
 	second := newFakeConsumerChannel()
 	secondResource := &concurrentCountingCloser{}
+	priority := int32(9)
+	config := testConsumerConfig()
+	config.Priority = &priority
+	config.Exclusive = true
 	type dialObservation struct {
 		attempt  int
 		endpoint Endpoint
@@ -38,7 +42,7 @@ func TestOpenConsumerRecoversRuntimeLossWithoutDuplicatingConsumer(t *testing.T)
 	consumer, err := openConsumerWith(
 		t.Context(),
 		connection,
-		testConsumerConfig(),
+		config,
 		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
 		func(_ context.Context, endpoint Endpoint, _ ConnectionConfig, credentials Credentials) (consumerChannel, io.Closer, error) {
 			attempt := int(dialCalls.Add(1))
@@ -56,6 +60,7 @@ func TestOpenConsumerRecoversRuntimeLossWithoutDuplicatingConsumer(t *testing.T)
 	if got := <-dialed; got.attempt != 1 || got.endpoint != connection.Endpoints[0] || got.username != "consumer-1" {
 		t.Fatalf("initial dial = %#v", got)
 	}
+	priority = -9
 
 	first.cancelOnce.Do(func() { close(first.deliveries) })
 	select {
@@ -81,7 +86,8 @@ func TestOpenConsumerRecoversRuntimeLossWithoutDuplicatingConsumer(t *testing.T)
 	if credentialCalls.Load() != 2 {
 		t.Fatalf("credential calls = %d, want two", credentialCalls.Load())
 	}
-	if second.prefetch != testConsumerConfig().Prefetch || second.queue != "orders" || second.consumer != "orders-worker" {
+	if second.prefetch != config.Prefetch || second.queue != "orders" || second.consumer != "orders-worker" ||
+		!second.exclusive || len(second.arguments) != 1 || second.arguments["x-priority"] != int32(9) {
 		t.Fatalf("replacement consumer setup = %#v", second)
 	}
 }

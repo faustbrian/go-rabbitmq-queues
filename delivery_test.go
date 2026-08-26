@@ -47,6 +47,78 @@ func TestConsumerConfigRequiresBoundedQueueAndFailurePolicy(t *testing.T) {
 	}
 }
 
+func TestConsumerConfigModelsQueueSpecificPriorityAndExclusivity(t *testing.T) {
+	t.Parallel()
+
+	negativePriority := int32(-10)
+	zeroPriority := int32(0)
+	positivePriority := int32(10)
+	valid := map[string]ConsumerConfig{
+		"omitted priority": testConsumerConfig(),
+		"negative priority": func() ConsumerConfig {
+			config := testConsumerConfig()
+			config.Priority = &negativePriority
+			return config
+		}(),
+		"explicit zero priority": func() ConsumerConfig {
+			config := testConsumerConfig()
+			config.Priority = &zeroPriority
+			return config
+		}(),
+		"positive priority": func() ConsumerConfig {
+			config := testConsumerConfig()
+			config.Queue.Type = QueueQuorum
+			config.Priority = &positivePriority
+			return config
+		}(),
+		"exclusive classic consumer": func() ConsumerConfig {
+			config := testConsumerConfig()
+			config.Exclusive = true
+			return config
+		}(),
+		"single active quorum consumer": func() ConsumerConfig {
+			config := testConsumerConfig()
+			config.Queue.Type = QueueQuorum
+			config.Queue.SingleActiveConsumer = true
+			config.Priority = &positivePriority
+			return config
+		}(),
+	}
+	for name, config := range valid {
+		config := config
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := config.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+
+	invalid := map[string]ConsumerConfig{
+		"exclusive quorum consumer": func() ConsumerConfig {
+			config := testConsumerConfig()
+			config.Queue.Type = QueueQuorum
+			config.Exclusive = true
+			return config
+		}(),
+		"exclusive single active consumer": func() ConsumerConfig {
+			config := testConsumerConfig()
+			config.Queue.SingleActiveConsumer = true
+			config.Exclusive = true
+			return config
+		}(),
+	}
+	for name, config := range invalid {
+		config := config
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := config.Validate(); !errors.Is(err, ErrInvalidConsumer) {
+				t.Fatalf("Validate() error = %v, want invalid consumer", err)
+			}
+		})
+	}
+}
+
 func TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory(t *testing.T) {
 	t.Parallel()
 

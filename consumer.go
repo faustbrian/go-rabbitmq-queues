@@ -94,6 +94,7 @@ func newConsumerFromChannelWithRecovery(
 	if ctx == nil {
 		return nil, ErrContextRequired
 	}
+	config = ownConsumerConfig(config)
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -139,7 +140,15 @@ func setupConsumerGeneration(
 	}
 	consumed := make(chan consumeResult, 1)
 	go func() {
-		deliveries, err := channel.Consume(config.Queue.Name, config.Name, false, false, false, false, nil)
+		deliveries, err := channel.Consume(
+			config.Queue.Name,
+			config.Name,
+			false,
+			config.Exclusive,
+			false,
+			false,
+			consumerArguments(config),
+		)
 		consumed <- consumeResult{deliveries: deliveries, err: err}
 	}()
 	select {
@@ -156,6 +165,13 @@ func setupConsumerGeneration(
 		_ = boundedCloseConsumerResources(resource, channel, consumerCleanupDeadline(setupContext, config.HandlerTimeout))
 		return nil, ErrConsumerUnavailable
 	}
+}
+
+func consumerArguments(config ConsumerConfig) amqp.Table {
+	if config.Priority == nil {
+		return nil
+	}
+	return amqp.Table{"x-priority": *config.Priority}
 }
 
 func boundedConsumerSetup(ctx context.Context, fallback time.Duration, resource io.Closer, channel consumerChannel, setup func() error) error {

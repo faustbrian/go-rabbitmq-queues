@@ -41,9 +41,14 @@ target while RabbitMQ retries an unconfirmed internal transfer.
   Slow readers do not block delivery correctness; the next delivered event
   reports how many observations were dropped while its stream was full.
 - The consumer closes a failed generation before bounded replacement, reapplies
-  QoS and consumer identity, and refreshes endpoints and credentials. Work from
-  the failed generation is never settled on its replacement; exhausted recovery
-  is terminal.
+  QoS, consumer identity, signed priority, and classic-only exclusivity, and
+  refreshes endpoints and credentials. Work from the failed generation is never
+  settled on its replacement; exhausted recovery is terminal.
+- Consumer priority is an explicit AMQP `x-priority` policy: nil omits the
+  argument and uses RabbitMQ's zero default, while a pointer to zero preserves
+  explicit-zero intent. Exclusive consumption is rejected for quorum queues and
+  for queue references marked single-active-consumer. The reference records
+  expected topology; use passive topology verification for broker equivalence.
 - `Pause` temporarily stops new handler admission without cancelling the broker
   consumer. Already admitted work settles normally, up to the configured
   prefetch may remain unsettled, runtime recovery continues, and `Resume`

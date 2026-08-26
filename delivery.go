@@ -21,10 +21,14 @@ const (
 	deathHeader         = "x-death"
 )
 
-// QueueReference identifies an existing operator-owned queue and its semantic type.
+// QueueReference identifies an existing operator-owned queue and its expected
+// consumption semantics. SingleActiveConsumer records declaration intent for
+// policy validation; callers use passive topology verification when they need
+// broker evidence that the existing queue is equivalent.
 type QueueReference struct {
-	Name string
-	Type QueueType
+	Name                 string
+	Type                 QueueType
+	SingleActiveConsumer bool
 }
 
 // Validate rejects missing queue identities and unsupported queue types.
@@ -40,13 +44,18 @@ func (reference QueueReference) Validate() error {
 	}
 }
 
-// ConsumerConfig bounds one independent manual-settlement consumer.
-// HandlerTimeout also bounds settlement and supplies the shutdown fallback;
-// handlers must observe their context for graceful draining.
+// ConsumerConfig bounds one independent manual-settlement consumer. Priority
+// distinguishes an omitted RabbitMQ default from an explicit signed value,
+// including zero. Exclusive requests classic-queue exclusivity and cannot be
+// combined with single-active-consumer topology. HandlerTimeout also bounds
+// settlement and supplies the shutdown fallback; handlers must observe their
+// context for graceful draining.
 type ConsumerConfig struct {
 	Limits         Limits
 	Queue          QueueReference
 	Name           string
+	Priority       *int32
+	Exclusive      bool
 	Prefetch       int
 	Concurrency    int
 	HandlerTimeout time.Duration
@@ -57,6 +66,7 @@ type ConsumerConfig struct {
 // Validate rejects unbounded consumption and unsafe automatic failure outcomes.
 func (config ConsumerConfig) Validate() error {
 	if !config.Limits.valid() || config.Queue.Validate() != nil || invalidIdentity(config.Name, 255) ||
+		(config.Exclusive && (config.Queue.Type != QueueClassic || config.Queue.SingleActiveConsumer)) ||
 		config.Prefetch < 1 || config.Prefetch > MaxConsumerPrefetch ||
 		config.Concurrency < 1 || config.Concurrency > MaxConsumerConcurrency ||
 		config.Concurrency > config.Prefetch || config.HandlerTimeout <= 0 ||
@@ -66,6 +76,14 @@ func (config ConsumerConfig) Validate() error {
 		return ErrInvalidConsumer
 	}
 	return nil
+}
+
+func ownConsumerConfig(config ConsumerConfig) ConsumerConfig {
+	if config.Priority != nil {
+		priority := *config.Priority
+		config.Priority = &priority
+	}
+	return config
 }
 
 // Death preserves one bounded RabbitMQ x-death record without exposing a raw field table.

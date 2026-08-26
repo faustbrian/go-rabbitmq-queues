@@ -34,6 +34,7 @@ func TestConsumerConfiguresManualQOSAndAcknowledgesAfterHandler(t *testing.T) {
 	}
 	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
 	if channel.prefetch != testConsumerConfig().Prefetch || channel.globalQOS || channel.autoAck ||
+		channel.exclusive || channel.noLocal || channel.noWait || len(channel.arguments) != 0 ||
 		channel.queue != "orders" || channel.consumer != "orders-worker" {
 		t.Fatalf("consumer setup = %#v", channel)
 	}
@@ -47,6 +48,51 @@ func TestConsumerConfiguresManualQOSAndAcknowledgesAfterHandler(t *testing.T) {
 	defer orderMu.Unlock()
 	if len(order) != 2 || order[0] != "handler" || order[1] != "ack" {
 		t.Fatalf("execution order = %#v, want handler before ACK", order)
+	}
+}
+
+func TestConsumerMapsSignedPriorityAndClassicExclusivity(t *testing.T) {
+	t.Parallel()
+
+	priority := int32(-7)
+	config := testConsumerConfig()
+	config.Priority = &priority
+	config.Exclusive = true
+	channel := newFakeConsumerChannel()
+	consumer, err := newConsumerFromChannel(
+		t.Context(), config,
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	if !channel.exclusive || channel.noLocal || channel.noWait || len(channel.arguments) != 1 ||
+		channel.arguments["x-priority"] != priority {
+		t.Fatalf("consumer policy = exclusive %t no-local %t no-wait %t arguments %#v",
+			channel.exclusive, channel.noLocal, channel.noWait, channel.arguments)
+	}
+}
+
+func TestConsumerPreservesExplicitZeroPriority(t *testing.T) {
+	t.Parallel()
+
+	priority := int32(0)
+	config := testConsumerConfig()
+	config.Priority = &priority
+	channel := newFakeConsumerChannel()
+	consumer, err := newConsumerFromChannel(
+		t.Context(), config,
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	if len(channel.arguments) != 1 || channel.arguments["x-priority"] != int32(0) {
+		t.Fatalf("consumer arguments = %#v, want explicit zero priority", channel.arguments)
 	}
 }
 
@@ -405,6 +451,10 @@ type fakeConsumerChannel struct {
 	queue        string
 	consumer     string
 	autoAck      bool
+	exclusive    bool
+	noLocal      bool
+	noWait       bool
+	arguments    amqp.Table
 	deliveries   chan amqp.Delivery
 	settled      chan fakeConsumerSettlement
 	onAck        func()
@@ -440,14 +490,18 @@ func (channel *fakeConsumerChannel) Qos(prefetchCount, _ int, global bool) error
 
 func (channel *fakeConsumerChannel) Consume(
 	queue, consumer string,
-	autoAck, _ bool,
-	_ bool,
-	_ bool,
-	_ amqp.Table,
+	autoAck, exclusive bool,
+	noLocal bool,
+	noWait bool,
+	arguments amqp.Table,
 ) (<-chan amqp.Delivery, error) {
 	channel.queue = queue
 	channel.consumer = consumer
 	channel.autoAck = autoAck
+	channel.exclusive = exclusive
+	channel.noLocal = noLocal
+	channel.noWait = noWait
+	channel.arguments = arguments
 	if channel.consumeBlock != nil {
 		<-channel.consumeBlock
 	}

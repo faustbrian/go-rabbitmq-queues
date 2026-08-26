@@ -14,7 +14,8 @@ row is implemented yet. The source snapshot and products are pinned in
 | Queue/message TTL | Yes | Yes; queue TTL has renewal caveat | Retention policy instead |
 | Length limit | Yes | Yes, with overflow restrictions | Retention policy instead |
 | Message priority | Configured with `x-max-priority`; 1-255, low single digits recommended | Always enabled in 4.3; strict levels 0-31 | No queue-priority contract |
-| Consumer priority | Yes | Yes | Consumer groups differ |
+| Consumer priority | Signed `x-priority`; higher active consumers receive first | Signed `x-priority`; also affects SAC promotion | Consumer groups differ |
+| Exclusive consumer | Yes; application must replace a failed consumer | No; broker ignores the flag, so client policy rejects it | No |
 | Single active consumer | Yes | Yes | Single active consumer per partition differs |
 | Broker delivery limit | No poison-message counter | Default 20; `x-delivery-count` semantics changed in 4.3 | No queue delivery limit |
 | Dead lettering | Yes; no at-least-once dead-lettering | Yes; at-least-once mode when configured | Not a queue/DLX model |
@@ -33,6 +34,16 @@ Important RabbitMQ 4.3 distinctions:
   overshoot a length limit by in-flight messages;
 - requeue loops remain an application/client-policy risk even where a quorum
   delivery limit exists;
+- an omitted consumer priority uses RabbitMQ's default zero, while an explicit
+  zero is emitted as a signed `x-priority` argument; positive and negative
+  priorities are supported on classic and quorum queues;
+- exclusive consumption is classic-only and mutually exclusive with a queue's
+  single-active-consumer declaration; `QueueReference.SingleActiveConsumer`
+  records the expected topology semantic for local validation but is not live
+  broker evidence;
+- classic SAC initially selects a consumer without applying priority, while a
+  higher-priority quorum SAC consumer takes over after outstanding deliveries
+  from the current active consumer are acknowledged;
 - streams remain a separate retained-history product and must not be used as a
   process-and-remove queue abstraction.
 
