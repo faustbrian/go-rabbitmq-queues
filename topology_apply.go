@@ -326,6 +326,15 @@ func queueArguments(queue Queue) amqp.Table {
 	if queue.ConsumerTimeout != nil {
 		arguments["x-consumer-timeout"] = queue.ConsumerTimeout.Milliseconds()
 	}
+	if queue.DelayedRetry != nil {
+		arguments["x-delayed-retry-type"] = string(queue.DelayedRetry.Type)
+		if queue.DelayedRetry.Type != DelayedRetryDisabled {
+			arguments["x-delayed-retry-min"] = queue.DelayedRetry.Minimum.Milliseconds()
+			if queue.DelayedRetry.Maximum != nil {
+				arguments["x-delayed-retry-max"] = queue.DelayedRetry.Maximum.Milliseconds()
+			}
+		}
+	}
 	if queue.MaxLength != nil {
 		arguments["x-max-length"] = int64(*queue.MaxLength)
 	}
@@ -380,6 +389,14 @@ func ownTopology(topology Topology) Topology {
 		if queue.ConsumerTimeout != nil {
 			value := *queue.ConsumerTimeout
 			queue.ConsumerTimeout = &value
+		}
+		if queue.DelayedRetry != nil {
+			delayedRetry := *queue.DelayedRetry
+			if delayedRetry.Maximum != nil {
+				maximum := *delayedRetry.Maximum
+				delayedRetry.Maximum = &maximum
+			}
+			queue.DelayedRetry = &delayedRetry
 		}
 		if queue.MaxLength != nil {
 			value := *queue.MaxLength

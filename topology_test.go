@@ -239,6 +239,118 @@ func TestQueuePolicyModelsQuorumConsumerTimeout(t *testing.T) {
 	}
 }
 
+func TestQueuePolicyModelsQuorumDelayedRetry(t *testing.T) {
+	t.Parallel()
+
+	minimum := time.Second
+	maximum := 30 * time.Second
+	belowMinimum := minimum - time.Millisecond
+	subMillisecond := minimum + time.Microsecond
+	subMillisecondMaximum := maximum + time.Microsecond
+
+	tests := map[string]struct {
+		queue Queue
+		want  error
+	}{
+		"omitted quorum delayed retry": {
+			queue: Queue{Name: "orders", Type: QueueQuorum, Durable: true},
+		},
+		"explicitly disabled quorum delayed retry": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{Type: DelayedRetryDisabled},
+			},
+		},
+		"all returned deliveries with fixed delay": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{Type: DelayedRetryAll, Minimum: minimum},
+			},
+		},
+		"failed deliveries with bounded delay": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{
+					Type: DelayedRetryFailed, Minimum: minimum, Maximum: &maximum,
+				},
+			},
+		},
+		"returned deliveries with bounded delay": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{
+					Type: DelayedRetryReturned, Minimum: minimum, Maximum: &maximum,
+				},
+			},
+		},
+		"classic delayed retry is unsupported": {
+			queue: Queue{
+				Name: "orders", Type: QueueClassic, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{Type: DelayedRetryAll, Minimum: minimum},
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"enabled retry requires positive minimum": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{Type: DelayedRetryAll},
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"minimum requires millisecond precision": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{Type: DelayedRetryAll, Minimum: subMillisecond},
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"maximum cannot precede minimum": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{
+					Type: DelayedRetryAll, Minimum: minimum, Maximum: &belowMinimum,
+				},
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"maximum requires millisecond precision": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{
+					Type: DelayedRetryAll, Minimum: minimum, Maximum: &subMillisecondMaximum,
+				},
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"disabled retry rejects delay values": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{Type: DelayedRetryDisabled, Minimum: minimum},
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+		"unknown retry type": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				DelayedRetry: &QueueDelayedRetry{
+					Type: DelayedRetryType("unknown"), Minimum: minimum,
+				},
+			},
+			want: ErrUnsupportedQueuePolicy,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := test.queue.Validate(); !errors.Is(err, test.want) {
+				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestTopologyMutationRequiresExplicitDevelopmentPermit(t *testing.T) {
 	t.Parallel()
 

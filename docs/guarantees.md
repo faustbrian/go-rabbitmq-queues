@@ -81,6 +81,13 @@ internal transfer.
   broker deadline expires, RabbitMQ closes the channel and requeues all of its
   outstanding deliveries; application handler deadlines should finish before
   the effective broker timeout.
+- `Queue.DelayedRetry` models RabbitMQ 4.3's quorum-only broker-managed linear
+  backoff for returned deliveries. It is omitted by default. Enabled policy is
+  bounded by a positive minimum and an optional maximum delay; explicit
+  disabling cannot carry stale delay values. This changes when the broker
+  makes a returned delivery available again. It does not publish a replacement
+  message, make handler effects atomic, or remove the application's idempotency
+  responsibility.
 - Requeue is bounded by delivery state and configured policy. The package does
   not automatically publish replacement messages.
 - The package does not implement RabbitMQ Streams, application schemas,

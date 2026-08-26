@@ -19,6 +19,8 @@
   dead-letter policy with explicit RabbitMQ 4.3 queue-type restrictions.
 - Add quorum-only delivery-acknowledgement timeout policy with RabbitMQ 4.3
   minimum and declaration-equivalence validation.
+- Add quorum-only delayed-retry policy with bounded RabbitMQ 4.3 linear-backoff
+  modes and declaration-equivalence validation.
 - Add bounded passive exchange and queue equivalence checks plus explicit
   development-only binding declaration without mutating production bindings.
 - Add a language-neutral AMQP message corpus for byte-preserving interoperability
