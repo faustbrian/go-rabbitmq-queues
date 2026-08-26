@@ -2,6 +2,8 @@ package rabbitmqqueue
 
 import "time"
 
+const publishTokenHeader = "x-rabbitmqqueue-publish-token"
+
 // Limits bounds untrusted message and topology-controlled allocation.
 type Limits struct {
 	MaxPayloadBytes    int
@@ -131,7 +133,8 @@ func (publication Publication) Validate(limits Limits) error {
 	if !message.Timestamp.IsZero() && message.Timestamp.Before(time.Unix(0, 0)) {
 		return ErrInvalidPublication
 	}
-	if message.Expiration < 0 {
+	if message.Expiration < 0 ||
+		(message.Expiration > 0 && message.Expiration%time.Millisecond != 0) {
 		return ErrInvalidExpiration
 	}
 	if len(message.Headers) > limits.MaxHeaderEntries {
@@ -142,6 +145,9 @@ func (publication Publication) Validate(limits Limits) error {
 	for _, header := range message.Headers {
 		if invalidIdentity(header.Key, limits.MaxNameBytes) {
 			return ErrInvalidHeader
+		}
+		if header.Key == publishTokenHeader {
+			return ErrReservedHeader
 		}
 		if _, exists := seen[header.Key]; exists {
 			return ErrDuplicateHeader

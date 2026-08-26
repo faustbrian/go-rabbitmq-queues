@@ -73,6 +73,10 @@ func TestPublicationValidation(t *testing.T) {
 			mutate: func(publication *Publication) { publication.Message.Expiration = -time.Second },
 			want:   ErrInvalidExpiration,
 		},
+		"expiration preserves milliseconds": {
+			mutate: func(publication *Publication) { publication.Message.Expiration = 1500 * time.Microsecond },
+			want:   ErrInvalidExpiration,
+		},
 	}
 
 	for name, test := range tests {

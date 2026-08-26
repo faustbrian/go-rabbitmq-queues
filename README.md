@@ -8,10 +8,13 @@ backend-neutral `go-queue` job API.
 
 ## Status
 
-The repository currently contains the initial connection, topology, message,
-and publisher-outcome policy foundations. The AMQP transport, producer,
-consumer, settlement, recovery, health, observability, integration, failover,
-PHP interoperability, and optional OpenTelemetry work remains in progress.
+The repository contains connection, topology, message, and publisher-outcome
+policy foundations plus an independent synchronous producer. The producer uses
+mandatory routing, exact confirm/return correlation, bounded startup retry,
+credential refresh, and verified TLS. Bounded asynchronous publishing,
+consumers, settlement, runtime recovery, health, observability, broker and
+failover evidence, PHP interoperability, and optional OpenTelemetry remain in
+progress.
 
 ## Policy example
 
@@ -40,9 +43,15 @@ func main() {
 		},
 	}
 
-	if err := config.Validate(); err != nil {
+	producer, err := rabbitmqqueue.OpenProducer(context.Background(), config, rabbitmqqueue.ProducerConfig{
+		Limits:         rabbitmqqueue.DefaultLimits(),
+		MaxOutstanding: 256,
+		PublishTimeout: 5 * time.Second,
+	})
+	if err != nil {
 		panic(err)
 	}
+	defer producer.Close(context.Background())
 }
 ```
 
@@ -55,6 +64,8 @@ topology-management mechanism.
 - Publisher confirmation and consumer acknowledgement are separate effects.
 - Cancellation or connection loss after transmission can be ambiguous.
 - Mandatory returns must be reconciled with confirms before acceptance.
+- The current producer retries bounded startup attempts but reaches a terminal
+  unavailable state after runtime channel or connection loss.
 - Manual settlement provides at-least-once processing; applications remain
   responsible for idempotency.
 - The package does not implement RabbitMQ Streams, application schemas,

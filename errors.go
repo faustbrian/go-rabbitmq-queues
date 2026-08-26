@@ -41,4 +41,18 @@ var (
 	ErrOutstandingConfirmLimit = errors.New("rabbitmqqueue: outstanding confirm limit reached")
 	// ErrInvalidPublishCorrelation means a publish sequence or internal token is invalid or reused.
 	ErrInvalidPublishCorrelation = errors.New("rabbitmqqueue: invalid publish correlation")
+	// ErrContextRequired means an operation received a nil context.
+	ErrContextRequired = errors.New("rabbitmqqueue: context is required")
+	// ErrProducerClosed means the producer no longer accepts publications.
+	ErrProducerClosed = errors.New("rabbitmqqueue: producer is closed")
+	// ErrProducerUnavailable means producer setup or its event channel failed.
+	ErrProducerUnavailable = errors.New("rabbitmqqueue: producer is unavailable")
+	// ErrPublishReturned means mandatory routing returned the publication.
+	ErrPublishReturned = errors.New("rabbitmqqueue: publication was returned")
+	// ErrPublishRejected means the broker negatively confirmed the publication.
+	ErrPublishRejected = errors.New("rabbitmqqueue: publication was rejected")
+	// ErrPublishAmbiguous means transmission began but no definitive broker result was observed.
+	ErrPublishAmbiguous = errors.New("rabbitmqqueue: publication outcome is ambiguous")
+	// ErrReservedHeader means application metadata collides with package-owned correlation state.
+	ErrReservedHeader = errors.New("rabbitmqqueue: reserved header")
 )

@@ -29,8 +29,12 @@
       "tag_prefix": "v",
       "owned_dependencies": [],
       "reverse_owned_dependencies": [],
-      "external_runtime_dependencies": [],
-      "required_services": [],
+      "external_runtime_dependencies": [
+        "github.com/rabbitmq/amqp091-go"
+      ],
+      "required_services": [
+        "rabbitmq"
+      ],
       "build_tags": [],
       "test_tags": [],
       "interoperability_tools": [],

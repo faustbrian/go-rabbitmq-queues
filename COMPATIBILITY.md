@@ -14,9 +14,10 @@ Research and initial local policy tests use these immutable inputs as of
 | Go | `go1.27.0` |
 | Initial local OS/architecture | Darwin 27.0.0 arm64 |
 
-The container pin is the intended Linux arm64 broker fixture. No container,
-cluster, operator, TLS, failure, or PHP interoperability claim is established
-by the initial local policy tests.
+The container pin is the intended Linux arm64 broker fixture. Local unit tests
+exercise TLS configuration and the AMQP client boundary without contacting a
+broker. No container, live TLS handshake, cluster, operator, failure, or PHP
+interoperability claim is established by those tests.
 
 ## Authoritative sources
 
