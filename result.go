@@ -35,3 +35,14 @@ type PublishResult struct {
 	State  PublishState
 	Return *Return
 }
+
+// Valid reports whether the state and mandatory-return detail form a canonical outcome.
+func (result PublishResult) Valid() bool {
+	if !result.State.Valid() {
+		return false
+	}
+	if result.State == PublishReturned {
+		return result.Return != nil
+	}
+	return result.Return == nil
+}

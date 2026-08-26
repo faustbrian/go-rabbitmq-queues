@@ -37,4 +37,8 @@ var (
 	ErrInvalidExpiration = errors.New("rabbitmqqueue: invalid expiration")
 	// ErrInvalidPublication means publication routing or properties are invalid.
 	ErrInvalidPublication = errors.New("rabbitmqqueue: invalid publication")
+	// ErrOutstandingConfirmLimit means the bounded in-flight publish window is full.
+	ErrOutstandingConfirmLimit = errors.New("rabbitmqqueue: outstanding confirm limit reached")
+	// ErrInvalidPublishCorrelation means a publish sequence or internal token is invalid or reused.
+	ErrInvalidPublishCorrelation = errors.New("rabbitmqqueue: invalid publish correlation")
 )
