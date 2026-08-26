@@ -6,6 +6,8 @@
 
 - Organize detailed guarantees behind a concise package overview and
   documentation index.
+- Document the verified `go-queue/rabbitmq` parity gaps, adapter prerequisites,
+  staged adoption, and rollback gate.
 
 ### Added
 
