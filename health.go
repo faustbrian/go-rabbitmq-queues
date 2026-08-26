@@ -90,6 +90,12 @@ func (consumer *Consumer) Liveness() Liveness {
 
 // Readiness reports whether the consumer currently admits broker deliveries.
 func (consumer *Consumer) Readiness() Readiness {
+	consumer.admissionMu.Lock()
+	paused := consumer.paused
+	consumer.admissionMu.Unlock()
+	if paused {
+		return ReadinessNotReady
+	}
 	consumer.stateMu.Lock()
 	defer consumer.stateMu.Unlock()
 	if consumer.stopping || consumer.recovering || consumer.terminalErr != nil || consumer.stopped {

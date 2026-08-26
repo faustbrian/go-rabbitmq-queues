@@ -86,6 +86,80 @@ func TestOpenConsumerRecoversRuntimeLossWithoutDuplicatingConsumer(t *testing.T)
 	}
 }
 
+func TestPausedConsumerRecoversClosedDeliveryStreamBeforeResume(t *testing.T) {
+	t.Parallel()
+
+	connection := testConnectionConfig()
+	connection.Recovery = RecoveryPolicy{MaxAttempts: 1, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
+	first := newFakeConsumerChannel()
+	second := newFakeConsumerChannel()
+	dialed := make(chan int, 2)
+	var dialCalls atomic.Int32
+	consumer, err := openConsumerWith(
+		t.Context(),
+		connection,
+		testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (consumerChannel, io.Closer, error) {
+			attempt := int(dialCalls.Add(1))
+			dialed <- attempt
+			if attempt == 1 {
+				return first, &concurrentCountingCloser{}, nil
+			}
+			return second, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("openConsumerWith(): %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	<-dialed
+
+	if err := consumer.Pause(); err != nil {
+		t.Fatalf("Pause(): %v", err)
+	}
+	pending := make(chan struct{})
+	go func() {
+		first.deliveries <- testAMQPDelivery(54)
+		close(pending)
+	}()
+	select {
+	case <-pending:
+	case <-time.After(time.Second):
+		t.Fatal("paused consumer did not retain a broker delivery")
+	}
+	first.cancelOnce.Do(func() { close(first.deliveries) })
+	select {
+	case attempt := <-dialed:
+		if attempt != 2 {
+			t.Fatalf("recovery dial = %d, want second attempt", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("paused consumer did not recover a closed delivery stream")
+	}
+	if consumer.Readiness() != ReadinessNotReady {
+		t.Fatalf("recovered paused readiness = %q, want not ready", consumer.Readiness())
+	}
+	select {
+	case settled := <-first.settled:
+		t.Fatalf("failed paused generation settled pending delivery: %#v", settled)
+	default:
+	}
+
+	if err := consumer.Resume(); err != nil {
+		t.Fatalf("Resume(): %v", err)
+	}
+	second.deliveries <- testAMQPDelivery(53)
+	select {
+	case settled := <-second.settled:
+		if settled.method != SettlementAcknowledge || settled.tag != 53 {
+			t.Fatalf("resumed recovered settlement = %#v, want acknowledgement", settled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resumed recovered consumer did not settle delivery")
+	}
+}
+
 func TestConsumerRuntimeRecoveryExhaustionBecomesTerminal(t *testing.T) {
 	t.Parallel()
 

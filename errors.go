@@ -71,6 +71,8 @@ var (
 	ErrInvalidDelivery = errors.New("rabbitmqqueue: invalid delivery")
 	// ErrInvalidSettlement means a handler requested an undefined settlement operation.
 	ErrInvalidSettlement = errors.New("rabbitmqqueue: invalid settlement")
+	// ErrConsumerClosed means a stopped consumer cannot change admission state.
+	ErrConsumerClosed = errors.New("rabbitmqqueue: consumer is closed")
 	// ErrConsumerUnavailable means consumer setup, delivery, or settlement reached a terminal state.
 	ErrConsumerUnavailable = errors.New("rabbitmqqueue: consumer is unavailable")
 )

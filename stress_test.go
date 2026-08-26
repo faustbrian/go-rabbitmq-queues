@@ -153,3 +153,66 @@ func TestConsumerConcurrencyStressDrainsAndClosesCleanly(t *testing.T) {
 		t.Fatalf("clean close state = active %d cancel %d channel close %d", active.Load(), channel.cancelCount(), channel.closeCount())
 	}
 }
+
+func TestConsumerConcurrentPauseResumeRemainsUsable(t *testing.T) {
+	const (
+		callers    = 8
+		iterations = 128
+		deliveries = 64
+	)
+	config := testConsumerConfig()
+	config.Prefetch = 16
+	config.Concurrency = 4
+	channel := newFakeConsumerChannel()
+	channel.deliveries = make(chan amqp.Delivery, deliveries)
+	channel.settled = make(chan fakeConsumerSettlement, deliveries)
+	consumer, err := newConsumerFromChannel(
+		t.Context(),
+		config,
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		channel,
+		io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+
+	start := make(chan struct{})
+	var calls sync.WaitGroup
+	for caller := range callers {
+		calls.Add(1)
+		go func(caller int) {
+			defer calls.Done()
+			<-start
+			for iteration := range iterations {
+				if (caller+iteration)%2 == 0 {
+					if err := consumer.Pause(); err != nil {
+						t.Errorf("Pause(): %v", err)
+						return
+					}
+					continue
+				}
+				if err := consumer.Resume(); err != nil {
+					t.Errorf("Resume(): %v", err)
+					return
+				}
+			}
+		}(caller)
+	}
+	close(start)
+	for index := range deliveries {
+		channel.deliveries <- testAMQPDelivery(uint64(index + 1))
+	}
+	calls.Wait()
+	if err := consumer.Resume(); err != nil {
+		t.Fatalf("final Resume(): %v", err)
+	}
+	for range deliveries {
+		if settlement := <-channel.settled; settlement.method != SettlementAcknowledge {
+			t.Fatalf("settlement = %#v, want acknowledge", settlement)
+		}
+	}
+	if err := consumer.Close(context.Background()); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+}

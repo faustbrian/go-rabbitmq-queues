@@ -140,6 +140,42 @@ func TestConsumerHealthSeparatesTemporaryDependencyFailureFromLiveness(t *testin
 	assertHealth(t, consumer.Liveness(), LivenessStopped, consumer.Readiness(), ReadinessNotReady, consumer.DependencyHealth(), DependencyUnknown)
 }
 
+func TestConsumerHealthReflectsPausedAdmission(t *testing.T) {
+	t.Parallel()
+
+	consumer, err := newConsumerFromChannel(
+		t.Context(),
+		testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		newFakeConsumerChannel(),
+		&countingCloser{},
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+
+	if err := consumer.Pause(); err != nil {
+		t.Fatalf("Pause(): %v", err)
+	}
+	assertHealth(
+		t,
+		consumer.Liveness(), LivenessLive,
+		consumer.Readiness(), ReadinessNotReady,
+		consumer.DependencyHealth(), DependencyAvailable,
+	)
+
+	if err := consumer.Resume(); err != nil {
+		t.Fatalf("Resume(): %v", err)
+	}
+	assertHealth(
+		t,
+		consumer.Liveness(), LivenessLive,
+		consumer.Readiness(), ReadinessReady,
+		consumer.DependencyHealth(), DependencyAvailable,
+	)
+}
+
 func TestConsumerHealthReportsTerminalRecoveryExhaustion(t *testing.T) {
 	t.Parallel()
 

@@ -184,6 +184,106 @@ func TestConsumerDrainStopsIntakeWithoutClosingOwnedResources(t *testing.T) {
 	}
 }
 
+func TestConsumerPauseAndResumeTemporarilyStopsHandlerAdmission(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	started := make(chan struct{}, 1)
+	consumer, err := newConsumerFromChannel(
+		t.Context(), testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) {
+			started <- struct{}{}
+			return Acknowledge(), nil
+		},
+		channel,
+		&countingCloser{},
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+
+	if err := consumer.Pause(); err != nil {
+		t.Fatalf("Pause(): %v", err)
+	}
+	if err := consumer.Pause(); err != nil {
+		t.Fatalf("idempotent Pause(): %v", err)
+	}
+	channel.deliveries <- testAMQPDelivery(51)
+	select {
+	case <-started:
+		t.Fatal("paused consumer admitted a new handler")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if channel.cancelCount() != 0 || channel.closeCount() != 0 {
+		t.Fatalf("pause changed generation ownership: cancel %d close %d", channel.cancelCount(), channel.closeCount())
+	}
+
+	if err := consumer.Resume(); err != nil {
+		t.Fatalf("Resume(): %v", err)
+	}
+	if err := consumer.Resume(); err != nil {
+		t.Fatalf("idempotent Resume(): %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("resumed consumer did not admit the pending delivery")
+	}
+	if settled := <-channel.settled; settled.method != SettlementAcknowledge || settled.tag != 51 {
+		t.Fatalf("resumed settlement = %#v, want acknowledgement", settled)
+	}
+
+	if err := consumer.Pause(); err != nil {
+		t.Fatalf("Pause() before close: %v", err)
+	}
+	if err := consumer.Close(t.Context()); err != nil {
+		t.Fatalf("Close() while paused: %v", err)
+	}
+	if err := consumer.Pause(); !errors.Is(err, ErrConsumerClosed) {
+		t.Fatalf("Pause() after close error = %v, want %v", err, ErrConsumerClosed)
+	}
+	if err := consumer.Resume(); !errors.Is(err, ErrConsumerClosed) {
+		t.Fatalf("Resume() after close error = %v, want %v", err, ErrConsumerClosed)
+	}
+}
+
+func TestConsumerPauseAllowsAlreadyAdmittedHandlerToSettle(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	consumer, err := newConsumerFromChannel(
+		t.Context(), testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) {
+			close(started)
+			<-release
+			return Acknowledge(), nil
+		},
+		channel,
+		&countingCloser{},
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+
+	channel.deliveries <- testAMQPDelivery(52)
+	<-started
+	if err := consumer.Pause(); err != nil {
+		t.Fatalf("Pause(): %v", err)
+	}
+	close(release)
+	select {
+	case settled := <-channel.settled:
+		if settled.method != SettlementAcknowledge || settled.tag != 52 {
+			t.Fatalf("admitted settlement = %#v, want acknowledgement", settled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("paused consumer did not finish an admitted handler")
+	}
+}
+
 func TestConsumerCloseCleansResourcesAfterCancelFailure(t *testing.T) {
 	t.Parallel()
 

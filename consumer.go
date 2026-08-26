@@ -51,13 +51,18 @@ type Consumer struct {
 	handler  DeliveryHandler
 	recovery *consumerRecovery
 
-	lifetimeContext context.Context
-	stopLifetime    context.CancelFunc
-	recoveryContext context.Context
-	stopRecovery    context.CancelFunc
-	jobs            chan consumerEnvelope
-	done            chan struct{}
-	observations    *observationStream
+	lifetimeContext  context.Context
+	stopLifetime     context.CancelFunc
+	recoveryContext  context.Context
+	stopRecovery     context.CancelFunc
+	jobs             chan consumerEnvelope
+	done             chan struct{}
+	observations     *observationStream
+	admissionChanged chan struct{}
+
+	admissionMu sync.Mutex
+	paused      bool
+	resume      chan struct{}
 
 	stateMu     sync.Mutex
 	stopping    bool
@@ -106,8 +111,9 @@ func newConsumerFromChannelWithRecovery(
 		lifetimeContext: lifetimeContext, stopLifetime: stopLifetime,
 		recoveryContext: recoveryContext, stopRecovery: stopRecovery,
 		jobs: make(chan consumerEnvelope, config.Prefetch), done: make(chan struct{}),
-		observations: newObservationStream(ObservationConsumer, observationBufferSize),
-		generation:   generation,
+		observations:     newObservationStream(ObservationConsumer, observationBufferSize),
+		admissionChanged: make(chan struct{}, 1),
+		generation:       generation,
 	}
 	consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationConnected})
 	go consumer.run(generation)
@@ -182,6 +188,7 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 			defer workers.Done()
 			for envelope := range consumer.jobs {
 				consumer.handle(envelope)
+				consumer.signalAdmissionChanged()
 			}
 		}()
 	}
@@ -224,9 +231,37 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 }
 
 func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool {
+	// RabbitMQ limits unsettled deliveries to Prefetch. The extra slot keeps the
+	// delivery stream selectable so its closure remains visible while paused.
+	pending := make([]consumerEnvelope, consumer.config.Prefetch+1)
+	pendingHead := 0
+	pendingCount := 0
 	for {
+		consumer.admissionMu.Lock()
+		paused := consumer.paused
+		resume := consumer.resume
+		if pendingCount > 0 && !paused {
+			select {
+			case consumer.jobs <- pending[pendingHead]:
+				pending[pendingHead] = consumerEnvelope{}
+				pendingHead = (pendingHead + 1) % len(pending)
+				pendingCount--
+				consumer.admissionMu.Unlock()
+				continue
+			default:
+			}
+		}
+		consumer.admissionMu.Unlock()
+		if !paused {
+			resume = nil
+		}
+		deliveries := generation.deliveries
+		if (!paused && pendingCount > 0) || pendingCount == len(pending) {
+			deliveries = nil
+		}
+
 		select {
-		case source, open := <-generation.deliveries:
+		case source, open := <-deliveries:
 			if !open {
 				return !consumer.isStopping()
 			}
@@ -244,14 +279,15 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 			if len(delivery.Deaths) > 0 {
 				consumer.observe(Observation{Kind: ObservationDeadLetter, Outcome: ObservationDeadLettered})
 			}
-			if len(consumer.jobs) == cap(consumer.jobs) {
+			if pendingCount+len(consumer.jobs) >= consumer.config.Prefetch {
 				consumer.observe(Observation{Kind: ObservationBacklogPressure, Outcome: ObservationBacklogFull})
 			}
-			select {
-			case consumer.jobs <- consumerEnvelope{delivery: delivery, tag: source.DeliveryTag, generation: generation}:
-			case <-consumer.recoveryContext.Done():
-				return false
+			pending[(pendingHead+pendingCount)%len(pending)] = consumerEnvelope{
+				delivery: delivery, tag: source.DeliveryTag, generation: generation,
 			}
+			pendingCount++
+		case <-resume:
+		case <-consumer.admissionChanged:
 		case <-generation.failure:
 			return true
 		case <-consumer.recoveryContext.Done():
@@ -398,6 +434,52 @@ func (consumer *Consumer) Err() error {
 	consumer.stateMu.Lock()
 	defer consumer.stateMu.Unlock()
 	return consumer.terminalErr
+}
+
+// Pause stops new handler admission without cancelling the active broker
+// consumer. Already admitted handlers continue through settlement. Up to the
+// configured prefetch may be held unsettled until Resume. Pause is idempotent.
+func (consumer *Consumer) Pause() error {
+	consumer.admissionMu.Lock()
+	defer consumer.admissionMu.Unlock()
+	if consumer.closed() {
+		return ErrConsumerClosed
+	}
+	if !consumer.paused {
+		consumer.paused = true
+		consumer.resume = make(chan struct{})
+		consumer.signalAdmissionChanged()
+	}
+	return nil
+}
+
+// Resume permits handler admission after Pause. It is idempotent.
+func (consumer *Consumer) Resume() error {
+	consumer.admissionMu.Lock()
+	defer consumer.admissionMu.Unlock()
+	if consumer.closed() {
+		return ErrConsumerClosed
+	}
+	if consumer.paused {
+		consumer.paused = false
+		close(consumer.resume)
+		consumer.resume = nil
+		consumer.signalAdmissionChanged()
+	}
+	return nil
+}
+
+func (consumer *Consumer) closed() bool {
+	consumer.stateMu.Lock()
+	defer consumer.stateMu.Unlock()
+	return consumer.stopping || consumer.stopped || consumer.terminalErr != nil
+}
+
+func (consumer *Consumer) signalAdmissionChanged() {
+	select {
+	case consumer.admissionChanged <- struct{}{}:
+	default:
+	}
 }
 
 // Drain cancels broker intake and waits for admitted handlers without closing
