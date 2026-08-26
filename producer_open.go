@@ -9,8 +9,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/url"
-	"strconv"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -186,29 +184,8 @@ func dialAMQPProducerWith(
 	credentials Credentials,
 	open amqpOpenFunc,
 ) (producerChannel, io.Closer, error) {
-	tlsConfig, err := buildTLSConfig(connection.TLS)
+	address, amqpConfig, deadline, err := buildAMQPClientConfig(ctx, endpoint, connection, credentials)
 	if err != nil {
-		return nil, nil, ErrProducerUnavailable
-	}
-	address := (&url.URL{
-		Scheme: "amqps",
-		Host:   net.JoinHostPort(endpoint.Host, strconv.Itoa(int(endpoint.Port))),
-	}).String()
-	dialer := &net.Dialer{Timeout: connection.DialTimeout}
-	amqpConfig := amqp.Config{
-		SASL: []amqp.Authentication{&amqp.PlainAuth{
-			Username: credentials.Username,
-			Password: string(credentials.Password),
-		}},
-		Vhost:           connection.VirtualHost,
-		Heartbeat:       connection.Heartbeat,
-		TLSClientConfig: tlsConfig,
-		Dial: func(network, address string) (net.Conn, error) {
-			return boundedNetworkDial(ctx, dialer.DialContext, network, address)
-		},
-	}
-	deadline, ok := ctx.Deadline()
-	if !ok {
 		return nil, nil, ErrProducerUnavailable
 	}
 	channel, resource, err := open(address, amqpConfig, deadline)

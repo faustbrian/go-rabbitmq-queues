@@ -12,4 +12,7 @@
 - Add an independent synchronous producer with mandatory routing, publisher
   confirms, endpoint rotation, credential refresh, verified TLS, bounded
   startup retry, graceful close, and explicit ambiguous outcomes.
+- Add an independent bounded consumer with manual ACK, NACK, reject and
+  delegated settlement, owned delivery snapshots, dead-letter history,
+  per-consumer QoS, explicit failure policy, and graceful drain/close.
 - Pin RabbitMQ 4.3 compatibility research and queue capability distinctions.

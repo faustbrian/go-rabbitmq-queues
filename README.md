@@ -8,13 +8,15 @@ backend-neutral `go-queue` job API.
 
 ## Status
 
-The repository contains connection, topology, message, and publisher-outcome
-policy foundations plus an independent synchronous producer. The producer uses
-mandatory routing, exact confirm/return correlation, bounded startup retry,
-credential refresh, and verified TLS. Bounded asynchronous publishing,
-consumers, settlement, runtime recovery, health, observability, broker and
-failover evidence, PHP interoperability, and optional OpenTelemetry remain in
-progress.
+The repository contains connection, topology, message, publisher-outcome,
+delivery, and settlement policy foundations plus independent synchronous
+producer and consumer resources. The producer uses mandatory routing, exact
+confirm/return correlation, bounded startup retry, credential refresh, and
+verified TLS. The consumer uses manual settlement, bounded QoS and concurrency,
+bounded delivery snapshots, explicit failure policy, and graceful drain/close.
+Bounded asynchronous publishing, runtime recovery, health, observability,
+broker and failover evidence, PHP interoperability, and optional OpenTelemetry
+remain in progress.
 
 ## Policy example
 
@@ -52,6 +54,24 @@ func main() {
 		panic(err)
 	}
 	defer producer.Close(context.Background())
+
+	consumer, err := rabbitmqqueue.OpenConsumer(context.Background(), config, rabbitmqqueue.ConsumerConfig{
+		Limits:         rabbitmqqueue.DefaultLimits(),
+		Queue:          rabbitmqqueue.QueueReference{Name: "orders", Type: rabbitmqqueue.QueueQuorum},
+		Name:           "orders-worker",
+		Prefetch:       32,
+		Concurrency:    8,
+		HandlerTimeout: 30 * time.Second,
+		MaxRequeues:    2,
+		Failure:        rabbitmqqueue.Reject(false),
+	}, func(ctx context.Context, delivery rabbitmqqueue.Delivery) (rabbitmqqueue.Settlement, error) {
+		// Persist the application effect before acknowledging the delivery.
+		return rabbitmqqueue.Acknowledge(), nil
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer consumer.Close(context.Background())
 }
 ```
 
@@ -66,8 +86,15 @@ topology-management mechanism.
 - Mandatory returns must be reconciled with confirms before acceptance.
 - The current producer retries bounded startup attempts but reaches a terminal
   unavailable state after runtime channel or connection loss.
+- The current consumer retries bounded startup attempts but reaches a terminal
+  unavailable state after runtime delivery, settlement, channel, or connection
+  loss.
 - Manual settlement provides at-least-once processing; applications remain
   responsible for idempotency.
+- Handler, settlement, and shutdown work is bounded by the configured handler
+  timeout; handlers must observe cancellation for graceful draining.
+- Requeue is bounded by delivery state and configured policy. The package does
+  not automatically publish replacement messages.
 - The package does not implement RabbitMQ Streams, application schemas,
   exactly-once processing, an outbox, or a generic messaging interface.
 

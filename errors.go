@@ -55,4 +55,12 @@ var (
 	ErrPublishAmbiguous = errors.New("rabbitmqqueue: publication outcome is ambiguous")
 	// ErrReservedHeader means application metadata collides with package-owned correlation state.
 	ErrReservedHeader = errors.New("rabbitmqqueue: reserved header")
+	// ErrInvalidConsumer means consumer identity, bounds, or failure policy is invalid.
+	ErrInvalidConsumer = errors.New("rabbitmqqueue: invalid consumer")
+	// ErrInvalidDelivery means broker delivery data exceeds the safe public policy surface.
+	ErrInvalidDelivery = errors.New("rabbitmqqueue: invalid delivery")
+	// ErrInvalidSettlement means a handler requested an undefined settlement operation.
+	ErrInvalidSettlement = errors.New("rabbitmqqueue: invalid settlement")
+	// ErrConsumerUnavailable means consumer setup, delivery, or settlement reached a terminal state.
+	ErrConsumerUnavailable = errors.New("rabbitmqqueue: consumer is unavailable")
 )
