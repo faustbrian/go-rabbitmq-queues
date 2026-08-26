@@ -32,6 +32,9 @@ Important RabbitMQ 4.3 distinctions:
 - quorum confirms are emitted after replication to a member quorum;
 - AMQP 0-9-1 `basic.nack` does not increment the 4.3 quorum
   `x-delivery-count`, while `basic.reject` and connection loss do;
+- `Delivery.AcquiredCount` preserves RabbitMQ 4.3's `x-acquired-count`, which
+  tracks assignments to a consumer, while `Delivery.DeliveryCount` preserves
+  the distinct failed-delivery counter used by the broker delivery limit;
 - quorum `reject-publish-dlx` overflow is unsupported and `reject-publish` may
   overshoot a length limit by in-flight messages;
 - requeue loops remain an application/client-policy risk even where a quorum

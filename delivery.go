@@ -17,6 +17,7 @@ const (
 )
 
 const (
+	acquiredCountHeader = "x-acquired-count"
 	deliveryCountHeader = "x-delivery-count"
 	deathHeader         = "x-death"
 )
@@ -154,6 +155,7 @@ type Delivery struct {
 	Exchange        string
 	RoutingKey      string
 	Redelivered     bool
+	AcquiredCount   *uint64
 	DeliveryCount   *uint64
 	Deaths          []Death
 }
@@ -184,11 +186,18 @@ func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, er
 	if err != nil {
 		return Delivery{}, err
 	}
-	deliveryCount, err := deliveryCount(source.Headers)
+	acquiredCount, err := deliveryCounter(source.Headers, acquiredCountHeader)
 	if err != nil {
 		return Delivery{}, err
 	}
-	if deliveryCount != nil {
+	deliveryCount, err := deliveryCounter(source.Headers, deliveryCountHeader)
+	if err != nil {
+		return Delivery{}, err
+	}
+	for _, count := range []*uint64{acquiredCount, deliveryCount} {
+		if count == nil {
+			continue
+		}
 		metadataBytes += 8
 		if metadataBytes > config.Limits.MaxHeaderBytes {
 			return Delivery{}, ErrInvalidDelivery
@@ -211,7 +220,8 @@ func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, er
 		ReplyTo: source.ReplyTo, Type: source.Type, UserID: source.UserId, AppID: source.AppId,
 		Timestamp: source.Timestamp, Expiration: expiration, Priority: source.Priority, DeliveryMode: mode,
 		Consumer: source.ConsumerTag, Exchange: source.Exchange, RoutingKey: source.RoutingKey,
-		Redelivered: source.Redelivered, DeliveryCount: deliveryCount, Deaths: deaths,
+		Redelivered: source.Redelivered, AcquiredCount: acquiredCount,
+		DeliveryCount: deliveryCount, Deaths: deaths,
 	}, nil
 }
 
@@ -229,7 +239,8 @@ func parseDeliveryExpiration(value string) (time.Duration, error) {
 func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
 	keys := make([]string, 0, len(table))
 	for key := range table {
-		if key != deathHeader && key != deliveryCountHeader && key != publishTokenHeader {
+		if key != acquiredCountHeader && key != deathHeader &&
+			key != deliveryCountHeader && key != publishTokenHeader {
 			keys = append(keys, key)
 		}
 	}
@@ -278,8 +289,8 @@ func stableDeliveryHeader(key string, value any) (Header, int, bool) {
 	}
 }
 
-func deliveryCount(table amqp.Table) (*uint64, error) {
-	value, exists := table[deliveryCountHeader]
+func deliveryCounter(table amqp.Table, key string) (*uint64, error) {
+	value, exists := table[key]
 	if !exists {
 		return nil, nil
 	}

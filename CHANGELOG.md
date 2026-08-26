@@ -44,6 +44,8 @@
 - Add an independent bounded consumer with manual ACK, NACK, reject and
   delegated settlement, owned delivery snapshots, dead-letter history,
   per-consumer QoS, explicit failure policy, and graceful drain/close.
+- Preserve RabbitMQ 4.3 acquired and failed-delivery counters as separate
+  bounded delivery metadata.
 - Add signed consumer priority and classic-only exclusive-consumer policy with
   single-active-consumer conflict validation and recovery preservation.
 - Add explicit client-owned transient consumers that keep server-named classic

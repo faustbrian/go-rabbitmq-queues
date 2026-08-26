@@ -178,6 +178,7 @@ func TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory(t *testing.T)
 			"schema-version":   "1",
 			"attempt":          int64(2),
 			"binary":           binary,
+			"x-acquired-count": int64(4),
 			"x-delivery-count": int64(3),
 			"x-death": []any{amqp.Table{
 				"count": int64(2), "reason": "rejected", "queue": "orders",
@@ -210,6 +211,9 @@ func TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory(t *testing.T)
 	if delivery.DeliveryCount == nil || *delivery.DeliveryCount != 3 {
 		t.Fatalf("delivery count = %#v, want 3", delivery.DeliveryCount)
 	}
+	if delivery.AcquiredCount == nil || *delivery.AcquiredCount != 4 {
+		t.Fatalf("acquired count = %#v, want 4", delivery.AcquiredCount)
+	}
 	if len(delivery.Deaths) != 1 || delivery.Deaths[0].Count != 2 ||
 		delivery.Deaths[0].Reason != "rejected" || delivery.Deaths[0].Queue != "orders" ||
 		delivery.Deaths[0].Exchange != "events" || len(delivery.Deaths[0].RoutingKeys) != 1 ||
@@ -223,6 +227,32 @@ func TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory(t *testing.T)
 		if header.Key == "binary" && header.Bytes[0] != 1 {
 			t.Fatal("binary header was aliased")
 		}
+	}
+}
+
+func TestDeliveryConversionBoundsCombinedBrokerCounters(t *testing.T) {
+	t.Parallel()
+
+	source := testAMQPDelivery(45)
+	source.Headers = amqp.Table{
+		"x-acquired-count": int64(4),
+		"x-delivery-count": int64(3),
+	}
+	config := testConsumerConfig()
+	config.Limits.MaxHeaderBytes = 16
+	delivery, err := deliveryFromAMQP(source, config)
+	if err != nil {
+		t.Fatalf("deliveryFromAMQP() error = %v", err)
+	}
+	if len(delivery.Headers) != 0 || delivery.AcquiredCount == nil ||
+		*delivery.AcquiredCount != 4 || delivery.DeliveryCount == nil ||
+		*delivery.DeliveryCount != 3 {
+		t.Fatalf("bounded broker counters = %#v", delivery)
+	}
+
+	config.Limits.MaxHeaderBytes = 15
+	if _, err := deliveryFromAMQP(source, config); !errors.Is(err, ErrInvalidDelivery) {
+		t.Fatalf("deliveryFromAMQP() error = %v, want invalid delivery", err)
 	}
 }
 
@@ -279,13 +309,14 @@ func TestDeliveryConversionRejectsUnsafeBrokerInput(t *testing.T) {
 		"time": time.Unix(-1, 0),
 	}
 	tests := map[string]amqp.Delivery{
-		"payload":            {Body: make([]byte, DefaultLimits().MaxPayloadBytes+1), ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
-		"zero tag":           {ConsumerTag: "consumer", RoutingKey: "key"},
-		"routing":            {ConsumerTag: "consumer", RoutingKey: "bad\nkey", DeliveryTag: 1},
-		"unsupported header": {Headers: amqp.Table{"nested": amqp.Table{"key": "value"}}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
-		"invalid count":      {Headers: amqp.Table{"x-delivery-count": int64(-1)}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
-		"too many deaths":    {Headers: amqp.Table{"x-death": make([]any, MaxDeathRecords+1)}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
-		"pre-epoch death":    {Headers: amqp.Table{"x-death": []any{invalidDeath}}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
+		"payload":                {Body: make([]byte, DefaultLimits().MaxPayloadBytes+1), ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
+		"zero tag":               {ConsumerTag: "consumer", RoutingKey: "key"},
+		"routing":                {ConsumerTag: "consumer", RoutingKey: "bad\nkey", DeliveryTag: 1},
+		"unsupported header":     {Headers: amqp.Table{"nested": amqp.Table{"key": "value"}}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
+		"invalid delivery count": {Headers: amqp.Table{"x-delivery-count": int64(-1)}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
+		"invalid acquired count": {Headers: amqp.Table{"x-acquired-count": int64(-1)}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
+		"too many deaths":        {Headers: amqp.Table{"x-death": make([]any, MaxDeathRecords+1)}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
+		"pre-epoch death":        {Headers: amqp.Table{"x-death": []any{invalidDeath}}, ConsumerTag: "consumer", RoutingKey: "key", DeliveryTag: 1},
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {
