@@ -44,3 +44,11 @@ Important RabbitMQ 4.3 distinctions:
 | `rabbitmqqueue` | Bounds, lifecycle, exact publish correlation, ambiguity, settlement policy, observations |
 | Infrastructure | Exchanges, queues, bindings, policies, TLS identities, users, permissions, cluster sizing |
 | Application | Payload schema, idempotency, business retries, outbox transaction, handler side effects |
+
+AMQP passive declarations compare exchange and queue identity and declaration
+arguments, closing the channel when the entity is missing or inequivalent.
+AMQP 0-9-1 provides no passive binding inspection method. Production binding
+equivalence therefore remains an operator/infrastructure gate; the package
+rejects passive binding requests instead of calling the mutating bind method.
+Development-only declarations can create an explicitly modeled binding after
+`PermitDevelopmentTopology` is supplied.

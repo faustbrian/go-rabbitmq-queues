@@ -1,5 +1,14 @@
 package rabbitmqqueue
 
+const (
+	// MaxTopologyExchanges bounds one topology operation's exchange set.
+	MaxTopologyExchanges = 128
+	// MaxTopologyQueues bounds one topology operation's queue set.
+	MaxTopologyQueues = 128
+	// MaxTopologyBindings bounds one development declaration's binding set.
+	MaxTopologyBindings = 512
+)
+
 // ExchangeKind selects a RabbitMQ built-in AMQP exchange algorithm.
 type ExchangeKind string
 
@@ -116,4 +125,147 @@ func (policy TopologyPolicy) Validate() error {
 	default:
 		return ErrInvalidTopology
 	}
+}
+
+// Binding identifies one queue binding without exposing a raw AMQP field table.
+// Arguments are supported only for headers exchanges; other built-in exchange
+// kinds use the explicit routing key.
+type Binding struct {
+	Exchange   string
+	Queue      string
+	RoutingKey string
+	Arguments  []Header
+}
+
+// Topology is one bounded exchange, queue, and binding graph. Passive AMQP
+// verification can compare exchange and queue declarations, but AMQP 0-9-1 has
+// no passive binding method. Bindings therefore require development declaration
+// or separate infrastructure/operator verification.
+type Topology struct {
+	Exchanges []Exchange
+	Queues    []Queue
+	Bindings  []Binding
+}
+
+// TopologyResult returns resolved queue names in Topology.Queues order. This is
+// relevant to development-only server-named queue declaration.
+type TopologyResult struct {
+	QueueNames []string
+}
+
+// Validate checks graph bounds, identities, references, exchange-specific
+// binding rules, and the passive-binding protocol limitation.
+func (topology Topology) Validate(policy TopologyPolicy) error {
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	if len(topology.Exchanges)+len(topology.Queues) == 0 ||
+		len(topology.Exchanges) > MaxTopologyExchanges ||
+		len(topology.Queues) > MaxTopologyQueues ||
+		len(topology.Bindings) > MaxTopologyBindings {
+		return ErrInvalidTopology
+	}
+	if policy.Mode == TopologyPassive && len(topology.Bindings) > 0 {
+		return ErrPassiveBindingVerificationUnsupported
+	}
+
+	exchanges := make(map[string]ExchangeKind, len(topology.Exchanges))
+	for _, exchange := range topology.Exchanges {
+		if err := exchange.Validate(); err != nil {
+			return err
+		}
+		if _, exists := exchanges[exchange.Name]; exists {
+			return ErrInvalidTopology
+		}
+		exchanges[exchange.Name] = exchange.Kind
+	}
+	queues := make(map[string]struct{}, len(topology.Queues))
+	for _, queue := range topology.Queues {
+		if err := queue.Validate(); err != nil {
+			return err
+		}
+		if queue.Name == "" {
+			if policy.Mode != TopologyDeclare {
+				return ErrInvalidTopology
+			}
+			continue
+		}
+		if _, exists := queues[queue.Name]; exists {
+			return ErrInvalidTopology
+		}
+		queues[queue.Name] = struct{}{}
+	}
+	for _, binding := range topology.Bindings {
+		kind, exchangeExists := exchanges[binding.Exchange]
+		_, queueExists := queues[binding.Queue]
+		if !exchangeExists || !queueExists || invalidIdentity(binding.Exchange, 255) ||
+			invalidIdentity(binding.Queue, 255) || len(binding.RoutingKey) > 255 ||
+			containsControl(binding.RoutingKey) || !validBindingArguments(binding.Arguments) {
+			return ErrInvalidTopology
+		}
+		switch kind {
+		case ExchangeDirect, ExchangeTopic:
+			if binding.RoutingKey == "" || len(binding.Arguments) != 0 {
+				return ErrInvalidTopology
+			}
+		case ExchangeFanout:
+			if binding.RoutingKey != "" || len(binding.Arguments) != 0 {
+				return ErrInvalidTopology
+			}
+		case ExchangeHeaders:
+			if binding.RoutingKey != "" || len(binding.Arguments) == 0 {
+				return ErrInvalidTopology
+			}
+		default:
+			return ErrUnsupportedExchangeKind
+		}
+	}
+	return nil
+}
+
+func validBindingArguments(arguments []Header) bool {
+	limits := DefaultLimits()
+	if len(arguments) > limits.MaxHeaderEntries {
+		return false
+	}
+	seen := make(map[string]struct{}, len(arguments))
+	bytes := 0
+	for _, argument := range arguments {
+		if invalidIdentity(argument.Key, limits.MaxNameBytes) || argument.Key == publishTokenHeader {
+			return false
+		}
+		if _, exists := seen[argument.Key]; exists {
+			return false
+		}
+		seen[argument.Key] = struct{}{}
+		bytes += len(argument.Key)
+		switch argument.Kind {
+		case HeaderString:
+			if argument.Bool || argument.Int64 != 0 || argument.Bytes != nil || containsControl(argument.String) {
+				return false
+			}
+			bytes += len(argument.String)
+		case HeaderBool:
+			if argument.String != "" || argument.Int64 != 0 || argument.Bytes != nil {
+				return false
+			}
+			bytes++
+		case HeaderInt64:
+			if argument.String != "" || argument.Bool || argument.Bytes != nil {
+				return false
+			}
+			bytes += 8
+		case HeaderBytes:
+			if argument.String != "" || argument.Bool || argument.Int64 != 0 {
+				return false
+			}
+			bytes += len(argument.Bytes)
+		default:
+			return false
+		}
+		if bytes > limits.MaxHeaderBytes {
+			return false
+		}
+	}
+	return true
 }

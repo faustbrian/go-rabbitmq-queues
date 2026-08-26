@@ -115,6 +115,57 @@ func FuzzPublishTrackerCorrelation(f *testing.F) {
 	})
 }
 
+func FuzzTopologyValidation(f *testing.F) {
+	f.Add(uint8(1), uint8(1), uint16(0), uint8(0), uint8(0))
+	f.Add(uint8(129), uint8(129), uint16(513), uint8(7), uint8(4))
+	f.Fuzz(func(t *testing.T, exchangeCount, queueCount uint8, bindingCount uint16, flags, kind uint8) {
+		topology := Topology{
+			Exchanges: make([]Exchange, int(exchangeCount)),
+			Queues:    make([]Queue, int(queueCount)),
+			Bindings:  make([]Binding, int(bindingCount%600)),
+		}
+		exchangeKinds := []ExchangeKind{
+			ExchangeDirect, ExchangeTopic, ExchangeFanout, ExchangeHeaders,
+			ExchangeKind("unsupported"),
+		}
+		for index := range topology.Exchanges {
+			topology.Exchanges[index] = Exchange{
+				Name: fmt.Sprintf("exchange-%d", index),
+				Kind: exchangeKinds[int(kind)%len(exchangeKinds)], Durable: true,
+			}
+		}
+		for index := range topology.Queues {
+			queueType := QueueClassic
+			if flags&1 != 0 {
+				queueType = QueueQuorum
+			}
+			topology.Queues[index] = Queue{
+				Name: fmt.Sprintf("queue-%d", index), Type: queueType, Durable: true,
+			}
+		}
+		for index := range topology.Bindings {
+			topology.Bindings[index] = Binding{
+				Exchange: "exchange-0", Queue: "queue-0", RoutingKey: "route",
+			}
+		}
+		if flags&2 != 0 && len(topology.Exchanges) > 1 {
+			topology.Exchanges[1].Name = topology.Exchanges[0].Name
+		}
+		policy := TopologyPolicy{Mode: TopologyPassive}
+		if flags&4 != 0 {
+			policy = TopologyPolicy{Mode: TopologyDeclare, Development: PermitDevelopmentTopology()}
+		}
+
+		err := topology.Validate(policy)
+		if !knownTopologyValidationError(err) {
+			t.Fatalf("Topology.Validate() returned an undocumented error type: %T", err)
+		}
+		if repeat := topology.Validate(policy); !errors.Is(repeat, err) {
+			t.Fatalf("Topology.Validate() was not deterministic: first %T, second %T", err, repeat)
+		}
+	})
+}
+
 func fuzzText(size uint16, control bool) string {
 	value := strings.Repeat("a", int(size%48))
 	if control {
@@ -175,6 +226,21 @@ func knownPublicationValidationError(err error) bool {
 		ErrInvalidBounds, ErrInvalidPublication, ErrMessageIDRequired, ErrPayloadTooLarge,
 		ErrInvalidPriority, ErrInvalidExpiration, ErrHeadersTooLarge, ErrInvalidHeader,
 		ErrReservedHeader, ErrDuplicateHeader,
+	} {
+		if errors.Is(err, known) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownTopologyValidationError(err error) bool {
+	if err == nil {
+		return true
+	}
+	for _, known := range []error{
+		ErrInvalidTopology, ErrUnsupportedExchangeKind, ErrUnsupportedQueuePolicy,
+		ErrTopologyMutationDenied, ErrPassiveBindingVerificationUnsupported,
 	} {
 		if errors.Is(err, known) {
 			return true

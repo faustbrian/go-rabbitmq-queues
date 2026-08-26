@@ -21,6 +21,14 @@ var (
 	ErrInvalidTopology = errors.New("rabbitmqqueue: invalid topology")
 	// ErrTopologyMutationDenied means active declaration lacks a development-only permit.
 	ErrTopologyMutationDenied = errors.New("rabbitmqqueue: topology mutation denied")
+	// ErrPassiveBindingVerificationUnsupported means AMQP cannot inspect a binding without mutating it.
+	ErrPassiveBindingVerificationUnsupported = errors.New("rabbitmqqueue: passive binding verification unsupported")
+	// ErrTopologyUnavailable means required topology is missing or could not be inspected.
+	ErrTopologyUnavailable = errors.New("rabbitmqqueue: topology unavailable")
+	// ErrTopologyInequivalent means broker topology exists with incompatible declaration properties.
+	ErrTopologyInequivalent = errors.New("rabbitmqqueue: topology is inequivalent")
+	// ErrTopologyUnauthorized means broker permissions denied topology inspection or declaration.
+	ErrTopologyUnauthorized = errors.New("rabbitmqqueue: topology access denied")
 	// ErrMessageIDRequired means a publication has no stable application message identity.
 	ErrMessageIDRequired = errors.New("rabbitmqqueue: message ID is required")
 	// ErrPayloadTooLarge means a payload exceeds the configured byte limit.

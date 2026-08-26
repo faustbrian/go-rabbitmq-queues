@@ -47,6 +47,20 @@ func main() {
 			MaxAttempts: 8, InitialDelay: 100 * time.Millisecond, MaxDelay: 30 * time.Second,
 		},
 	}
+	_, err := rabbitmqqueue.ApplyTopology(context.Background(), config,
+		rabbitmqqueue.TopologyPolicy{Mode: rabbitmqqueue.TopologyPassive},
+		rabbitmqqueue.Topology{
+			Exchanges: []rabbitmqqueue.Exchange{{
+				Name: "events", Kind: rabbitmqqueue.ExchangeTopic, Durable: true,
+			}},
+			Queues: []rabbitmqqueue.Queue{{
+				Name: "orders", Type: rabbitmqqueue.QueueQuorum, Durable: true,
+			}},
+		},
+	)
+	if err != nil {
+		panic(err)
+	}
 
 	producer, err := rabbitmqqueue.OpenProducer(context.Background(), config, rabbitmqqueue.ProducerConfig{
 		Limits:         rabbitmqqueue.DefaultLimits(),
@@ -80,7 +94,12 @@ func main() {
 
 Production clients use passive topology verification. Active declarations are
 available only behind the explicit development permit and are not a production
-topology-management mechanism.
+topology-management mechanism. AMQP 0-9-1 has no passive binding inspection,
+so passive application checks verify exchange and queue equivalence while the
+Kubernetes operator or other infrastructure control plane verifies bindings.
+Mandatory publishing still reports routing drift as a returned publication.
+Development declarations are ordered, non-transactional AMQP operations and
+can leave a partial test topology when a later declaration fails.
 
 ## Guarantees and boundaries
 
