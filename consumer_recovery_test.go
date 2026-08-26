@@ -323,4 +323,7 @@ func TestConsumerDoesNotSettleSupersededDeliveryOnRecoveredChannel(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("recovered consumer did not remain available after stale settlement failure")
 	}
+	if consumer.Readiness() != ReadinessReady || consumer.DependencyHealth() != DependencyAvailable {
+		t.Fatalf("stale settlement changed recovered health = (%q, %q)", consumer.Readiness(), consumer.DependencyHealth())
+	}
 }

@@ -67,6 +67,9 @@ type Producer struct {
 	stateMu      sync.Mutex
 	closed       bool
 	unavailable  bool
+	recovering   bool
+	terminal     bool
+	stopped      bool
 	blocked      bool
 	active       int
 	drained      chan struct{}
@@ -357,9 +360,21 @@ func (producer *Producer) admit() error {
 	return nil
 }
 
-func (producer *Producer) markUnavailable() {
+func (producer *Producer) markRecovering() {
 	producer.stateMu.Lock()
 	producer.unavailable = true
+	if !producer.closed {
+		producer.recovering = true
+	}
+	producer.stateMu.Unlock()
+}
+
+func (producer *Producer) finishRecovery(recovered bool) {
+	producer.stateMu.Lock()
+	producer.recovering = false
+	if !recovered && !producer.closed {
+		producer.terminal = true
+	}
 	producer.stateMu.Unlock()
 }
 
@@ -368,7 +383,7 @@ func (producer *Producer) failGeneration(tracker *publishTracker, failure chan<-
 	if producer.tracker != tracker {
 		return
 	}
-	producer.markUnavailable()
+	producer.markRecovering()
 	select {
 	case failure <- struct{}{}:
 	default:
@@ -453,7 +468,7 @@ func (producer *Producer) runEvents(
 			return
 		}
 		producer.setBlocked(false)
-		producer.markUnavailable()
+		producer.markRecovering()
 		tracker.failAll(PublishAmbiguous)
 		_ = closeProducerGeneration(channel, resource, generationClose, time.Now().Add(producer.config.PublishTimeout))
 		select {
@@ -461,8 +476,10 @@ func (producer *Producer) runEvents(
 		default:
 		}
 		if !producer.recoverRuntime() {
+			producer.finishRecovery(false)
 			return
 		}
+		producer.finishRecovery(true)
 		returns = producer.returns
 		confirms = producer.confirms
 		connectionClosed = producer.connectionClosed
@@ -599,11 +616,17 @@ func (producer *Producer) Close(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		producer.closeOwnedResources(producer.closeDeadline(ctx))
+		producer.stateMu.Lock()
+		producer.stopped = true
+		producer.stateMu.Unlock()
 		return ctx.Err()
 	case <-drained:
 	}
 
 	producer.closeOwnedResources(producer.closeDeadline(ctx))
+	producer.stateMu.Lock()
+	producer.stopped = true
+	producer.stateMu.Unlock()
 	return producer.resourceErr
 }
 

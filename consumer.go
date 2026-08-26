@@ -60,6 +60,8 @@ type Consumer struct {
 
 	stateMu     sync.Mutex
 	stopping    bool
+	recovering  bool
+	stopped     bool
 	terminalErr error
 	generation  *consumerGeneration
 	resourceErr error
@@ -186,6 +188,7 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 		if !consumer.consumeGeneration(generation) {
 			break
 		}
+		consumer.beginRecovery()
 		if err := consumer.closeGeneration(generation, time.Now().Add(consumer.config.HandlerTimeout)); err != nil {
 			consumer.setResourceError(err)
 			consumer.setTerminalError(ErrConsumerUnavailable)
@@ -199,6 +202,7 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 			break
 		}
 		generation = next
+		consumer.finishRecovery()
 	}
 	consumer.stopRecovery()
 	if consumer.Err() != nil {
@@ -207,6 +211,10 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 	}
 	close(consumer.jobs)
 	workers.Wait()
+	consumer.stateMu.Lock()
+	consumer.recovering = false
+	consumer.stopped = true
+	consumer.stateMu.Unlock()
 	close(consumer.done)
 }
 
@@ -282,10 +290,33 @@ func applySettlement(channel consumerChannel, tag uint64, settlement Settlement)
 }
 
 func (consumer *Consumer) failGeneration(generation *consumerGeneration) {
+	consumer.stateMu.Lock()
+	current := consumer.generation == generation
+	if current && !consumer.stopping && consumer.terminalErr == nil {
+		consumer.recovering = true
+	}
+	consumer.stateMu.Unlock()
+	if !current {
+		return
+	}
 	select {
 	case generation.failure <- struct{}{}:
 	default:
 	}
+}
+
+func (consumer *Consumer) beginRecovery() {
+	consumer.stateMu.Lock()
+	if !consumer.stopping && consumer.terminalErr == nil {
+		consumer.recovering = true
+	}
+	consumer.stateMu.Unlock()
+}
+
+func (consumer *Consumer) finishRecovery() {
+	consumer.stateMu.Lock()
+	consumer.recovering = false
+	consumer.stateMu.Unlock()
 }
 
 func (consumer *Consumer) isStopping() bool {

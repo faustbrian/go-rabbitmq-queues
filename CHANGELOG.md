@@ -21,4 +21,6 @@
   per-consumer QoS, explicit failure policy, and graceful drain/close.
 - Add bounded consumer runtime recovery with complete generation replacement,
   endpoint and credential rotation, and generation-owned settlement.
+- Add separate producer and consumer liveness, readiness, and dependency-health
+  contracts that distinguish temporary recovery from terminal failure.
 - Pin RabbitMQ 4.3 compatibility research and queue capability distinctions.

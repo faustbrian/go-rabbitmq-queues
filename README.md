@@ -16,8 +16,10 @@ refresh, verified TLS, connection-blocked notifications, bounded asynchronous
 admission, and ordered non-atomic batches.
 The consumer uses manual settlement, bounded QoS and concurrency, bounded
 delivery snapshots, explicit failure policy, bounded runtime replacement, and
-graceful drain/close. Health, broader observability, broker and failover
-evidence, PHP interoperability, and optional OpenTelemetry remain in progress.
+graceful drain/close. Producer and consumer resources expose separate liveness,
+readiness, and dependency-health snapshots. Broader observability, broker and
+failover evidence, PHP interoperability, and optional OpenTelemetry remain in
+progress.
 
 ## Policy example
 
@@ -96,6 +98,10 @@ topology-management mechanism.
 - `BlockedNotifications` reports coalesced blocked/unblocked transitions without
   exposing broker reason text; a blocked connection does not by itself retry a
   publication.
+- `Liveness`, `Readiness`, and `DependencyHealth` are separate local snapshots.
+  Bounded recovery and broker blocking remove readiness without declaring the
+  process dead; exhausted recovery is a failed liveness state suitable for
+  supervision.
 - The consumer closes a failed generation before bounded replacement, reapplies
   QoS and consumer identity, and refreshes endpoints and credentials. Work from
   the failed generation is never settled on its replacement; exhausted recovery

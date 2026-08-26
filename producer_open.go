@@ -241,6 +241,7 @@ func (producer *Producer) recoverRuntime() bool {
 		producer.generationClose = &sync.Once{}
 		producer.failure = make(chan struct{}, 1)
 		producer.unavailable = false
+		producer.recovering = false
 		producer.recovery.nextEndpoint = endpointIndex + 1
 		producer.stateMu.Unlock()
 		producer.publishMu.Unlock()
