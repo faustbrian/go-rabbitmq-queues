@@ -15,6 +15,7 @@ type consumerChannel interface {
 	ExchangeDeclarePassive(string, string, bool, bool, bool, bool, amqp.Table) error
 	QueueDeclare(string, bool, bool, bool, bool, amqp.Table) (amqp.Queue, error)
 	QueueBind(string, string, string, bool, amqp.Table) error
+	NotifyCancel(chan string) chan string
 	Qos(int, int, bool) error
 	Consume(string, string, bool, bool, bool, bool, amqp.Table) (<-chan amqp.Delivery, error)
 	Cancel(string, bool) error
@@ -28,16 +29,17 @@ type consumerChannel interface {
 type DeliveryHandler func(context.Context, Delivery) (Settlement, error)
 
 type consumerGeneration struct {
-	channel    consumerChannel
-	resource   io.Closer
-	deliveries <-chan amqp.Delivery
-	failure    chan struct{}
-	closeOnce  sync.Once
-	closeDone  chan struct{}
-	closeErr   error
-	closed     atomic.Bool
-	cancelOnce sync.Once
-	cancelErr  error
+	channel       consumerChannel
+	resource      io.Closer
+	deliveries    <-chan amqp.Delivery
+	cancellations <-chan string
+	failure       chan struct{}
+	closeOnce     sync.Once
+	closeDone     chan struct{}
+	closeErr      error
+	closed        atomic.Bool
+	cancelOnce    sync.Once
+	cancelErr     error
 }
 
 type consumerEnvelope struct {
@@ -147,6 +149,13 @@ func setupConsumerGeneration(
 	}); err != nil {
 		return nil, err
 	}
+	cancellations := channel.NotifyCancel(make(chan string, 1))
+	if cancellations == nil {
+		_ = boundedCloseConsumerResources(
+			resource, channel, consumerCleanupDeadline(setupContext, config.HandlerTimeout),
+		)
+		return nil, ErrConsumerUnavailable
+	}
 	type consumeResult struct {
 		deliveries <-chan amqp.Delivery
 		err        error
@@ -172,7 +181,8 @@ func setupConsumerGeneration(
 		}
 		return &consumerGeneration{
 			channel: channel, resource: resource, deliveries: result.deliveries,
-			failure: make(chan struct{}, 1), closeDone: make(chan struct{}),
+			cancellations: cancellations,
+			failure:       make(chan struct{}, 1), closeDone: make(chan struct{}),
 		}, nil
 	case <-setupContext.Done():
 		_ = boundedCloseConsumerResources(resource, channel, consumerCleanupDeadline(setupContext, config.HandlerTimeout))
@@ -316,6 +326,7 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 	pending := make([]consumerEnvelope, consumer.config.Prefetch+1)
 	pendingHead := 0
 	pendingCount := 0
+	cancellations := generation.cancellations
 	for {
 		consumer.admissionMu.Lock()
 		paused := consumer.paused
@@ -343,6 +354,7 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 		select {
 		case source, open := <-deliveries:
 			if !open {
+				consumer.observePendingCancellation(cancellations)
 				return !consumer.isStopping()
 			}
 			consumer.observe(Observation{Kind: ObservationDelivery, Outcome: ObservationDelivered})
@@ -368,11 +380,35 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 			pendingCount++
 		case <-resume:
 		case <-consumer.admissionChanged:
+		case tag, open := <-cancellations:
+			if !open {
+				cancellations = nil
+				continue
+			}
+			if tag != consumer.config.Name {
+				continue
+			}
+			consumer.observe(Observation{
+				Kind: ObservationConsumerCancellation, Outcome: ObservationCancelled,
+			})
+			return !consumer.isStopping()
 		case <-generation.failure:
 			return true
 		case <-consumer.recoveryContext.Done():
 			return false
 		}
+	}
+}
+
+func (consumer *Consumer) observePendingCancellation(cancellations <-chan string) {
+	select {
+	case tag, open := <-cancellations:
+		if open && tag == consumer.config.Name {
+			consumer.observe(Observation{
+				Kind: ObservationConsumerCancellation, Outcome: ObservationCancelled,
+			})
+		}
+	default:
 	}
 }
 

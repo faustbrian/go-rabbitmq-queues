@@ -40,6 +40,9 @@
   queue declaration, binding, consumption, and recovery on one connection.
 - Add bounded consumer runtime recovery with complete generation replacement,
   endpoint and credential rotation, and generation-owned settlement.
+- Add broker consumer-cancellation notifications that distinguish matching
+  `basic.cancel` events from connection loss and client-initiated shutdown,
+  then recover the affected consumer generation.
 - Add idempotent consumer pause/resume admission that preserves in-flight
   settlement, bounded buffering, runtime recovery, and readiness semantics.
 - Add separate producer and consumer liveness, readiness, and dependency-health

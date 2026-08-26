@@ -44,6 +44,11 @@ target while RabbitMQ retries an unconfirmed internal transfer.
   QoS, consumer identity, signed priority, and classic-only exclusivity, and
   refreshes endpoints and credentials. Work from the failed generation is never
   settled on its replacement; exhausted recovery is terminal.
+- A matching broker `basic.cancel` emits a payload-free consumer-cancellation
+  observation and starts generation replacement. Cancellation notifications
+  for other tags are ignored. Notification-channel closure during connection
+  loss still follows the connection-recovery path, while client-initiated
+  cancellation during drain is reported only as shutdown.
 - Consumer priority is an explicit AMQP `x-priority` policy: nil omits the
   argument and uses RabbitMQ's zero default, while a pointer to zero preserves
   explicit-zero intent. Exclusive consumption is rejected for quorum queues and

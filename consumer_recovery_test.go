@@ -92,6 +92,44 @@ func TestOpenConsumerRecoversRuntimeLossWithoutDuplicatingConsumer(t *testing.T)
 	}
 }
 
+func TestConsumerRecoversWhenCancellationNotificationsCloseWithConnection(t *testing.T) {
+	t.Parallel()
+
+	connection := testConnectionConfig()
+	connection.Recovery = RecoveryPolicy{MaxAttempts: 1, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
+	first := newFakeConsumerChannel()
+	second := newFakeConsumerChannel()
+	var dialCalls atomic.Int32
+	consumer, err := openConsumerWith(
+		t.Context(),
+		connection,
+		testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (consumerChannel, io.Closer, error) {
+			if dialCalls.Add(1) == 1 {
+				return first, &concurrentCountingCloser{}, nil
+			}
+			return second, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("openConsumerWith(): %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	close(first.cancelNotifications)
+	first.cancelOnce.Do(func() { close(first.deliveries) })
+	select {
+	case <-second.consumeCalled:
+	case <-time.After(time.Second):
+		t.Fatal("connection loss did not create a replacement consumer")
+	}
+	select {
+	case <-consumer.Done():
+		t.Fatalf("consumer became terminal after recoverable connection loss: %v", consumer.Err())
+	default:
+	}
+}
+
 func TestTransientConsumerRecoveryRecreatesOwnedQueueAndBinding(t *testing.T) {
 	t.Parallel()
 

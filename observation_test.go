@@ -191,6 +191,55 @@ func TestConsumerObservesDeliveriesFailuresSettlementsBacklogAndShutdown(t *test
 		ObservationDeadLetter:      true,
 		ObservationShutdown:        true,
 	})
+	for _, observation := range observations {
+		if observation.Kind == ObservationConsumerCancellation {
+			t.Fatalf("client shutdown emitted broker cancellation: %#v", observation)
+		}
+	}
+}
+
+func TestConsumerObservesBrokerCancellationAndRecovers(t *testing.T) {
+	t.Parallel()
+
+	connection := testConnectionConfig()
+	connection.Recovery = RecoveryPolicy{MaxAttempts: 1, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
+	first := newFakeConsumerChannel()
+	second := newFakeConsumerChannel()
+	dials := 0
+	consumer, err := openConsumerWith(
+		t.Context(), connection, testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		func(context.Context, Endpoint, ConnectionConfig, Credentials) (consumerChannel, io.Closer, error) {
+			dials++
+			if dials == 1 {
+				return first, &concurrentCountingCloser{}, nil
+			}
+			return second, &concurrentCountingCloser{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("openConsumerWith(): %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	first.cancelNotifications <- testConsumerConfig().Name
+	first.cancelOnce.Do(func() { close(first.deliveries) })
+	observations := waitForObservationKind(
+		t, consumer.Observations(), ObservationConsumerCancellation,
+	)
+	last := observations[len(observations)-1]
+	if last.Outcome != ObservationCancelled || last.Resource != ObservationConsumer {
+		t.Fatalf("cancellation observation = %#v", last)
+	}
+	select {
+	case <-second.consumeCalled:
+	case <-time.After(time.Second):
+		t.Fatal("broker cancellation did not create a replacement consumer")
+	}
+	select {
+	case <-consumer.Done():
+		t.Fatalf("consumer became terminal after recoverable cancellation: %v", consumer.Err())
+	default:
+	}
 }
 
 func TestObservationStreamReportsDroppedEventsWithoutBlocking(t *testing.T) {

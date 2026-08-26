@@ -237,6 +237,33 @@ func TestConsumerUnexpectedCancellationBecomesTerminal(t *testing.T) {
 	}
 }
 
+func TestConsumerIgnoresCancellationForAnotherTag(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	consumer, err := newConsumerFromChannel(
+		t.Context(), testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil },
+		channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	channel.cancelNotifications <- "another-consumer"
+	channel.deliveries <- testAMQPDelivery(90)
+	select {
+	case settled := <-channel.settled:
+		if settled.method != SettlementAcknowledge || settled.tag != 90 {
+			t.Fatalf("settlement = %#v, want ACK", settled)
+		}
+	case <-consumer.Done():
+		t.Fatalf("unrelated cancellation terminated consumer: %v", consumer.Err())
+	case <-time.After(time.Second):
+		t.Fatal("consumer did not process delivery after unrelated cancellation")
+	}
+}
+
 func TestConsumerDrainStopsIntakeWithoutClosingOwnedResources(t *testing.T) {
 	t.Parallel()
 
@@ -477,59 +504,66 @@ type fakeConsumerSettlement struct {
 }
 
 type fakeConsumerChannel struct {
-	mu                 sync.Mutex
-	prefetch           int
-	globalQOS          bool
-	queue              string
-	consumer           string
-	autoAck            bool
-	exclusive          bool
-	noLocal            bool
-	noWait             bool
-	arguments          amqp.Table
-	exchangeName       string
-	exchangeKind       string
-	exchangeDurable    bool
-	exchangeAutoDelete bool
-	exchangeInternal   bool
-	exchangeErr        error
-	declareQueue       string
-	declareDurable     bool
-	declareAutoDelete  bool
-	declareExclusive   bool
-	declareArguments   amqp.Table
-	declaredQueueName  string
-	declareErr         error
-	bindQueue          string
-	bindRoutingKey     string
-	bindExchange       string
-	bindArguments      amqp.Table
-	bindErr            error
-	deliveries         chan amqp.Delivery
-	settled            chan fakeConsumerSettlement
-	onAck              func()
-	cancelCalls        int
-	cancelErr          error
-	qosErr             error
-	qosBlock           chan struct{}
-	consumeErr         error
-	consumeBlock       chan struct{}
-	consumeCalled      chan struct{}
-	consumeOnce        sync.Once
-	ackErr             error
-	ackBlock           chan struct{}
-	cancelBlock        chan struct{}
-	closeCalls         int
-	closeErr           error
-	cancelOnce         sync.Once
+	mu                  sync.Mutex
+	prefetch            int
+	globalQOS           bool
+	queue               string
+	consumer            string
+	autoAck             bool
+	exclusive           bool
+	noLocal             bool
+	noWait              bool
+	arguments           amqp.Table
+	exchangeName        string
+	exchangeKind        string
+	exchangeDurable     bool
+	exchangeAutoDelete  bool
+	exchangeInternal    bool
+	exchangeErr         error
+	declareQueue        string
+	declareDurable      bool
+	declareAutoDelete   bool
+	declareExclusive    bool
+	declareArguments    amqp.Table
+	declaredQueueName   string
+	declareErr          error
+	bindQueue           string
+	bindRoutingKey      string
+	bindExchange        string
+	bindArguments       amqp.Table
+	bindErr             error
+	deliveries          chan amqp.Delivery
+	settled             chan fakeConsumerSettlement
+	onAck               func()
+	cancelCalls         int
+	cancelErr           error
+	qosErr              error
+	qosBlock            chan struct{}
+	consumeErr          error
+	consumeBlock        chan struct{}
+	consumeCalled       chan struct{}
+	consumeOnce         sync.Once
+	cancelNotifications chan string
+	ackErr              error
+	ackBlock            chan struct{}
+	cancelBlock         chan struct{}
+	closeCalls          int
+	closeErr            error
+	cancelOnce          sync.Once
 }
 
 func newFakeConsumerChannel() *fakeConsumerChannel {
 	return &fakeConsumerChannel{
-		deliveries:    make(chan amqp.Delivery, 16),
-		settled:       make(chan fakeConsumerSettlement, 16),
-		consumeCalled: make(chan struct{}),
+		deliveries:          make(chan amqp.Delivery, 16),
+		settled:             make(chan fakeConsumerSettlement, 16),
+		consumeCalled:       make(chan struct{}),
+		cancelNotifications: make(chan string, 1),
 	}
+}
+
+func (channel *fakeConsumerChannel) NotifyCancel(listener chan string) chan string {
+	channel.cancelNotifications = listener
+	return listener
 }
 
 func (channel *fakeConsumerChannel) Qos(prefetchCount, _ int, global bool) error {
