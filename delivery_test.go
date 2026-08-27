@@ -3,6 +3,7 @@ package rabbitmqqueue
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,7 +265,7 @@ func TestDeliveryConversionHidesProducerCorrelationWithinApplicationHeaderLimit(
 	for index := range config.Limits.MaxHeaderEntries {
 		headers[fmt.Sprintf("header-%03d", index)] = "value"
 	}
-	headers[publishTokenHeader] = "internal-correlation"
+	headers[publishTokenHeader] = strings.Repeat("s", maxProducerSessionBytes) + "/18446744073709551615"
 	source := testAMQPDelivery(43)
 	source.Headers = headers
 	delivery, err := deliveryFromAMQP(source, config)
@@ -278,6 +279,28 @@ func TestDeliveryConversionHidesProducerCorrelationWithinApplicationHeaderLimit(
 		if header.Key == publishTokenHeader {
 			t.Fatal("package correlation header leaked into public delivery")
 		}
+	}
+}
+
+func TestDeliveryConversionRejectsMalformedProducerCorrelation(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]any{
+		"wrong type": int64(1),
+		"empty":      "",
+		"control":    "session\n1",
+		"oversized":  strings.Repeat("x", maxPublishTokenBytes+1),
+	}
+	for name, token := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			source := testAMQPDelivery(45)
+			source.Headers = amqp.Table{publishTokenHeader: token}
+			if _, err := deliveryFromAMQP(source, testConsumerConfig()); !errors.Is(err, ErrInvalidDelivery) {
+				t.Fatalf("deliveryFromAMQP() error = %v, want %v", err, ErrInvalidDelivery)
+			}
+		})
 	}
 }
 

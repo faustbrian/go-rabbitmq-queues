@@ -112,7 +112,7 @@ func newProducerFromChannelWithRecovery(
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	if invalidIdentity(session, 128) || channel == nil || resource == nil {
+	if invalidIdentity(session, maxProducerSessionBytes) || channel == nil || resource == nil {
 		return nil, ErrProducerUnavailable
 	}
 	returns, confirms, connectionClosed, connectionBlocked, err := setupProducerChannel(ctx, config, channel, resource)

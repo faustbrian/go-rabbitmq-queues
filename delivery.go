@@ -238,6 +238,12 @@ func parseDeliveryExpiration(value string) (time.Duration, error) {
 }
 
 func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
+	if value, exists := table[publishTokenHeader]; exists {
+		token, ok := value.(string)
+		if !ok || invalidIdentity(token, maxPublishTokenBytes) {
+			return nil, 0, ErrInvalidDelivery
+		}
+	}
 	keys := make([]string, 0, len(table))
 	for key := range table {
 		if key != acquiredCountHeader && key != deathHeader &&

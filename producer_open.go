@@ -194,7 +194,7 @@ func (producer *Producer) recoverRuntime() bool {
 			continue
 		}
 		session, sessionErr := producer.recovery.session()
-		if sessionErr != nil || invalidIdentity(session, 128) {
+		if sessionErr != nil || invalidIdentity(session, maxProducerSessionBytes) {
 			cancel()
 			wipe(credentials.Password)
 			continue

@@ -2,7 +2,11 @@ package rabbitmqqueue
 
 import "time"
 
-const publishTokenHeader = "x-rabbitmqqueue-publish-token"
+const (
+	publishTokenHeader      = "x-rabbitmqqueue-publish-token"
+	maxProducerSessionBytes = 128
+	maxPublishTokenBytes    = maxProducerSessionBytes + 1 + 20
+)
 
 // Limits bounds untrusted message and topology-controlled allocation.
 type Limits struct {
