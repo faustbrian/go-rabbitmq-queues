@@ -37,10 +37,12 @@ recovery seams, sanitized connection-blocked transitions, bounded health and
 observation seams, broker consumer-cancellation dispatch, passive topology
 equivalence mapping, connection-scoped transient-consumer setup, bounded
 delivery conversion, lifecycle behavior, and the pinned PHP runner's local
-corpus construction and validation without contacting a broker. No three-node
-cluster, node or leader failover, rolling-upgrade, installed-operator
-reconciliation, Laravel-framework integration, or live performance-capacity
-claim is currently established.
+corpus construction and validation without contacting a broker. The retained
+single-node performance matrix proves CI-runner throughput for classic and
+single-member quorum queues at the 1M, 10M, and 100M daily-volume profiles. No
+three-node cluster, node or leader failover, rolling-upgrade,
+installed-operator reconciliation, Laravel-framework integration, or
+production performance-capacity claim is currently established.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,
@@ -49,8 +51,14 @@ Kubernetes scheduling, TLS, failover, or rolling-upgrade evidence.
 See [performance evidence](docs/performance.md) for workload targets, the local
 wrapper benchmark boundary, and the required live three-node profile.
 
-Retained CI evidence: [run 33041075968](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33041075968)
-at commit `cb48c8cd7e5cda6feebdeea76e7ab92b8f0e5d76`.
+Retained CI evidence:
+
+- protocol, TLS, and PHP interoperability:
+  [run 33041075968](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33041075968)
+  at commit `cb48c8cd7e5cda6feebdeea76e7ab92b8f0e5d76`;
+- single-node classic and quorum performance matrix:
+  [run 33043064904](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33043064904)
+  at commit `a233bb315a72f878c8412d9c6d3ea3529b1507a2`.
 
 ## Authoritative sources
 

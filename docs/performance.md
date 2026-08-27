@@ -106,7 +106,30 @@ run is paired with separately retained broker and fault evidence.
 
 ## Evidence status
 
-The repository provides local wrapper benchmarks and an opt-in live profile
-harness. No retained live results exist yet. Single-node and three-node runs,
-TLS and authorization cost, classic/quorum throughput, backlog recovery, and
-node-failure evidence remain required before any production-capacity claim.
+GitHub Actions [run 33043064904](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33043064904)
+at commit `a233bb315a72f878c8412d9c6d3ea3529b1507a2` retained the
+single-node matrix below. Every steady and burst profile met its target in all
+three samples. Every sample confirmed and delivered every message and recorded
+zero ambiguous, not-sent, duplicate, or invalid outcomes.
+
+| Queue | Daily volume | Steady samples/second (min/median/max) | Burst samples/second (min/median/max) |
+|---|---:|---:|---:|
+| Classic | 1M | 11.72 / 11.72 / 11.72 | 46.94 / 46.95 / 46.95 |
+| Classic | 10M | 116.93 / 116.93 / 116.93 | 467.63 / 467.64 / 467.65 |
+| Classic | 100M | 1,168.98 / 1,168.98 / 1,168.98 | 4,671.57 / 4,672.92 / 4,673.40 |
+| Quorum | 1M | 11.72 / 11.72 / 11.72 | 46.94 / 46.94 / 46.94 |
+| Quorum | 10M | 116.92 / 116.92 / 116.93 | 467.64 / 467.67 / 467.67 |
+| Quorum | 100M | 1,168.93 / 1,168.96 / 1,168.96 | 4,672.29 / 4,672.91 / 4,673.01 |
+
+The retained environment was RabbitMQ 4.3.5 using the pinned Linux amd64
+container digest, `amqp091-go` 1.14.0, Go 1.27.0, Linux amd64, and the GitHub
+Actions `ubuntu-24.04` image. Each isolated job used one TLS endpoint, four
+queues, 64 publisher workers, 16 consumer workers, payload shapes of 256,
+1,024, and 4,096 bytes, header shapes of 0, 64, and 512 bytes, a 5-second
+warmup, three 30-second steady samples, and three 5-second 4x burst samples.
+
+This is CI-runner capacity evidence, not production capacity evidence. The
+hosted runner does not pin broker CPU, memory, or storage class, the quorum
+queues had one member, and no node fault occurred. Three-node replication,
+leader loss, backlog recovery under failure, storage saturation, application
+handlers, and deployment-specific capacity remain unverified.
