@@ -152,6 +152,38 @@ func TestPublicationSupportsNativeFanoutAndHeadersRouting(t *testing.T) {
 	}
 }
 
+func TestPublicationSupportsExplicitDefaultDirectExchange(t *testing.T) {
+	t.Parallel()
+
+	for name, test := range map[string]struct {
+		kind ExchangeKind
+		want error
+	}{
+		"explicit default direct exchange":  {kind: ExchangeDirect},
+		"omitted exchange is not implicit":  {want: ErrInvalidPublication},
+		"topic cannot be default exchange":  {kind: ExchangeTopic, want: ErrInvalidPublication},
+		"fanout cannot be default exchange": {kind: ExchangeFanout, want: ErrInvalidPublication},
+		"headers cannot be default exchange": {
+			kind: ExchangeHeaders, want: ErrInvalidPublication,
+		},
+		"unknown kind cannot be default exchange": {
+			kind: ExchangeKind("plugin"), want: ErrInvalidPublication,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			publication := testPublication()
+			publication.Exchange = ""
+			publication.ExchangeKind = test.kind
+			publication.RoutingKey = "orders"
+			if err := publication.Validate(DefaultLimits()); !errors.Is(err, test.want) {
+				t.Fatalf("Validate() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestPublishStatesRemainDistinct(t *testing.T) {
 	t.Parallel()
 

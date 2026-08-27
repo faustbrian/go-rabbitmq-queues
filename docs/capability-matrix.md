@@ -34,6 +34,9 @@ Important RabbitMQ 4.3 distinctions:
   Direct and topic publications use a non-empty routing key; fanout and headers
   publications use the native empty key. Passive topology verification remains
   the broker evidence for the exchange's actual kind;
+- RabbitMQ's predeclared default direct exchange is represented only by an
+  empty `Publication.Exchange` paired with an explicit `ExchangeDirect` kind.
+  Its routing key is the destination queue identity;
 - AMQP 0-9-1 `basic.nack` does not increment the 4.3 quorum
   `x-delivery-count`, while `basic.reject` and connection loss do;
 - `Delivery.AcquiredCount` preserves RabbitMQ 4.3's `x-acquired-count`, which

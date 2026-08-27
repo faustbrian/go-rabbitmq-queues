@@ -97,6 +97,8 @@ const (
 
 // Publication binds one message to explicit AMQP routing policy.
 type Publication struct {
+	// Exchange is a named exchange identity, or the empty default-exchange
+	// identity when ExchangeKind is explicitly ExchangeDirect.
 	Exchange string
 	// ExchangeKind records the expected routing semantic for local validation.
 	// Omit it only for non-empty direct/topic-compatible routing keys; fanout
@@ -113,7 +115,7 @@ func (publication Publication) Validate(limits Limits) error {
 	if !limits.valid() {
 		return ErrInvalidBounds
 	}
-	if invalidIdentity(publication.Exchange, limits.MaxNameBytes) ||
+	if !validPublicationExchange(publication.Exchange, publication.ExchangeKind, limits) ||
 		!validPublicationRouting(publication.ExchangeKind, publication.RoutingKey, limits) ||
 		publication.DeliveryMode < DeliveryTransient || publication.DeliveryMode > DeliveryPersistent {
 		return ErrInvalidPublication
@@ -188,6 +190,13 @@ func (publication Publication) Validate(limits Limits) error {
 	}
 
 	return nil
+}
+
+func validPublicationExchange(exchange string, kind ExchangeKind, limits Limits) bool {
+	if exchange == "" {
+		return kind == ExchangeDirect
+	}
+	return !invalidIdentity(exchange, limits.MaxNameBytes)
 }
 
 func validPublicationRouting(kind ExchangeKind, routingKey string, limits Limits) bool {

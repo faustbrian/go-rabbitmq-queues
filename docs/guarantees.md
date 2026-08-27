@@ -25,6 +25,9 @@ internal transfer.
   kind so routing-key validation matches the exchange semantic. The kind is a
   local policy assertion; passive topology verification proves the broker's
   actual exchange declaration.
+- An empty publication exchange is accepted only with an explicit direct kind,
+  representing RabbitMQ's predeclared default exchange. The non-empty routing
+  key remains the target queue identity; an omitted exchange is not inferred.
 - Asynchronous publishing owns the admitted publication and emits exactly one
   terminal outcome; a full admission window rejects new work without spawning
   another worker.

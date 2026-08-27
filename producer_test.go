@@ -110,6 +110,33 @@ func TestProducerPublishesNativeFanoutRoutingWithoutInventingAKey(t *testing.T) 
 	}
 }
 
+func TestProducerPublishesToTheExplicitDefaultExchange(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	channel.publish = func(_ context.Context, exchange, key string, _ bool, _ bool, _ amqp.Publishing) error {
+		if exchange != "" || key != "orders" {
+			t.Fatalf("publish route = (%q, %q), want default exchange queue route", exchange, key)
+		}
+		channel.confirms <- amqp.Confirmation{DeliveryTag: channel.nextSequence(), Ack: true}
+		return nil
+	}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-a", channel, io.NopCloser(nilReader{}))
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	t.Cleanup(func() { closeProducerForTest(t, producer) })
+
+	publication := testPublication()
+	publication.Exchange = ""
+	publication.ExchangeKind = ExchangeDirect
+	publication.RoutingKey = "orders"
+	result, err := producer.Publish(t.Context(), publication)
+	if err != nil || result.State != PublishConfirmed {
+		t.Fatalf("Publish() = (%#v, %v), want confirmed default-exchange publication", result, err)
+	}
+}
+
 func TestProducerKeepsPostTransmissionCancellationAmbiguous(t *testing.T) {
 	t.Parallel()
 
