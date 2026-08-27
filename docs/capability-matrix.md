@@ -51,6 +51,9 @@ Important RabbitMQ 4.3 distinctions:
 - each bounded `Death` preserves AMQP 0-9-1 `x-death.original-expiration` when
   RabbitMQ removes a per-message TTL during dead lettering, including explicit
   zero while distinguishing omission;
+- per-message expiration distinguishes omission from explicit zero across
+  publication and delivery; zero requests immediate expiry when RabbitMQ cannot
+  deliver directly to a ready consumer;
 - quorum `reject-publish-dlx` overflow is unsupported and `reject-publish` may
   overshoot a length limit by in-flight messages;
 - requeue loops remain an application/client-policy risk even where a quorum

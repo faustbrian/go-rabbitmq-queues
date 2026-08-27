@@ -151,16 +151,18 @@ type Delivery struct {
 	UserID          string
 	AppID           string
 	Timestamp       time.Time
-	Expiration      time.Duration
-	Priority        uint8
-	DeliveryMode    DeliveryMode
-	Consumer        string
-	Exchange        string
-	RoutingKey      string
-	Redelivered     bool
-	AcquiredCount   *uint64
-	DeliveryCount   *uint64
-	Deaths          []Death
+	// Expiration distinguishes an omitted TTL from RabbitMQ's explicit
+	// zero-duration immediate-expiration value.
+	Expiration    *time.Duration
+	Priority      uint8
+	DeliveryMode  DeliveryMode
+	Consumer      string
+	Exchange      string
+	RoutingKey    string
+	Redelivered   bool
+	AcquiredCount *uint64
+	DeliveryCount *uint64
+	Deaths        []Death
 }
 
 func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, error) {
@@ -228,15 +230,16 @@ func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, er
 	}, nil
 }
 
-func parseDeliveryExpiration(value string) (time.Duration, error) {
+func parseDeliveryExpiration(value string) (*time.Duration, error) {
 	if value == "" {
-		return 0, nil
+		return nil, nil
 	}
 	milliseconds, err := strconv.ParseUint(value, 10, 63)
 	if err != nil || milliseconds > uint64((time.Duration(1<<63-1))/time.Millisecond) {
-		return 0, ErrInvalidDelivery
+		return nil, ErrInvalidDelivery
 	}
-	return time.Duration(milliseconds) * time.Millisecond, nil
+	expiration := time.Duration(milliseconds) * time.Millisecond
+	return &expiration, nil
 }
 
 func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
@@ -395,7 +398,10 @@ func deathOriginalExpiration(fields amqp.Table) (*time.Duration, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	return &expiration, len(encoded), nil
+	if expiration == nil {
+		return nil, 0, ErrInvalidDelivery
+	}
+	return expiration, len(encoded), nil
 }
 
 func unsignedAMQPInteger(value any) (uint64, bool) {

@@ -216,6 +216,10 @@ func ownPublication(publication Publication) Publication {
 		priority := *publication.Message.Priority
 		publication.Message.Priority = &priority
 	}
+	if publication.Message.Expiration != nil {
+		expiration := *publication.Message.Expiration
+		publication.Message.Expiration = &expiration
+	}
 	return publication
 }
 
@@ -779,7 +783,7 @@ func amqpPublishing(message Message, mode DeliveryMode, token string) amqp.Publi
 		priority = uint8(*message.Priority)
 	}
 	expiration := ""
-	if message.Expiration > 0 {
+	if message.Expiration != nil {
 		expiration = strconv.FormatInt(message.Expiration.Milliseconds(), 10)
 	}
 	return amqp.Publishing{

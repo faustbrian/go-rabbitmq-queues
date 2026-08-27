@@ -489,7 +489,7 @@ func TestDeliveryExpirationAndIntegerHeaderVariants(t *testing.T) {
 			if err != nil {
 				t.Fatalf("deliveryFromAMQP(): %v", err)
 			}
-			if delivery.Expiration != 1500*time.Millisecond || len(delivery.Headers) != 1 ||
+			if delivery.Expiration == nil || *delivery.Expiration != 1500*time.Millisecond || len(delivery.Headers) != 1 ||
 				delivery.Headers[0].Kind != HeaderInt64 || delivery.Headers[0].Int64 != test.want {
 				t.Fatal("integer header was not normalized into the stable signed policy")
 			}
@@ -501,5 +501,25 @@ func TestDeliveryExpirationAndIntegerHeaderVariants(t *testing.T) {
 		if _, err := deliveryFromAMQP(source, testConsumerConfig()); !errors.Is(err, ErrInvalidDelivery) {
 			t.Fatalf("expiration %q error = %v, want invalid delivery", expiration, err)
 		}
+	}
+}
+
+func TestDeliveryExpirationDistinguishesOmittedAndImmediate(t *testing.T) {
+	t.Parallel()
+
+	omittedSource := testAMQPDelivery(22)
+	omitted, err := deliveryFromAMQP(omittedSource, testConsumerConfig())
+	if err != nil {
+		t.Fatalf("convert omitted expiration: %v", err)
+	}
+	immediateSource := testAMQPDelivery(23)
+	immediateSource.Expiration = "0"
+	immediate, err := deliveryFromAMQP(immediateSource, testConsumerConfig())
+	if err != nil {
+		t.Fatalf("convert immediate expiration: %v", err)
+	}
+
+	if omitted.Expiration != nil || immediate.Expiration == nil || *immediate.Expiration != 0 {
+		t.Fatalf("delivery expirations = (%v, %v), want omitted and immediate", omitted.Expiration, immediate.Expiration)
 	}
 }

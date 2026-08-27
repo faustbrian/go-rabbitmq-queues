@@ -29,7 +29,7 @@ or establish PHP, Laravel, TLS, routing, confirmation, or settlement behavior.
 | `properties.timestamp` | `timestamp` | UTC RFC 3339 input, represented at AMQP second precision |
 | `properties.type` | `type` | Application message type |
 | `properties.app_id` | `app-id` | Publishing application identity |
-| `properties.expiration_ms` | `expiration` | Non-negative decimal milliseconds |
+| `properties.expiration_ms` | `expiration` | Optional non-negative decimal milliseconds; zero means immediate expiry |
 | `properties.priority` | `priority` | Unsigned AMQP octet; queue support remains topology-specific |
 | `headers` | application headers | Unique string, bool, signed int64, or byte entries; order has no AMQP meaning |
 | `body_base64` | body | Base64 fixture representation decoded to exact opaque bytes |
@@ -50,6 +50,9 @@ wire types remain interoperable without expanding the public type surface.
 RabbitMQ's optional AMQP 0-9-1 `x-death.original-expiration` string is exposed
 as a bounded duration pointer so an explicit zero remains distinct from an
 omitted original TTL.
+Publication and delivery expiration use the same presence semantics: omission
+means no per-message TTL, while explicit zero requests RabbitMQ's immediate
+expiration behavior when direct delivery is unavailable.
 
 `reply-to` and `correlation-id` expose the AMQP metadata needed for an
 application-owned request/reply flow. The package does not create reply queues,

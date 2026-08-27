@@ -90,8 +90,11 @@ type Message struct {
 	Type            string
 	AppID           string
 	// Timestamp is either zero or a non-negative whole-second AMQP timestamp.
-	Timestamp  time.Time
-	Expiration time.Duration
+	Timestamp time.Time
+	// Expiration distinguishes an omitted TTL from an explicit zero-duration
+	// TTL, which RabbitMQ interprets as immediate expiration when the message
+	// cannot be delivered directly.
+	Expiration *time.Duration
 	Priority   *uint16
 	Headers    []Header
 }
@@ -150,8 +153,8 @@ func (publication Publication) Validate(limits Limits) error {
 		(message.Timestamp.Before(time.Unix(0, 0)) || message.Timestamp.Nanosecond() != 0) {
 		return ErrInvalidPublication
 	}
-	if message.Expiration < 0 ||
-		(message.Expiration > 0 && message.Expiration%time.Millisecond != 0) {
+	if message.Expiration != nil &&
+		(*message.Expiration < 0 || *message.Expiration%time.Millisecond != 0) {
 		return ErrInvalidExpiration
 	}
 	if len(message.Headers) > limits.MaxHeaderEntries {

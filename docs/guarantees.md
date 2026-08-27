@@ -36,6 +36,9 @@ internal transfer.
 - An empty publication exchange is accepted only with an explicit direct kind,
   representing RabbitMQ's predeclared default exchange. Queue targeting uses
   the queue name as its routing key; an omitted exchange is not inferred.
+- Publications and delivery snapshots distinguish an omitted per-message TTL
+  from explicit zero. RabbitMQ interprets zero as immediate expiration when a
+  destination consumer cannot accept the message directly.
 - Deliveries and their bounded `x-death` history preserve empty routing keys
   because every built-in exchange can carry one. An optional bounded
   `original-expiration` preserves the per-message TTL RabbitMQ removes during

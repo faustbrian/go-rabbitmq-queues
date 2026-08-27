@@ -100,9 +100,11 @@ func TestProducerAsyncOwnsPublicationBeforeReturning(t *testing.T) {
 
 	body := []byte("original")
 	headerBytes := []byte{1, 2}
+	expiration := 5 * time.Second
 	publication := testPublication()
 	publication.Message.Body = body
 	publication.Message.Headers = []Header{BytesHeader("binary", headerBytes)}
+	publication.Message.Expiration = &expiration
 	producer.publishMu.Lock()
 	future, err := producer.PublishAsync(t.Context(), publication)
 	if err != nil {
@@ -112,11 +114,15 @@ func TestProducerAsyncOwnsPublicationBeforeReturning(t *testing.T) {
 	body[0] = 'X'
 	headerBytes[0] = 9
 	publication.Message.Headers[0].Bytes[0] = 8
+	expiration = 0
 	producer.publishMu.Unlock()
 
 	message := <-published
-	if string(message.Body) != "original" || message.Headers["binary"].([]byte)[0] != 1 {
-		t.Fatalf("asynchronous publication was aliased: body %q headers %#v", message.Body, message.Headers)
+	if string(message.Body) != "original" || message.Headers["binary"].([]byte)[0] != 1 || message.Expiration != "5000" {
+		t.Fatalf(
+			"asynchronous publication was aliased: body %q headers %#v expiration %q",
+			message.Body, message.Headers, message.Expiration,
+		)
 	}
 	if outcome := <-future; outcome.Result.State != PublishConfirmed || outcome.Err != nil {
 		t.Fatalf("asynchronous outcome = %#v", outcome)

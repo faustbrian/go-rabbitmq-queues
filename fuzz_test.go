@@ -19,13 +19,18 @@ func FuzzPublicationValidation(f *testing.F) {
 			MaxNameBytes: 32, MaxRoutingKeyBytes: 32,
 		}
 		header := fuzzHeader(headerSize, flags, kind)
+		var expiration *time.Duration
+		if flags&1 != 0 {
+			value := time.Duration((flags>>1)%3) * 500 * time.Microsecond
+			expiration = &value
+		}
 		publication := Publication{
 			Exchange:     fuzzText(nameSize, flags&8 != 0),
 			RoutingKey:   fuzzText(routingSize, flags&16 != 0),
 			DeliveryMode: DeliveryMode(mode % 4),
 			Message: Message{
 				Body: make([]byte, int(bodySize%96)), MessageID: fuzzText(nameSize, flags&32 != 0),
-				Headers: []Header{header}, Expiration: time.Duration(flags%3) * 500 * time.Microsecond,
+				Headers: []Header{header}, Expiration: expiration,
 			},
 		}
 

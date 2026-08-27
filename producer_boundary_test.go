@@ -573,6 +573,7 @@ func TestAMQPPublishingOwnsPayloadAndMapsStableHeaders(t *testing.T) {
 	t.Parallel()
 
 	priority := uint16(255)
+	expiration := 1500 * time.Millisecond
 	body := []byte("body")
 	bytesHeader := []byte{1, 2}
 	message := Message{
@@ -580,7 +581,7 @@ func TestAMQPPublishingOwnsPayloadAndMapsStableHeaders(t *testing.T) {
 		ReplyTo:     "rpc.responses",
 		ContentType: "application/octet-stream", ContentEncoding: "identity",
 		Type: "event", AppID: "orders", Timestamp: time.Unix(1, 0),
-		Expiration: 1500 * time.Millisecond, Priority: &priority,
+		Expiration: &expiration, Priority: &priority,
 		Headers: []Header{
 			StringHeader("string", "value"), BoolHeader("bool", true),
 			Int64Header("integer", 42), BytesHeader("bytes", bytesHeader),
@@ -605,6 +606,18 @@ func TestAMQPPublishingOwnsPayloadAndMapsStableHeaders(t *testing.T) {
 	}
 	if got := publishing.Headers["bytes"].([]byte); got[0] != 1 {
 		t.Fatal("byte header was aliased")
+	}
+}
+
+func TestAMQPPublishingDistinguishesOmittedAndImmediateExpiration(t *testing.T) {
+	t.Parallel()
+
+	immediate := time.Duration(0)
+	omitted := amqpPublishing(Message{}, DeliveryPersistent, "session/1")
+	expiring := amqpPublishing(Message{Expiration: &immediate}, DeliveryPersistent, "session/2")
+
+	if omitted.Expiration != "" || expiring.Expiration != "0" {
+		t.Fatalf("AMQP expirations = (%q, %q), want omitted and immediate", omitted.Expiration, expiring.Expiration)
 	}
 }
 

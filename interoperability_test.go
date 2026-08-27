@@ -29,7 +29,7 @@ type interoperabilityFixture struct {
 		Timestamp       string `json:"timestamp"`
 		Type            string `json:"type"`
 		AppID           string `json:"app_id"`
-		ExpirationMS    int64  `json:"expiration_ms"`
+		ExpirationMS    *int64 `json:"expiration_ms"`
 		Priority        uint16 `json:"priority"`
 	} `json:"properties"`
 	Headers []struct {
@@ -73,7 +73,8 @@ func TestLanguageNeutralInteroperabilityFixturePreservesAMQPMetadataAndBytes(t *
 		delivery.ReplyTo != message.ReplyTo ||
 		delivery.ContentEncoding != message.ContentEncoding || delivery.Type != message.Type ||
 		delivery.AppID != message.AppID || !delivery.Timestamp.Equal(message.Timestamp) ||
-		delivery.Expiration != message.Expiration || delivery.Priority != uint8(*message.Priority) ||
+		message.Expiration == nil || delivery.Expiration == nil || *delivery.Expiration != *message.Expiration ||
+		delivery.Priority != uint8(*message.Priority) ||
 		delivery.DeliveryMode != publication.DeliveryMode || delivery.Exchange != publication.Exchange ||
 		delivery.RoutingKey != publication.RoutingKey {
 		t.Fatal("fixture round trip lost stable AMQP metadata")
@@ -149,8 +150,8 @@ func fixturePublication(t *testing.T, fixture interoperabilityFixture) Publicati
 	}
 	if fixture.Properties.ContentType == "" || fixture.Properties.ContentEncoding == "" ||
 		fixture.Properties.CorrelationID == "" || fixture.Properties.ReplyTo == "" ||
-		fixture.Properties.Type == "" ||
-		fixture.Properties.AppID == "" || fixture.Properties.ExpirationMS < 0 {
+		fixture.Properties.Type == "" || fixture.Properties.AppID == "" ||
+		fixture.Properties.ExpirationMS == nil || *fixture.Properties.ExpirationMS < 0 {
 		t.Fatal("fixture is missing required language-neutral metadata")
 	}
 	headers := make([]Header, 0, len(fixture.Headers))
@@ -182,6 +183,7 @@ func fixturePublication(t *testing.T, fixture interoperabilityFixture) Publicati
 		}
 	}
 	priority := fixture.Properties.Priority
+	expiration := time.Duration(*fixture.Properties.ExpirationMS) * time.Millisecond
 	return Publication{
 		Exchange: fixture.Routing.Exchange, RoutingKey: fixture.Routing.RoutingKey,
 		Mandatory: fixture.Routing.Mandatory, DeliveryMode: DeliveryPersistent,
@@ -191,7 +193,7 @@ func fixturePublication(t *testing.T, fixture interoperabilityFixture) Publicati
 			ReplyTo:       fixture.Properties.ReplyTo,
 			ContentType:   fixture.Properties.ContentType, ContentEncoding: fixture.Properties.ContentEncoding,
 			Type: fixture.Properties.Type, AppID: fixture.Properties.AppID, Timestamp: timestamp,
-			Expiration: time.Duration(fixture.Properties.ExpirationMS) * time.Millisecond,
+			Expiration: &expiration,
 			Priority:   &priority, Headers: headers,
 		},
 	}

@@ -53,6 +53,8 @@
   consuming from any built-in exchange.
 - Preserve bounded `x-death.original-expiration` metadata, including explicit
   zero, after RabbitMQ removes a per-message TTL during dead lettering.
+- Distinguish omitted per-message expiration from RabbitMQ's explicit zero TTL
+  across publication, delivery snapshots, and interoperability fixtures.
 - Represent RabbitMQ's predeclared default direct exchange through an explicit
   direct kind and empty exchange identity for queue and reply routing.
 - Add bounded AMQP reply-to publication metadata for application-owned

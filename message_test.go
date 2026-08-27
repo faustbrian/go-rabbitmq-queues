@@ -39,6 +39,12 @@ func TestPublicationValidation(t *testing.T) {
 	if err := valid.Validate(limits); err != nil {
 		t.Fatalf("valid publication rejected: %v", err)
 	}
+	immediateExpiration := time.Duration(0)
+	immediate := valid
+	immediate.Message.Expiration = &immediateExpiration
+	if err := immediate.Validate(limits); err != nil {
+		t.Fatalf("explicit immediate expiration rejected: %v", err)
+	}
 	exactReplyToLimit := valid
 	exactReplyToLimit.Message.ReplyTo = strings.Repeat("r", limits.MaxNameBytes)
 	if err := exactReplyToLimit.Validate(limits); err != nil {
@@ -77,12 +83,18 @@ func TestPublicationValidation(t *testing.T) {
 			want: ErrInvalidPriority,
 		},
 		"expiration is positive": {
-			mutate: func(publication *Publication) { publication.Message.Expiration = -time.Second },
-			want:   ErrInvalidExpiration,
+			mutate: func(publication *Publication) {
+				expiration := -time.Second
+				publication.Message.Expiration = &expiration
+			},
+			want: ErrInvalidExpiration,
 		},
 		"expiration preserves milliseconds": {
-			mutate: func(publication *Publication) { publication.Message.Expiration = 1500 * time.Microsecond },
-			want:   ErrInvalidExpiration,
+			mutate: func(publication *Publication) {
+				expiration := 1500 * time.Microsecond
+				publication.Message.Expiration = &expiration
+			},
+			want: ErrInvalidExpiration,
 		},
 		"timestamp preserves AMQP seconds": {
 			mutate: func(publication *Publication) { publication.Message.Timestamp = time.Unix(1, 1) },
