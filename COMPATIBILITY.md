@@ -59,6 +59,11 @@ publications and deliveries across every replacement and mixed-version
 checkpoint. Retained run `33055826884` upgraded all three nodes with 203 of 203
 publications confirmed and delivered, zero rejected, ambiguous, not-sent, or
 duplicate outcomes, and exactly one active consumer after every replacement.
+The prolonged-outage harness holds all three RabbitMQ 4.3.5 nodes down for 90
+seconds, samples producer and consumer liveness, readiness, and dependency
+health every 10 seconds, and requires complete message reconciliation after
+recovery. It is not retained compatibility evidence until its exact-head CI job
+passes.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,

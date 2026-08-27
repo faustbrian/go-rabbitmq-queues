@@ -12,12 +12,12 @@ case "${fault_scenario}" in
     classic-node-loss)
         fault_queue_type='classic'
         ;;
-    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm | rolling-upgrade)
+    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm | rolling-upgrade | prolonged-outage)
         fault_queue_type='quorum'
         ;;
     *)
         printf '%s\n' \
-            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, reconnect-storm, or rolling-upgrade' >&2
+            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, reconnect-storm, rolling-upgrade, or prolonged-outage' >&2
         exit 1
         ;;
 esac
@@ -48,6 +48,7 @@ reconnect_storm_cycles=3
 reconnect_storm_outage_seconds=5
 reconnect_storm_resource_pairs=4
 rolling_upgrade_cycles=3
+prolonged_outage_seconds=90
 declare -A amqp_ports
 declare -A management_ports
 test_pid=''
@@ -680,6 +681,83 @@ if [[ "${fault_scenario}" == rolling-upgrade ]]; then
     exit
 fi
 
+if [[ "${fault_scenario}" == prolonged-outage ]]; then
+    docker stop --time 10 "${container_names[@]}" >/dev/null
+    outage_started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    : >"${fault_start_gate}"
+    printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=cluster-stopped at=%s\n' \
+        "${fault_scenario}" "${fault_queue_type}" "${outage_started_at}"
+
+    outage_observed=false
+    for _ in $(seq 1 30); do
+        if grep -q 'PROLONGED_OUTAGE_STARTED' "${test_log}"; then
+            outage_observed=true
+            break
+        fi
+        if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${outage_observed}" != true ]]; then
+        cat "${test_log}"
+        exit 1
+    fi
+
+    sleep "${prolonged_outage_seconds}"
+    outage_hold_completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    : >"${fault_complete_gate}"
+    printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=outage-hold-complete hold_seconds=%d at=%s\n' \
+        "${fault_scenario}" "${fault_queue_type}" "${prolonged_outage_seconds}" \
+        "${outage_hold_completed_at}"
+
+    for container_name in "${container_names[@]}"; do
+        docker start "${container_name}" >/dev/null
+    done
+    for container_name in "${container_names[@]}"; do
+        for _ in $(seq 1 120); do
+            if docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null
+    done
+    for _ in $(seq 1 120); do
+        if get_json rabbit1 nodes |
+            jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    get_json rabbit1 nodes |
+        jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null
+    for _ in $(seq 1 120); do
+        if queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)" &&
+            jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                <<<"${queue_json}" >/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
+    jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+        <<<"${queue_json}" >/dev/null
+    recovered_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=cluster-restarted leader=%s at=%s\n' \
+        "${fault_scenario}" "${fault_queue_type}" "$(jq -er '.leader' <<<"${queue_json}")" "${recovered_at}"
+
+    if wait "${test_pid}"; then
+        test_status=0
+    else
+        test_status=$?
+    fi
+    test_pid=''
+    cat "${test_log}"
+    test "${test_status}" -eq 0
+    exit
+fi
+
 fault_member=''
 fault_node=''
 fault_index=-1
@@ -796,8 +874,8 @@ case "${fault_scenario}" in
         fi
         ;;
     cluster-restart)
-        prolonged_outage_seconds=20
-        sleep "${prolonged_outage_seconds}"
+        cluster_restart_outage_seconds=20
+        sleep "${cluster_restart_outage_seconds}"
         for container_name in "${container_names[@]}"; do
             docker start "${container_name}" >/dev/null
         done
@@ -829,7 +907,7 @@ case "${fault_scenario}" in
         queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
         jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' <<<"${queue_json}" >/dev/null
         new_leader="$(jq -er '.leader' <<<"${queue_json}")"
-        recovery_event="cluster-restarted hold_seconds=${prolonged_outage_seconds} leader=${new_leader}"
+        recovery_event="cluster-restarted hold_seconds=${cluster_restart_outage_seconds} leader=${new_leader}"
         ;;
 esac
 

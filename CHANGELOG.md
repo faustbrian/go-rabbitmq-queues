@@ -21,6 +21,8 @@
   confirmation, ambiguity, delivery, and duplicate outcomes.
 - Add CI-hosted three-node RabbitMQ patch rolling-upgrade evidence with
   quorum-safety, client recovery, and message-accounting gates.
+- Add a CI-hosted 90-second complete-cluster outage gate for sustained health,
+  recovery, and message-accounting evidence.
 - Add an externally provisioned four-queue performance harness for the 1M,
   10M, and 100M messages-per-day steady and burst profiles.
 - Add a pinned PHP AMQP runner and opt-in bidirectional live-broker harness for

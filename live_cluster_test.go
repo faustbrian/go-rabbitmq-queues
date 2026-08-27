@@ -27,6 +27,9 @@ const (
 	clusterDeliveryTimeout        = 60 * time.Second
 	clusterRecoveryAttempts       = rabbitmqqueue.MaxReconnectAttempts
 	clusterRecoveryMaxDelay       = 15 * time.Second
+	prolongedOutageSampleInterval = 10 * time.Second
+	minimumProlongedOutage        = 60 * time.Second
+	minimumProlongedOutageSamples = 6
 )
 
 var errInvalidLiveCluster = errors.New("invalid live cluster fixture")
@@ -40,6 +43,7 @@ const (
 	liveFaultClusterRestart         liveFaultScenario = "cluster-restart"
 	liveFaultReconnectStorm         liveFaultScenario = "reconnect-storm"
 	liveFaultRollingUpgrade         liveFaultScenario = "rolling-upgrade"
+	liveFaultProlongedOutage        liveFaultScenario = "prolonged-outage"
 )
 
 type liveClusterLedger struct {
@@ -85,6 +89,7 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 		{name: "classic leader loss", mutate: func(value *liveBrokerFixture) { value.FaultScenario = liveFaultQuorumLeaderLoss }},
 		{name: "classic partition", mutate: func(value *liveBrokerFixture) { value.FaultScenario = liveFaultQuorumNetworkPartition }},
 		{name: "classic cluster restart", mutate: func(value *liveBrokerFixture) { value.FaultScenario = liveFaultClusterRestart }},
+		{name: "classic prolonged outage", mutate: func(value *liveBrokerFixture) { value.FaultScenario = liveFaultProlongedOutage }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -107,6 +112,12 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 		if err := validateLiveClusterFixture(fixture); err != nil {
 			t.Fatalf("valid %s fixture: %v", scenario, err)
 		}
+	}
+	prolongedOutage := valid
+	prolongedOutage.FaultQueueType = rabbitmqqueue.QueueQuorum
+	prolongedOutage.FaultScenario = liveFaultProlongedOutage
+	if err := validateLiveClusterFixture(prolongedOutage); err != nil {
+		t.Fatalf("valid prolonged-outage fixture: %v", err)
 	}
 
 	rollingUpgrade := valid
@@ -304,7 +315,7 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 			return errInvalidLiveCluster
 		}
 	case liveFaultQuorumLeaderLoss, liveFaultQuorumNetworkPartition, liveFaultClusterRestart,
-		liveFaultReconnectStorm, liveFaultRollingUpgrade:
+		liveFaultReconnectStorm, liveFaultRollingUpgrade, liveFaultProlongedOutage:
 		if fixture.FaultQueueType != rabbitmqqueue.QueueQuorum {
 			return errInvalidLiveCluster
 		}
@@ -414,6 +425,10 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 		runLiveRollingUpgrade(t, producer, consumer, ledger, fixture, faultQueue, runToken, baselineIDs)
 		return
 	}
+	if fixture.FaultScenario == liveFaultProlongedOutage {
+		runLiveProlongedOutage(t, producer, consumer, ledger, fixture, faultQueue, runToken, baselineIDs)
+		return
+	}
 	waitForFaultGate(t, fixture.FaultStartGateFile)
 	t.Log("FAULT_WINDOW_STARTED")
 
@@ -452,6 +467,132 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 		fixture.FaultScenario, fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous,
 		notSent, delivered, duplicates,
 	)
+}
+
+func runLiveProlongedOutage(
+	t *testing.T,
+	producer *rabbitmqqueue.Producer,
+	consumer *rabbitmqqueue.Consumer,
+	ledger *liveClusterLedger,
+	fixture liveBrokerFixture,
+	faultQueue liveQueue,
+	runToken string,
+	baselineIDs []string,
+) {
+	t.Helper()
+	waitForFaultGate(t, fixture.FaultStartGateFile)
+	waitForLiveClusterResourcesOutage(t, []*rabbitmqqueue.Producer{producer}, []*rabbitmqqueue.Consumer{consumer})
+	waitForLiveProlongedOutageHealth(t, producer, consumer)
+	outageStarted := time.Now()
+	t.Log("PROLONGED_OUTAGE_STARTED")
+
+	allAttempts := append([]string(nil), baselineIDs...)
+	samples := 0
+	for !faultGateExists(t, fixture.FaultCompleteGateFile) {
+		assertLiveProlongedOutageHealth(t, producer, consumer)
+		faultIDs := publishLiveRange(
+			t, producer, ledger, fixture, faultQueue, runToken, "prolonged-fault", samples, 1, true,
+		)
+		allAttempts = append(allAttempts, faultIDs...)
+		samples++
+		t.Logf(
+			"PROLONGED_OUTAGE_SAMPLE sample=%d producer_liveness=%s producer_readiness=%s producer_dependency=%s consumer_liveness=%s consumer_readiness=%s consumer_dependency=%s",
+			samples, producer.Liveness(), producer.Readiness(), producer.DependencyHealth(),
+			consumer.Liveness(), consumer.Readiness(), consumer.DependencyHealth(),
+		)
+		waitForFaultGateInterval(t, fixture.FaultCompleteGateFile, prolongedOutageSampleInterval)
+	}
+	outageDuration := time.Since(outageStarted)
+	if outageDuration < minimumProlongedOutage || samples < minimumProlongedOutageSamples {
+		t.Fatalf(
+			"prolonged outage evidence too short: duration=%s samples=%d",
+			outageDuration.Round(time.Second), samples,
+		)
+	}
+	t.Logf(
+		"PROLONGED_OUTAGE_HEALTH duration_seconds=%d samples=%d liveness=live readiness=not_ready dependency=recovering",
+		int(outageDuration/time.Second), samples,
+	)
+	waitForLiveClusterRecovery(t, producer, consumer)
+	postFaultIDs := publishLiveRange(
+		t, producer, ledger, fixture, faultQueue, runToken, "prolonged-post", 0, postFaultMessages, false,
+	)
+	allAttempts = append(allAttempts, postFaultIDs...)
+	waitForConfirmedDeliveries(t, ledger, allAttempts)
+	waitForDeliveryQuiet(t, ledger)
+	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
+	t.Logf(
+		"MESSAGE_OUTCOMES scenario=%s queue_type=%s attempted=%d confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d",
+		fixture.FaultScenario, fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous,
+		notSent, delivered, duplicates,
+	)
+}
+
+func waitForLiveProlongedOutageHealth(
+	t *testing.T,
+	producer *rabbitmqqueue.Producer,
+	consumer *rabbitmqqueue.Consumer,
+) {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if liveProlongedOutageHealthMatches(producer, consumer) {
+			return
+		}
+		select {
+		case <-timer.C:
+			assertLiveProlongedOutageHealth(t, producer, consumer)
+		case <-ticker.C:
+		}
+	}
+}
+
+func assertLiveProlongedOutageHealth(
+	t *testing.T,
+	producer *rabbitmqqueue.Producer,
+	consumer *rabbitmqqueue.Consumer,
+) {
+	t.Helper()
+	if !liveProlongedOutageHealthMatches(producer, consumer) {
+		t.Fatalf(
+			"prolonged outage health changed: producer=(%s, %s, %s) consumer=(%s, %s, %s)",
+			producer.Liveness(), producer.Readiness(), producer.DependencyHealth(),
+			consumer.Liveness(), consumer.Readiness(), consumer.DependencyHealth(),
+		)
+	}
+}
+
+func liveProlongedOutageHealthMatches(
+	producer *rabbitmqqueue.Producer,
+	consumer *rabbitmqqueue.Consumer,
+) bool {
+	return producer.Liveness() == rabbitmqqueue.LivenessLive &&
+		producer.Readiness() == rabbitmqqueue.ReadinessNotReady &&
+		producer.DependencyHealth() == rabbitmqqueue.DependencyRecovering &&
+		consumer.Liveness() == rabbitmqqueue.LivenessLive &&
+		consumer.Readiness() == rabbitmqqueue.ReadinessNotReady &&
+		consumer.DependencyHealth() == rabbitmqqueue.DependencyRecovering
+}
+
+func waitForFaultGateInterval(t *testing.T, filename string, interval time.Duration) {
+	t.Helper()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		if faultGateExists(t, filename) {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			return
+		}
+	}
 }
 
 func runLiveRollingUpgrade(

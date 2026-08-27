@@ -232,5 +232,15 @@ bounded reconnect-storm, and patch rolling-upgrade evidence. It is not
 installed-Operator reconciliation, application rollout, or production-capacity
 evidence.
 
+The CI matrix also defines a `prolonged-outage` gate that stops all three
+RabbitMQ 4.3.5 nodes for 90 seconds. The public producer and consumer must stay
+live while remaining not ready with a recovering dependency throughout at
+least six 10-second samples. Each sample makes a uniquely identified publish
+attempt; after all three quorum members return, the gate requires client
+recovery, confirmed post-outage publications, and countable confirmed,
+rejected, ambiguous, not-sent, delivered, and duplicate totals. This is a
+defined gate, not retained prolonged-outage evidence until an exact-head CI
+execution passes.
+
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).
