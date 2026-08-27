@@ -15,14 +15,18 @@ import (
 )
 
 const (
-	liveClusterConfigEnvironment = "RABBITMQ_QUEUE_CLUSTER_CONFIG"
-	minimumFaultWindowMessages   = 64
-	maximumFaultWindowMessages   = 10_000
-	postFaultMessages            = 16
-	clusterPublishTimeout        = 2 * time.Second
-	clusterDeliveryTimeout       = 60 * time.Second
-	clusterRecoveryAttempts      = rabbitmqqueue.MaxReconnectAttempts
-	clusterRecoveryMaxDelay      = 15 * time.Second
+	liveClusterConfigEnvironment  = "RABBITMQ_QUEUE_CLUSTER_CONFIG"
+	minimumFaultWindowMessages    = 64
+	maximumFaultWindowMessages    = 10_000
+	minimumReconnectStormCycles   = 3
+	maximumReconnectStormCycles   = 8
+	minimumReconnectResourcePairs = 4
+	maximumReconnectResourcePairs = 16
+	postFaultMessages             = 16
+	clusterPublishTimeout         = 2 * time.Second
+	clusterDeliveryTimeout        = 60 * time.Second
+	clusterRecoveryAttempts       = rabbitmqqueue.MaxReconnectAttempts
+	clusterRecoveryMaxDelay       = 15 * time.Second
 )
 
 var errInvalidLiveCluster = errors.New("invalid live cluster fixture")
@@ -34,6 +38,7 @@ const (
 	liveFaultQuorumLeaderLoss       liveFaultScenario = "quorum-leader-loss"
 	liveFaultQuorumNetworkPartition liveFaultScenario = "quorum-network-partition"
 	liveFaultClusterRestart         liveFaultScenario = "cluster-restart"
+	liveFaultReconnectStorm         liveFaultScenario = "reconnect-storm"
 )
 
 type liveClusterLedger struct {
@@ -41,6 +46,18 @@ type liveClusterLedger struct {
 	attempts   map[string]rabbitmqqueue.PublishState
 	deliveries map[string]int
 	observed   chan struct{}
+}
+
+type liveRecoveryObservationLedger struct {
+	mu         sync.Mutex
+	counts     map[rabbitmqqueue.ObservationResource]map[rabbitmqqueue.ObservationOutcome]int
+	changed    chan struct{}
+	reconnects map[rabbitmqqueue.ObservationResource]int
+}
+
+type liveRecoveryCheckpoint struct {
+	producerRecovered int
+	consumerRecovered int
 }
 
 func TestLiveClusterFixtureValidation(t *testing.T) {
@@ -90,6 +107,46 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 			t.Fatalf("valid %s fixture: %v", scenario, err)
 		}
 	}
+
+	reconnectStorm := valid
+	reconnectStorm.FaultStartGateFile = ""
+	reconnectStorm.FaultCompleteGateFile = ""
+	reconnectStorm.FaultQueueType = rabbitmqqueue.QueueQuorum
+	reconnectStorm.FaultScenario = liveFaultReconnectStorm
+	reconnectStorm.FaultCycleGateFiles = []string{"cycle-1", "cycle-2", "cycle-3"}
+	reconnectStorm.FaultResourcePairs = minimumReconnectResourcePairs
+	if err := validateLiveClusterFixture(reconnectStorm); err != nil {
+		t.Fatalf("valid reconnect-storm fixture: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*liveBrokerFixture)
+	}{
+		{name: "too few cycles", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleGateFiles = value.FaultCycleGateFiles[:minimumReconnectStormCycles-1]
+		}},
+		{name: "duplicate cycle gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleGateFiles[1] = value.FaultCycleGateFiles[0]
+		}},
+		{name: "mixed gate protocols", mutate: func(value *liveBrokerFixture) {
+			value.FaultStartGateFile = "fault-started"
+		}},
+		{name: "classic reconnect storm", mutate: func(value *liveBrokerFixture) {
+			value.FaultQueueType = rabbitmqqueue.QueueClassic
+		}},
+		{name: "too few resource pairs", mutate: func(value *liveBrokerFixture) {
+			value.FaultResourcePairs = minimumReconnectResourcePairs - 1
+		}},
+	} {
+		t.Run("invalid reconnect storm/"+test.name, func(t *testing.T) {
+			fixture := reconnectStorm
+			fixture.FaultCycleGateFiles = append([]string(nil), reconnectStorm.FaultCycleGateFiles...)
+			test.mutate(&fixture)
+			if err := validateLiveClusterFixture(fixture); err == nil {
+				t.Fatal("invalid reconnect-storm fixture was accepted")
+			}
+		})
+	}
 }
 
 func TestLiveClusterLedgerAccounting(t *testing.T) {
@@ -120,12 +177,64 @@ func TestLiveClusterLedgerAccounting(t *testing.T) {
 	}
 }
 
+func TestLiveRecoveryObservationLedgerRequiresNewRecoveryPerCycle(t *testing.T) {
+	ledger := newLiveRecoveryObservationLedger()
+	for _, resource := range []rabbitmqqueue.ObservationResource{
+		rabbitmqqueue.ObservationProducer, rabbitmqqueue.ObservationConsumer,
+	} {
+		ledger.record(rabbitmqqueue.Observation{
+			Resource: resource, Kind: rabbitmqqueue.ObservationReconnect,
+			Outcome: rabbitmqqueue.ObservationAttempted,
+		})
+		ledger.record(rabbitmqqueue.Observation{
+			Resource: resource, Kind: rabbitmqqueue.ObservationConnectionState,
+			Outcome: rabbitmqqueue.ObservationRecovered,
+		})
+	}
+	if !ledger.cycleObserved(1, liveRecoveryCheckpoint{}) {
+		t.Fatal("first producer and consumer recovery cycle was not observed")
+	}
+	checkpoint := ledger.checkpoint()
+	ledger.record(rabbitmqqueue.Observation{
+		Resource: rabbitmqqueue.ObservationProducer, Kind: rabbitmqqueue.ObservationReconnect,
+		Outcome: rabbitmqqueue.ObservationAttempted,
+	})
+	ledger.record(rabbitmqqueue.Observation{
+		Resource: rabbitmqqueue.ObservationProducer, Kind: rabbitmqqueue.ObservationConnectionState,
+		Outcome: rabbitmqqueue.ObservationRecovered,
+	})
+	if ledger.cycleObserved(2, checkpoint) {
+		t.Fatal("producer-only recovery satisfied a complete recovery cycle")
+	}
+	ledger.record(rabbitmqqueue.Observation{
+		Resource: rabbitmqqueue.ObservationConsumer, Kind: rabbitmqqueue.ObservationReconnect,
+		Outcome: rabbitmqqueue.ObservationAttempted,
+	})
+	ledger.record(rabbitmqqueue.Observation{
+		Resource: rabbitmqqueue.ObservationConsumer, Kind: rabbitmqqueue.ObservationConnectionState,
+		Outcome: rabbitmqqueue.ObservationRecovered,
+	})
+	if !ledger.cycleObserved(2, checkpoint) {
+		t.Fatal("second producer and consumer recovery cycle was not observed")
+	}
+}
+
 func validateLiveClusterFixture(fixture liveBrokerFixture) error {
-	if len(fixture.Endpoints) != 3 || fixture.FaultStartGateFile == "" ||
-		fixture.FaultCompleteGateFile == "" ||
-		fixture.FaultStartGateFile == fixture.FaultCompleteGateFile ||
+	if len(fixture.Endpoints) != 3 ||
 		fixture.FaultWindowMessages < minimumFaultWindowMessages ||
 		fixture.FaultWindowMessages > maximumFaultWindowMessages {
+		return errInvalidLiveCluster
+	}
+	if fixture.FaultScenario == liveFaultReconnectStorm {
+		if fixture.FaultStartGateFile != "" || fixture.FaultCompleteGateFile != "" ||
+			!validReconnectStormGates(fixture.FaultCycleGateFiles) ||
+			fixture.FaultResourcePairs < minimumReconnectResourcePairs ||
+			fixture.FaultResourcePairs > maximumReconnectResourcePairs {
+			return errInvalidLiveCluster
+		}
+	} else if fixture.FaultStartGateFile == "" || fixture.FaultCompleteGateFile == "" ||
+		fixture.FaultStartGateFile == fixture.FaultCompleteGateFile || len(fixture.FaultCycleGateFiles) != 0 ||
+		fixture.FaultResourcePairs != 0 {
 		return errInvalidLiveCluster
 	}
 	switch fixture.FaultScenario {
@@ -133,7 +242,8 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 		if fixture.FaultQueueType != rabbitmqqueue.QueueClassic {
 			return errInvalidLiveCluster
 		}
-	case liveFaultQuorumLeaderLoss, liveFaultQuorumNetworkPartition, liveFaultClusterRestart:
+	case liveFaultQuorumLeaderLoss, liveFaultQuorumNetworkPartition, liveFaultClusterRestart,
+		liveFaultReconnectStorm:
 		if fixture.FaultQueueType != rabbitmqqueue.QueueQuorum {
 			return errInvalidLiveCluster
 		}
@@ -143,12 +253,33 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 	return nil
 }
 
+func validReconnectStormGates(gates []string) bool {
+	if len(gates) < minimumReconnectStormCycles || len(gates) > maximumReconnectStormCycles {
+		return false
+	}
+	seen := make(map[string]struct{}, len(gates))
+	for _, gate := range gates {
+		if gate == "" {
+			return false
+		}
+		if _, exists := seen[gate]; exists {
+			return false
+		}
+		seen[gate] = struct{}{}
+	}
+	return true
+}
+
 func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	fixture := readLiveBrokerFixtureForEnvironment(t, liveClusterConfigEnvironment)
 	if err := validateLiveClusterFixture(fixture); err != nil {
 		t.Fatalf("validate three-node configuration: %v", err)
 	}
-	for _, gate := range []string{fixture.FaultStartGateFile, fixture.FaultCompleteGateFile} {
+	gates := []string{fixture.FaultStartGateFile, fixture.FaultCompleteGateFile}
+	if fixture.FaultScenario == liveFaultReconnectStorm {
+		gates = fixture.FaultCycleGateFiles
+	}
+	for _, gate := range gates {
 		if faultGateExists(t, gate) {
 			t.Fatal("fault gates must not exist before the test starts")
 		}
@@ -168,20 +299,47 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 		deliveries: make(map[string]int),
 		observed:   make(chan struct{}, 1),
 	}
-	consumer := openLiveConsumer(t, connection, faultQueue, fixture.FaultQueueType, 2, func(
+	handler := func(
 		_ context.Context,
 		delivery rabbitmqqueue.Delivery,
 	) (rabbitmqqueue.Settlement, error) {
 		ledger.recordDelivery(delivery.MessageID)
 		return rabbitmqqueue.Acknowledge(), nil
-	})
+	}
+	consumer := openLiveConsumer(t, connection, faultQueue, fixture.FaultQueueType, 2, handler)
 	defer closeLiveConsumer(t, consumer)
 	producer := openLiveProducer(t, connection)
 	defer closeLiveProducer(t, producer)
+	producers := []*rabbitmqqueue.Producer{producer}
+	consumers := []*rabbitmqqueue.Consumer{consumer}
+	if fixture.FaultScenario == liveFaultReconnectStorm {
+		for len(producers) < fixture.FaultResourcePairs {
+			additionalConsumer := openLiveConsumer(
+				t, connection, faultQueue, fixture.FaultQueueType, 2, handler,
+			)
+			defer closeLiveConsumer(t, additionalConsumer)
+			consumers = append(consumers, additionalConsumer)
+			additionalProducer := openLiveProducer(t, connection)
+			defer closeLiveProducer(t, additionalProducer)
+			producers = append(producers, additionalProducer)
+		}
+	}
+	var recoveryObservations []*liveRecoveryObservationLedger
+	if fixture.FaultScenario == liveFaultReconnectStorm {
+		var stopObservations func()
+		recoveryObservations, stopObservations = startLiveRecoveryObservationCollectors(producers, consumers)
+		defer stopObservations()
+	}
 
 	baselineIDs := publishLiveRange(t, producer, ledger, fixture, faultQueue, runToken, "baseline", 0, 8, false)
 	waitForConfirmedDeliveries(t, ledger, baselineIDs)
 	t.Log("FAULT_WINDOW_READY")
+	if fixture.FaultScenario == liveFaultReconnectStorm {
+		runLiveReconnectStorm(
+			t, producers, consumers, ledger, recoveryObservations, fixture, faultQueue, runToken, baselineIDs,
+		)
+		return
+	}
 	waitForFaultGate(t, fixture.FaultStartGateFile)
 	t.Log("FAULT_WINDOW_STARTED")
 
@@ -222,6 +380,134 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	)
 }
 
+func runLiveReconnectStorm(
+	t *testing.T,
+	producers []*rabbitmqqueue.Producer,
+	consumers []*rabbitmqqueue.Consumer,
+	ledger *liveClusterLedger,
+	recoveryObservations []*liveRecoveryObservationLedger,
+	fixture liveBrokerFixture,
+	faultQueue liveQueue,
+	runToken string,
+	baselineIDs []string,
+) {
+	t.Helper()
+	producer := producers[0]
+	allAttempts := append([]string(nil), baselineIDs...)
+	for index, gate := range fixture.FaultCycleGateFiles {
+		cycle := index + 1
+		t.Logf("RECONNECT_CYCLE_WAITING cycle=%d", cycle)
+		waitForFaultGate(t, gate)
+		t.Logf("RECONNECT_CYCLE_STARTED cycle=%d", cycle)
+		faultIDs := publishLiveRange(
+			t, producer, ledger, fixture, faultQueue, runToken, "reconnect-fault", index, 1, true,
+		)
+		allAttempts = append(allAttempts, faultIDs...)
+		waitForLiveClusterResourcesOutage(t, producers, consumers)
+		checkpoints := make([]liveRecoveryCheckpoint, len(recoveryObservations))
+		for observationIndex, observations := range recoveryObservations {
+			checkpoints[observationIndex] = observations.checkpoint()
+		}
+		for observationIndex, observations := range recoveryObservations {
+			observations.waitForCycle(t, cycle, checkpoints[observationIndex])
+		}
+		waitForLiveClusterResourcesRecovery(t, producers, consumers)
+		postCycleIDs := publishLiveRange(
+			t, producer, ledger, fixture, faultQueue, runToken, "reconnect-post", index, 1, false,
+		)
+		allAttempts = append(allAttempts, postCycleIDs...)
+		waitForConfirmedDeliveries(t, ledger, postCycleIDs)
+		t.Logf("RECOVERY_CYCLE_READY cycle=%d", cycle)
+	}
+	waitForConfirmedDeliveries(t, ledger, allAttempts)
+	waitForDeliveryQuiet(t, ledger)
+	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
+	producerReconnects, consumerReconnects := 0, 0
+	for _, observations := range recoveryObservations {
+		pairProducerReconnects, pairConsumerReconnects := observations.reconnectAttempts()
+		producerReconnects += pairProducerReconnects
+		consumerReconnects += pairConsumerReconnects
+	}
+	t.Logf(
+		"RECOVERY_OUTCOMES scenario=%s cycles=%d resource_pairs=%d producer_reconnects=%d consumer_reconnects=%d",
+		fixture.FaultScenario, len(fixture.FaultCycleGateFiles), len(recoveryObservations),
+		producerReconnects, consumerReconnects,
+	)
+	t.Logf(
+		"MESSAGE_OUTCOMES scenario=%s queue_type=%s attempted=%d confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d",
+		fixture.FaultScenario, fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous,
+		notSent, delivered, duplicates,
+	)
+}
+
+func waitForLiveClusterResourcesOutage(
+	t *testing.T,
+	producers []*rabbitmqqueue.Producer,
+	consumers []*rabbitmqqueue.Consumer,
+) {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if liveClusterResourcesUnavailable(producers, consumers) {
+			return
+		}
+		select {
+		case <-timer.C:
+			t.Fatal("cluster outage was not observed by every producer and consumer")
+		case <-ticker.C:
+		}
+	}
+}
+
+func liveClusterResourcesUnavailable(
+	producers []*rabbitmqqueue.Producer,
+	consumers []*rabbitmqqueue.Consumer,
+) bool {
+	for _, producer := range producers {
+		if producer.Readiness() == rabbitmqqueue.ReadinessReady {
+			return false
+		}
+	}
+	for _, consumer := range consumers {
+		if consumer.Readiness() == rabbitmqqueue.ReadinessReady {
+			return false
+		}
+	}
+	return true
+}
+
+func waitForLiveClusterResourcesRecovery(
+	t *testing.T,
+	producers []*rabbitmqqueue.Producer,
+	consumers []*rabbitmqqueue.Consumer,
+) {
+	t.Helper()
+	timer := time.NewTimer(clusterDeliveryTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ready := true
+		for _, producer := range producers {
+			ready = ready && producer.Readiness() == rabbitmqqueue.ReadinessReady
+		}
+		for _, consumer := range consumers {
+			ready = ready && consumer.Readiness() == rabbitmqqueue.ReadinessReady
+		}
+		if ready {
+			return
+		}
+		select {
+		case <-timer.C:
+			t.Fatal("not every cluster producer and consumer recovered")
+		case <-ticker.C:
+		}
+	}
+}
+
 func waitForLiveClusterRecovery(
 	t *testing.T,
 	producer *rabbitmqqueue.Producer,
@@ -247,6 +533,142 @@ func waitForLiveClusterRecovery(
 		case <-ticker.C:
 		}
 	}
+}
+
+func startLiveRecoveryObservationCollectors(
+	producers []*rabbitmqqueue.Producer,
+	consumers []*rabbitmqqueue.Consumer,
+) ([]*liveRecoveryObservationLedger, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var collectors sync.WaitGroup
+	ledgers := make([]*liveRecoveryObservationLedger, len(producers))
+	for index := range producers {
+		ledger := newLiveRecoveryObservationLedger()
+		ledgers[index] = ledger
+		for _, observations := range []<-chan rabbitmqqueue.Observation{
+			producers[index].Observations(), consumers[index].Observations(),
+		} {
+			collectors.Add(1)
+			go func() {
+				defer collectors.Done()
+				ledger.collect(ctx, observations)
+			}()
+		}
+	}
+	return ledgers, func() {
+		cancel()
+		collectors.Wait()
+	}
+}
+
+func newLiveRecoveryObservationLedger() *liveRecoveryObservationLedger {
+	return &liveRecoveryObservationLedger{
+		counts: map[rabbitmqqueue.ObservationResource]map[rabbitmqqueue.ObservationOutcome]int{
+			rabbitmqqueue.ObservationProducer: {},
+			rabbitmqqueue.ObservationConsumer: {},
+		},
+		changed: make(chan struct{}, 1),
+		reconnects: map[rabbitmqqueue.ObservationResource]int{
+			rabbitmqqueue.ObservationProducer: 0,
+			rabbitmqqueue.ObservationConsumer: 0,
+		},
+	}
+}
+
+func (ledger *liveRecoveryObservationLedger) collect(
+	ctx context.Context,
+	observations <-chan rabbitmqqueue.Observation,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case observation, open := <-observations:
+			if !open {
+				return
+			}
+			if ledger.record(observation) {
+				select {
+				case ledger.changed <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}
+}
+
+func (ledger *liveRecoveryObservationLedger) record(observation rabbitmqqueue.Observation) bool {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	if _, exists := ledger.counts[observation.Resource]; !exists {
+		return false
+	}
+	changed := false
+	if observation.Kind == rabbitmqqueue.ObservationConnectionState &&
+		(observation.Outcome == rabbitmqqueue.ObservationRecovering ||
+			observation.Outcome == rabbitmqqueue.ObservationRecovered) {
+		ledger.counts[observation.Resource][observation.Outcome]++
+		changed = true
+	}
+	if observation.Kind == rabbitmqqueue.ObservationReconnect &&
+		observation.Outcome == rabbitmqqueue.ObservationAttempted {
+		ledger.reconnects[observation.Resource]++
+		changed = true
+	}
+	return changed
+}
+
+func (ledger *liveRecoveryObservationLedger) waitForCycle(
+	t *testing.T,
+	cycle int,
+	checkpoint liveRecoveryCheckpoint,
+) {
+	t.Helper()
+	timer := time.NewTimer(clusterDeliveryTimeout)
+	defer timer.Stop()
+	for {
+		if ledger.cycleObserved(cycle, checkpoint) {
+			return
+		}
+		select {
+		case <-ledger.changed:
+		case <-timer.C:
+			producerReconnects, consumerReconnects := ledger.reconnectAttempts()
+			t.Fatalf(
+				"reconnect cycle %d was not observed: producer_reconnects=%d consumer_reconnects=%d",
+				cycle, producerReconnects, consumerReconnects,
+			)
+		}
+	}
+}
+
+func (ledger *liveRecoveryObservationLedger) checkpoint() liveRecoveryCheckpoint {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	return liveRecoveryCheckpoint{
+		producerRecovered: ledger.counts[rabbitmqqueue.ObservationProducer][rabbitmqqueue.ObservationRecovered],
+		consumerRecovered: ledger.counts[rabbitmqqueue.ObservationConsumer][rabbitmqqueue.ObservationRecovered],
+	}
+}
+
+func (ledger *liveRecoveryObservationLedger) cycleObserved(
+	cycle int,
+	checkpoint liveRecoveryCheckpoint,
+) bool {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	return ledger.counts[rabbitmqqueue.ObservationProducer][rabbitmqqueue.ObservationRecovered] >
+		checkpoint.producerRecovered &&
+		ledger.counts[rabbitmqqueue.ObservationConsumer][rabbitmqqueue.ObservationRecovered] >
+			checkpoint.consumerRecovered &&
+		ledger.reconnects[rabbitmqqueue.ObservationProducer] >= cycle &&
+		ledger.reconnects[rabbitmqqueue.ObservationConsumer] >= cycle
+}
+
+func (ledger *liveRecoveryObservationLedger) reconnectAttempts() (producer int, consumer int) {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	return ledger.reconnects[rabbitmqqueue.ObservationProducer], ledger.reconnects[rabbitmqqueue.ObservationConsumer]
 }
 
 func publishLiveRange(

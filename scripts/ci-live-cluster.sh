@@ -12,12 +12,12 @@ case "${fault_scenario}" in
     classic-node-loss)
         fault_queue_type='classic'
         ;;
-    quorum-leader-loss | quorum-network-partition | cluster-restart)
+    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm)
         fault_queue_type='quorum'
         ;;
     *)
         printf '%s\n' \
-            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, or cluster-restart' >&2
+            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, or reconnect-storm' >&2
         exit 1
         ;;
 esac
@@ -35,6 +35,9 @@ client_password="$(openssl rand -hex 24)"
 erlang_cookie="$(openssl rand -hex 24)"
 node_names=(rabbit1 rabbit2 rabbit3)
 container_names=()
+reconnect_storm_cycles=3
+reconnect_storm_outage_seconds=5
+reconnect_storm_resource_pairs=4
 declare -A amqp_ports
 declare -A management_ports
 test_pid=''
@@ -264,6 +267,16 @@ endpoints_json="$({
 } | jq -R 'tonumber | {host: "127.0.0.1", port: .}' | jq -s '.')"
 fault_start_gate="${task_root}/gates/fault-started"
 fault_complete_gate="${task_root}/gates/fault-complete"
+fault_cycle_gate_files=()
+fault_cycle_gate_files_json='[]'
+if [[ "${fault_scenario}" == reconnect-storm ]]; then
+    fault_start_gate=''
+    fault_complete_gate=''
+    for cycle in $(seq 1 "${reconnect_storm_cycles}"); do
+        fault_cycle_gate_files+=("${task_root}/gates/reconnect-cycle-${cycle}")
+    done
+    fault_cycle_gate_files_json="$(printf '%s\n' "${fault_cycle_gate_files[@]}" | jq -R . | jq -s .)"
+fi
 jq -n \
     --argjson endpoints "${endpoints_json}" \
     --arg vhost "${vhost}" \
@@ -274,6 +287,8 @@ jq -n \
     --arg fault_complete_gate_file "${fault_complete_gate}" \
     --arg fault_queue_type "${fault_queue_type}" \
     --arg fault_scenario "${fault_scenario}" \
+    --argjson fault_cycle_gate_files "${fault_cycle_gate_files_json}" \
+    --argjson fault_resource_pairs "${reconnect_storm_resource_pairs}" \
     '{
         endpoints: $endpoints,
         virtual_host: $vhost,
@@ -293,6 +308,8 @@ jq -n \
         fault_complete_gate_file: $fault_complete_gate_file,
         fault_queue_type: $fault_queue_type,
         fault_scenario: $fault_scenario,
+        fault_cycle_gate_files: $fault_cycle_gate_files,
+        fault_resource_pairs: (if $fault_scenario == "reconnect-storm" then $fault_resource_pairs else 0 end),
         fault_window_messages: 64
     }' >"${task_root}/live-cluster.json"
 chmod 0600 "${task_root}/live-cluster.json"
@@ -333,6 +350,125 @@ if [[ "${ready}" != true ]]; then
         exit 1
     fi
     exit "${test_status}"
+fi
+
+if [[ "${fault_scenario}" == reconnect-storm ]]; then
+    for index in "${!fault_cycle_gate_files[@]}"; do
+        cycle="$((index + 1))"
+        cycle_waiting=false
+        for _ in $(seq 1 30); do
+            if grep -q "RECONNECT_CYCLE_WAITING cycle=${cycle}" "${test_log}"; then
+                cycle_waiting=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${cycle_waiting}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+
+        docker stop --time 10 "${container_names[@]}" >/dev/null
+        cycle_started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        : >"${fault_cycle_gate_files[${index}]}"
+        printf 'FAULT_TIMELINE scenario=%s queue_type=%s cycle=%d event=cluster-stopped at=%s\n' \
+            "${fault_scenario}" "${fault_queue_type}" "${cycle}" "${cycle_started_at}"
+
+        cycle_observed=false
+        for _ in $(seq 1 30); do
+            if grep -q "RECONNECT_CYCLE_STARTED cycle=${cycle}" "${test_log}"; then
+                cycle_observed=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${cycle_observed}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+
+        sleep "${reconnect_storm_outage_seconds}"
+        for container_name in "${container_names[@]}"; do
+            docker start "${container_name}" >/dev/null
+        done
+        for container_name in "${container_names[@]}"; do
+            for _ in $(seq 1 120); do
+                if docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+                    break
+                fi
+                sleep 1
+            done
+            docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null
+        done
+        for _ in $(seq 1 120); do
+            if get_json rabbit1 nodes |
+                jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        get_json rabbit1 nodes |
+            jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null
+        for _ in $(seq 1 120); do
+            if queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)" &&
+                jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                    <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
+        jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+            <<<"${queue_json}" >/dev/null
+        recovered_leader="$(jq -er '.leader' <<<"${queue_json}")"
+        cycle_recovered_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        printf 'FAULT_TIMELINE scenario=%s queue_type=%s cycle=%d event=cluster-restarted hold_seconds=%d leader=%s at=%s\n' \
+            "${fault_scenario}" "${fault_queue_type}" "${cycle}" "${reconnect_storm_outage_seconds}" \
+            "${recovered_leader}" "${cycle_recovered_at}"
+
+        recovery_observed=false
+        for _ in $(seq 1 120); do
+            if grep -q "RECOVERY_CYCLE_READY cycle=${cycle}" "${test_log}"; then
+                recovery_observed=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${recovery_observed}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+        for _ in $(seq 1 60); do
+            if queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)" &&
+                jq -e --argjson consumers "${reconnect_storm_resource_pairs}" \
+                    '.state == "running" and .consumers == $consumers' <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
+        jq -e --argjson consumers "${reconnect_storm_resource_pairs}" \
+            '.state == "running" and .consumers == $consumers' <<<"${queue_json}" >/dev/null
+    done
+
+    if wait "${test_pid}"; then
+        test_status=0
+    else
+        test_status=$?
+    fi
+    test_pid=''
+    cat "${test_log}"
+    test "${test_status}" -eq 0
+    exit
 fi
 
 fault_member=''
