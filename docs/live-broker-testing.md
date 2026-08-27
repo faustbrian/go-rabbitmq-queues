@@ -130,8 +130,9 @@ PHP-to-Go publication,
 publisher confirms, mandatory returns, exact body and property values, manual
 acknowledgement, and the directional header-type guarantees documented under
 [AMQP interoperability](interoperability.md). It never provisions, purges, or
-deletes the queues. Without a retained passing broker run, PHP and Laravel
-compatibility remain unproved.
+deletes the queues. The CI-hosted fixture now retains this evidence for the
+pinned PHP client. Laravel framework integration remains outside this harness
+and is not established by the protocol-level result.
 
 ## Three-node interruption harness
 

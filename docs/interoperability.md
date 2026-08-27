@@ -83,9 +83,10 @@ correlated with the exact publish. The PHP runner requires that single bounded
 additional header without exposing its value. It is package policy metadata,
 not application metadata, and Go removes it from public delivery snapshots.
 
-Laravel compatibility remains unproved until the same corpus passes in both
-directions through a retained live-broker run. That run must also prove routing,
-mandatory returns, confirms, manual settlement, and record the broker, PHP,
-extension, client-library, and package versions. A local runner self-test,
-tagged compilation, fixture-only pass, or Go-only pass must not be reported as
-PHP or Laravel interoperability.
+The retained CI broker gate proves the same corpus in both directions with the
+pinned runtime and client, including routing, mandatory returns, confirms, and
+manual settlement. This establishes the PHP AMQP protocol interoperability
+required before Laravel adoption. No Laravel framework integration or adapter
+has been exercised, so Laravel compatibility remains a separate unproved
+boundary. A local runner self-test, tagged compilation, fixture-only pass, or
+Go-only pass must not be reported as that framework-level evidence.

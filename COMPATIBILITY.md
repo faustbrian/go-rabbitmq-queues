@@ -25,7 +25,11 @@ externally provisioned TLS broker through the public API without controlling
 broker resources. The retained GitHub Actions broker gate provisions the pinned
 amd64 container and proves verified TLS connections, classic and quorum queue
 round trips, mandatory-return reconciliation, and bounded quorum requeue
-behavior through that public harness. Local unit, fuzz,
+behavior through that public harness. The retained PHP interoperability gate
+uses the same TLS fixture to prove exact body, property, and typed-header
+mapping in both directions with the pinned PHP runtime and `php-amqplib`, plus
+publisher confirms, mandatory returns, and manual acknowledgement. Local unit,
+fuzz,
 race, leak, stress, and wrapper benchmark harnesses exercise TLS configuration,
 producer/consumer AMQP client boundaries, manual settlement policy,
 synchronous/asynchronous/batch outcome handling, bounded producer and consumer
@@ -35,7 +39,8 @@ equivalence mapping, connection-scoped transient-consumer setup, bounded
 delivery conversion, lifecycle behavior, and the pinned PHP runner's local
 corpus construction and validation without contacting a broker. No three-node
 cluster, node or leader failover, rolling-upgrade, installed-operator
-reconciliation, or PHP broker-interoperability claim is currently established.
+reconciliation, Laravel-framework integration, or live performance-capacity
+claim is currently established.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,
@@ -43,6 +48,9 @@ Kubernetes scheduling, TLS, failover, or rolling-upgrade evidence.
 
 See [performance evidence](docs/performance.md) for workload targets, the local
 wrapper benchmark boundary, and the required live three-node profile.
+
+Retained CI evidence: [run 33041075968](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33041075968)
+at commit `cb48c8cd7e5cda6feebdeea76e7ab92b8f0e5d76`.
 
 ## Authoritative sources
 
