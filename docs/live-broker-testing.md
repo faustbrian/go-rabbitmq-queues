@@ -263,6 +263,18 @@ broker handoff policy in CI-hosted Linux amd64 Docker; it does not prove a
 particular service deployment, cross-version envelope compatibility, Kubernetes
 rollout behavior, or production operation.
 
+Retained
+[run 33066611169](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33066611169)
+at commit `b126eb65f6c59daf0d4b55743d2b986a96d646ea` recorded one old
+consumer with one admitted delivery, zero consumers and zero unacknowledged
+deliveries after the old consumer drained, and exactly one new consumer before
+new work began. The ledger recorded 17 confirmed and delivered messages: one
+assigned only to the old revision and 16 assigned only to the new revision,
+with zero duplicates. The final broker state had zero consumers, ready
+messages, or unacknowledged deliveries. The first aggregate attempt encountered
+a Docker Hub HTTP 500 while pulling the pinned rolling-upgrade image; rerunning
+only the failed job against the same commit passed the complete aggregate gate.
+
 The CI matrix includes a `prolonged-outage` gate that stops all three
 RabbitMQ 4.3.5 nodes for 90 seconds. The public producer and consumer must stay
 live while remaining not ready with a recovering dependency throughout at
