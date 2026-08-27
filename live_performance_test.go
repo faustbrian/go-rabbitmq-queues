@@ -36,6 +36,7 @@ type livePerformanceSample struct {
 	Drain       time.Duration
 	Achieved    float64
 	Confirmed   int
+	Rejected    int
 	Ambiguous   int
 	NotSent     int
 	Delivered   int
@@ -391,18 +392,18 @@ func runLivePerformanceSample(
 	waitForDeliveryQuiet(t, ledger)
 	session.receiver.setLedger(nil)
 	attached = false
-	sample.Confirmed, sample.Ambiguous, sample.NotSent,
+	sample.Confirmed, sample.Rejected, sample.Ambiguous, sample.NotSent,
 		sample.Delivered, sample.Duplicates = ledger.summary(t)
 	sample.Invalid = invalid.Load()
 	sample.Achieved = float64(sample.Messages) / sample.Elapsed.Seconds()
 	errorRate := float64(sample.Messages-sample.Confirmed) / float64(sample.Messages)
 	t.Logf(
-		"PERFORMANCE_SAMPLE mode=%s sample=%d queue_type=%s messages=%d target_per_second=%.2f offered_per_second=%.2f achieved_per_second=%.2f publish_elapsed=%s backlog_drain=%s confirmed=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d invalid=%d error_rate=%.6f",
+		"PERFORMANCE_SAMPLE mode=%s sample=%d queue_type=%s messages=%d target_per_second=%.2f offered_per_second=%.2f achieved_per_second=%.2f publish_elapsed=%s backlog_drain=%s confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d invalid=%d error_rate=%.6f",
 		sample.Mode, sample.Index, fixture.QueueType, sample.Messages, sample.TargetRate, sample.OfferedRate,
-		sample.Achieved, sample.Elapsed, sample.Drain, sample.Confirmed, sample.Ambiguous,
+		sample.Achieved, sample.Elapsed, sample.Drain, sample.Confirmed, sample.Rejected, sample.Ambiguous,
 		sample.NotSent, sample.Delivered, sample.Duplicates, sample.Invalid, errorRate,
 	)
-	if sample.Invalid != 0 || sample.Confirmed != sample.Messages || sample.Ambiguous != 0 ||
+	if sample.Invalid != 0 || sample.Confirmed != sample.Messages || sample.Rejected != 0 || sample.Ambiguous != 0 ||
 		sample.NotSent != 0 || sample.Delivered != sample.Messages || sample.Duplicates != 0 {
 		t.Fatal("live performance sample did not satisfy its correctness profile")
 	}

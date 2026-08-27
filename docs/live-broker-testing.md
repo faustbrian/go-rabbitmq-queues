@@ -163,12 +163,13 @@ task_cache_root=$(mktemp -d /tmp/go-rabbitmq-queues-cluster.XXXXXX) && trap 'chm
 ```
 
 The test requires every confirmed publication to arrive, permits deliveries
-only for confirmed or explicitly ambiguous attempts, rejects returned or
-broker-rejected outcomes on the bound route, and emits countable confirmed,
-ambiguous, not-sent, delivered, and duplicate totals. A passing client run must
-be retained with the external fault timeline and broker evidence; the gate file
-alone does not prove that any fault occurred. The external operator owns gate
-removal and broker restoration.
+only for confirmed or explicitly ambiguous attempts, accepts an explicit
+broker rejection only during the fault window, rejects returned outcomes on
+the bound route, and emits countable confirmed, rejected, ambiguous, not-sent,
+delivered, and duplicate totals. A passing client run must be retained with the
+external fault timeline and broker evidence; the gate file alone does not prove
+that any fault occurred. The external operator owns gate removal and broker
+restoration.
 
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).

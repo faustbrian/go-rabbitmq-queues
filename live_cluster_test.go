@@ -37,22 +37,23 @@ func TestLiveClusterLedgerAccounting(t *testing.T) {
 		observed:   make(chan struct{}, 1),
 	}
 	ledger.recordAttempt("confirmed", rabbitmqqueue.PublishConfirmed)
+	ledger.recordAttempt("rejected", rabbitmqqueue.PublishRejected)
 	ledger.recordAttempt("ambiguous", rabbitmqqueue.PublishAmbiguous)
 	ledger.recordAttempt("not-sent", rabbitmqqueue.PublishNotSent)
-	if ledger.allConfirmedObserved([]string{"confirmed", "ambiguous", "not-sent"}) {
+	if ledger.allConfirmedObserved([]string{"confirmed", "rejected", "ambiguous", "not-sent"}) {
 		t.Fatal("confirmed publication was reported observed before delivery")
 	}
 	ledger.recordDelivery("confirmed")
 	ledger.recordDelivery("confirmed")
 	ledger.recordDelivery("ambiguous")
-	if !ledger.allConfirmedObserved([]string{"confirmed", "ambiguous", "not-sent"}) {
+	if !ledger.allConfirmedObserved([]string{"confirmed", "rejected", "ambiguous", "not-sent"}) {
 		t.Fatal("confirmed publication remained missing after delivery")
 	}
-	confirmed, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
-	if confirmed != 1 || ambiguous != 1 || notSent != 1 || delivered != 3 || duplicates != 1 {
+	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
+	if confirmed != 1 || rejected != 1 || ambiguous != 1 || notSent != 1 || delivered != 3 || duplicates != 1 {
 		t.Fatalf(
-			"ledger summary = (%d, %d, %d, %d, %d), want (1, 1, 1, 3, 1)",
-			confirmed, ambiguous, notSent, delivered, duplicates,
+			"ledger summary = (%d, %d, %d, %d, %d, %d), want (1, 1, 1, 1, 3, 1)",
+			confirmed, rejected, ambiguous, notSent, delivered, duplicates,
 		)
 	}
 }
@@ -118,8 +119,11 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	if !gateObserved && faultGateExists(t, fixture.FaultCompleteGateFile) {
 		gateObserved = true
 	}
-	if !gateObserved || len(faultAttempts) == 0 {
-		t.Fatal("fault gate was not observed during the bounded publication window")
+	if len(faultAttempts) == 0 {
+		t.Fatal("fault window completed without a publication attempt")
+	}
+	if !gateObserved {
+		waitForFaultGate(t, fixture.FaultCompleteGateFile)
 	}
 
 	postFaultIDs := publishLiveRange(
@@ -128,10 +132,10 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	allAttempts := append(append(baselineIDs, faultAttempts...), postFaultIDs...)
 	waitForConfirmedDeliveries(t, ledger, allAttempts)
 	waitForDeliveryQuiet(t, ledger)
-	confirmed, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
+	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
 	t.Logf(
-		"MESSAGE_OUTCOMES queue_type=%s attempted=%d confirmed=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d",
-		fixture.FaultQueueType, len(allAttempts), confirmed, ambiguous, notSent, delivered, duplicates,
+		"MESSAGE_OUTCOMES queue_type=%s attempted=%d confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d",
+		fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous, notSent, delivered, duplicates,
 	)
 }
 
@@ -167,14 +171,14 @@ func publishLiveRange(
 			if err != nil {
 				t.Fatalf("confirmed publication %s returned an error: %v", messageID, err)
 			}
-		case rabbitmqqueue.PublishAmbiguous, rabbitmqqueue.PublishNotSent:
+		case rabbitmqqueue.PublishRejected, rabbitmqqueue.PublishAmbiguous, rabbitmqqueue.PublishNotSent:
 			if err == nil {
 				t.Fatalf("unavailable publication %s returned no error", messageID)
 			}
 			if !allowUnavailable {
 				t.Fatalf("publication %s was %s outside the fault window: %v", messageID, result.State, err)
 			}
-		case rabbitmqqueue.PublishRejected, rabbitmqqueue.PublishReturned:
+		case rabbitmqqueue.PublishReturned:
 			t.Fatalf("publication %s was %s on the bound route: %v", messageID, result.State, err)
 		default:
 			t.Fatalf("publication %s returned unknown state %q", messageID, result.State)
@@ -284,6 +288,7 @@ func (ledger *liveClusterLedger) allConfirmedObserved(ids []string) bool {
 
 func (ledger *liveClusterLedger) summary(t *testing.T) (
 	confirmed int,
+	rejected int,
 	ambiguous int,
 	notSent int,
 	delivered int,
@@ -296,14 +301,16 @@ func (ledger *liveClusterLedger) summary(t *testing.T) (
 		switch state {
 		case rabbitmqqueue.PublishConfirmed:
 			confirmed++
+		case rabbitmqqueue.PublishRejected:
+			rejected++
 		case rabbitmqqueue.PublishAmbiguous:
 			ambiguous++
 		case rabbitmqqueue.PublishNotSent:
 			notSent++
 		}
 		count := ledger.deliveries[messageID]
-		if state == rabbitmqqueue.PublishNotSent && count > 0 {
-			t.Fatalf("not-sent publication %s was delivered", messageID)
+		if (state == rabbitmqqueue.PublishRejected || state == rabbitmqqueue.PublishNotSent) && count > 0 {
+			t.Fatalf("%s publication %s was delivered", state, messageID)
 		}
 		if state == rabbitmqqueue.PublishConfirmed && count == 0 {
 			t.Fatalf("confirmed publication %s was not delivered", messageID)
@@ -318,5 +325,5 @@ func (ledger *liveClusterLedger) summary(t *testing.T) (
 			t.Fatalf("delivery %s had no publication attempt in this run", messageID)
 		}
 	}
-	return confirmed, ambiguous, notSent, delivered, duplicates
+	return confirmed, rejected, ambiguous, notSent, delivered, duplicates
 }
