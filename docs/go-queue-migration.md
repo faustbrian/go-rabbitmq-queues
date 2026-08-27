@@ -6,10 +6,10 @@ plan, not evidence that an adapter or an application cutover is complete.
 Cross-library ownership and application requirements are recorded in the
 [adoption audit](adoption-audit.md).
 
-The comparison was refreshed on 2026-08-26 against:
+The comparison was refreshed on 2026-08-27 against:
 
 - the `go-rabbitmq-queues` source at this document's revision;
-- `go-queue` commit `569b6af`;
+- `go-queue` commit `0c78f7f`;
 - `go-queue/rabbitmq` using `amqp091-go` `v1.11.0` and a RabbitMQ `3.13.7`
   integration fixture; and
 - this package targeting the pins in [`COMPATIBILITY.md`](../COMPATIBILITY.md),
@@ -44,8 +44,8 @@ explicit dispositions:
 | Legacy surface | Current default | Disposition and native boundary |
 |---|---|---|
 | `ExchangeDirect`, `ExchangeTopic` | Not applicable; `WithExchangeType` defaults to `ExchangeDirect` | Conditional direct mapping to the corresponding native `ExchangeKind` when the binding has no arguments; bounded routing keys, including empty keys, are preserved |
-| `ExchangeFanout` | Not applicable | Requires characterization and normalization: the legacy worker binds with the configured routing key, while native fanout topology requires an empty routing key; reject configurations whose behavior cannot be proven equivalent |
-| `ExchangeHeaders` | Not applicable | Incompatible without an explicit migration: the legacy worker supplies a routing key and no binding arguments, while native headers topology requires an empty routing key and non-empty bounded match arguments |
+| `ExchangeFanout` | Not applicable | The characterized legacy worker declares fanout but preserves the configured non-empty key in both binding and publication, while native fanout requires an empty key; reject this configuration unless a separately proven migration deliberately normalizes it |
+| `ExchangeHeaders` | Not applicable | The characterized legacy worker preserves the configured non-empty key and supplies no binding arguments, while native headers topology requires an empty key and non-empty bounded match arguments; reject this configuration until an explicit migration supplies match policy |
 | `WithAddr` | `amqp://guest:guest@localhost:5672/` | Deprecated and rejected for production adoption; bridge only into explicitly supplied structured endpoint, virtual-host, credential-provider, and verified-TLS configuration without retaining or logging the URI |
 | `WithReconnectConfig` | `MaxRetries: 5`, producing five total attempts under the current loop; 500 ms initial delay; 5 s maximum delay | Conditional mapping to `RecoveryPolicy` only after attempt counting and startup-versus-runtime recovery semantics are characterized; otherwise bridge-owned and rejected as ambiguous |
 | `WithExchangeName` | `test-exchange` | Direct identity mapping into operator-owned exchange topology and each publication reference; the adapter does not declare it in production |
@@ -105,6 +105,15 @@ The adapter may be implemented only after all of these gates are satisfied:
 9. Treat quorum queues as a separate adoption gate with delivery-count,
    delivery-limit, dead-letter strategy, leader-failover, and redelivery
    evidence.
+
+The deterministic legacy surface is covered by the current `go-queue/rabbitmq`
+unit characterization, including constructor and option defaults, declaration
+requests, queue and publication routing, confirmation outcomes, deferred
+settlement callbacks, classified retry and dead-letter headers, errors, and
+repeated shutdown. The focused package suite passes under the race detector
+with 100% statement coverage. A mutation check also demonstrates that changing
+legacy publication from non-mandatory to mandatory is detected. This local
+evidence does not satisfy the live RabbitMQ 4.3 parity gate in item 7.
 
 A bounded application inventory must search for both the current module path
 `github.com/faustbrian/go-queue/rabbitmq` and the historical path

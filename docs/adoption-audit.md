@@ -17,11 +17,11 @@ here.
 
 ## Snapshot and evidence boundary
 
-The audit was refreshed on 2026-08-26 against these local source snapshots:
+The audit was refreshed on 2026-08-27 against these local source snapshots:
 
 | Repository | Commit | Branch |
 |---|---|---|
-| `go-queue` | `569b6af8dc87` | `main` |
+| `go-queue` | `0c78f7f23c0f` | `main` |
 | `go-rabbitmq-streams` | `0b11f5b3449b` | `main` |
 | `go-transactional-outbox` | `51507d3af020` | `main` |
 | `go-event-sourcing` | `3b0ffaf50fa9` | `main` |
