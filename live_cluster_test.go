@@ -252,6 +252,14 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 	}
 }
 
+func TestLiveClusterConsumerDependencyRecoveryAllowsPausedReadiness(t *testing.T) {
+	if !liveClusterConsumerDependencyRecovered(
+		rabbitmqqueue.DependencyAvailable,
+	) {
+		t.Fatal("paused consumer with an available dependency was not recovered")
+	}
+}
+
 func TestLiveClusterLedgerAccounting(t *testing.T) {
 	ledger := &liveClusterLedger{
 		attempts:   make(map[string]rabbitmqqueue.PublishState),
@@ -786,6 +794,43 @@ func liveClusterResourcesUnavailable(
 		}
 	}
 	return true
+}
+
+func liveClusterConsumerDependencyRecovered(
+	dependency rabbitmqqueue.DependencyHealth,
+) bool {
+	return dependency == rabbitmqqueue.DependencyAvailable
+}
+
+func waitForLiveClusterResourceDependenciesRecovery(
+	t *testing.T,
+	producers []*rabbitmqqueue.Producer,
+	consumers []*rabbitmqqueue.Consumer,
+) {
+	t.Helper()
+	timer := time.NewTimer(clusterDeliveryTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		recovered := true
+		for _, producer := range producers {
+			recovered = recovered && producer.Readiness() == rabbitmqqueue.ReadinessReady
+		}
+		for _, consumer := range consumers {
+			recovered = recovered && liveClusterConsumerDependencyRecovered(
+				consumer.DependencyHealth(),
+			)
+		}
+		if recovered {
+			return
+		}
+		select {
+		case <-timer.C:
+			t.Fatal("not every cluster producer and consumer dependency recovered")
+		case <-ticker.C:
+		}
+	}
 }
 
 func waitForLiveClusterResourcesRecovery(

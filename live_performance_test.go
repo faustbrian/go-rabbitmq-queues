@@ -336,7 +336,7 @@ func runLivePerformanceLeaderLossSample(
 	}
 	waitForFaultGate(t, fixture.FaultCompleteGateFile)
 	sample.FaultWindow = time.Since(faultStarted)
-	waitForLiveClusterResourcesRecovery(
+	waitForLiveClusterResourceDependenciesRecovery(
 		t, []*rabbitmqqueue.Producer{session.producer}, session.consumers,
 	)
 	for _, consumer := range session.consumers {
@@ -345,6 +345,9 @@ func runLivePerformanceLeaderLossSample(
 		}
 	}
 	resumed = true
+	waitForLiveClusterResourcesRecovery(
+		t, []*rabbitmqqueue.Producer{session.producer}, session.consumers,
+	)
 	drainStarted := time.Now()
 	waitForConfirmedDeliveries(t, ledger, ids)
 	waitForDeliveryQuiet(t, ledger)
