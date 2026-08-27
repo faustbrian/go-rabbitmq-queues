@@ -19,6 +19,8 @@
   classic/quorum routing, confirms, mandatory returns, and bounded settlement.
 - Add an externally coordinated three-node interruption harness with countable
   confirmation, ambiguity, delivery, and duplicate outcomes.
+- Add CI-hosted three-node RabbitMQ patch rolling-upgrade evidence with
+  quorum-safety, client recovery, and message-accounting gates.
 - Add an externally provisioned four-queue performance harness for the 1M,
   10M, and 100M messages-per-day steady and burst profiles.
 - Add a pinned PHP AMQP runner and opt-in bidirectional live-broker harness for

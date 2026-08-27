@@ -207,11 +207,6 @@ recorded 108 producer and 108 consumer reconnect attempts. The message ledger
 recorded 14 attempts, 11 confirmed, three not-sent, zero rejected or ambiguous,
 11 delivered, and zero duplicates.
 
-This is CI-hosted node-loss, quorum-partition, complete-cluster-restart, and
-bounded reconnect-storm evidence. It is not rolling-upgrade,
-installed-Operator reconciliation, application rollout, or
-production-capacity evidence.
-
 The CI matrix also defines a three-node `rolling-upgrade` gate. It starts the
 cluster on the pinned RabbitMQ 4.3.4 Linux amd64 image, enables stable feature
 flags, and then replaces nodes from highest to lowest index with the pinned
@@ -222,9 +217,20 @@ messages through the three configured endpoints; after each replacement the
 gate requires all three nodes and quorum members, a running leader, no local
 alarms on the upgraded node, client readiness, exactly one active consumer, and
 a confirmed post-upgrade round trip before continuing. The final ledger reports
-confirmed, rejected, ambiguous, not-sent, delivered, and duplicate totals. This
-is a defined gate, not retained rolling-upgrade evidence until an exact-head CI
-execution passes.
+confirmed, rejected, ambiguous, not-sent, delivered, and duplicate totals.
+
+Retained
+[run 33055826884](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33055826884)
+at commit `6a8e5b4728e34dbd1c61e28dca2d2e756b47bcc9` upgraded `rabbit3`,
+`rabbit2`, then `rabbit1` from RabbitMQ 4.3.4 to 4.3.5. Every replacement
+retained three running quorum members and exactly one active consumer. The
+ledger recorded 203 attempts, confirmations, and deliveries, with zero
+rejected, ambiguous, not-sent, or duplicate outcomes.
+
+This is CI-hosted node-loss, quorum-partition, complete-cluster-restart,
+bounded reconnect-storm, and patch rolling-upgrade evidence. It is not
+installed-Operator reconciliation, application rollout, or production-capacity
+evidence.
 
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).

@@ -56,8 +56,9 @@ harness starts a three-node quorum cluster on RabbitMQ 4.3.4, checks the
 quorum-safety precondition, replaces one node at a time with RabbitMQ 4.3.5,
 verifies each node rejoins before the next replacement, and accounts for
 publications and deliveries across every replacement and mixed-version
-checkpoint. It is not retained compatibility evidence until its exact-head CI
-job passes.
+checkpoint. Retained run `33055826884` upgraded all three nodes with 203 of 203
+publications confirmed and delivered, zero rejected, ambiguous, not-sent, or
+duplicate outcomes, and exactly one active consumer after every replacement.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,
@@ -82,7 +83,10 @@ Retained CI evidence:
   at commit `57467ae61533d21c16dae019a45ddea2342d9a5e`;
 - three-cycle, four-resource-pair reconnect storm:
   [run 33049501240](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33049501240)
-  at commit `a9b0be10a291c92bc179e8073530e3f53c4a131c`.
+  at commit `a9b0be10a291c92bc179e8073530e3f53c4a131c`;
+- three-node RabbitMQ 4.3.4 to 4.3.5 rolling upgrade:
+  [run 33055826884](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33055826884)
+  at commit `6a8e5b4728e34dbd1c61e28dca2d2e756b47bcc9`.
 
 ## Authoritative sources
 
