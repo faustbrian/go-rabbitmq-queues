@@ -39,6 +39,12 @@
       "url": "https://hub.docker.com/_/rabbitmq"
     },
     {
+      "name": "RabbitMQ container linux amd64",
+      "version": "4.3.5-management-alpine",
+      "revision": "sha256:7224161872a48060e980a611f4778ad18168f00cfa974cab30604dbd855511dc",
+      "url": "https://hub.docker.com/_/rabbitmq"
+    },
+    {
       "name": "kubeconform",
       "version": "0.8.0",
       "revision": "02374e583d700721f57300fae78e11acd27ee539",

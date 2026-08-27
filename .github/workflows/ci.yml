@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: go-rabbitmq-queues-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Run package contract
+        run: |
+          set -euo pipefail
+          task_root="$(mktemp -d "${RUNNER_TEMP}/quality.XXXXXX")"
+          trap 'chmod -R u+w "${task_root}" 2>/dev/null || true; find "${task_root}" -depth -delete' EXIT
+          mkdir -p "${task_root}/build" "${task_root}/modules" "${task_root}/tmp" "${task_root}/bin"
+          export GOCACHE="${task_root}/build"
+          export GOMODCACHE="${task_root}/modules"
+          export GOTMPDIR="${task_root}/tmp"
+          export GOBIN="${task_root}/bin"
+          test -z "$(gofmt -l -- *.go)"
+          go mod tidy -diff
+          go vet ./...
+          go test -count=1 -race -covermode=atomic -coverprofile="${task_root}/coverage.out" ./...
+          coverage="$(go tool cover -func="${task_root}/coverage.out" | awk '$1 == "total:" { gsub("%", "", $3); print $3 }')"
+          test "${coverage}" = "100.0"
+          go test -count=1 -tags=livebroker -run '^$' ./...
+          for fuzz in FuzzPublicationValidation FuzzDeliveryConversion FuzzPublishTrackerCorrelation FuzzTopologyValidation; do
+            go test -run '^$' -fuzz "^${fuzz}$" -fuzztime=10s .
+          done
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          "${GOBIN}/govulncheck" ./...
+          shellcheck scripts/*.sh
+
+  mutation:
+    name: Mutation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Require every viable mutant to be detected
+        run: |
+          set -euo pipefail
+          task_root="$(mktemp -d "${RUNNER_TEMP}/mutation.XXXXXX")"
+          trap 'chmod -R u+w "${task_root}" 2>/dev/null || true; find "${task_root}" -depth -delete' EXIT
+          mkdir -p "${task_root}/build" "${task_root}/modules" "${task_root}/tmp" "${task_root}/bin"
+          export GOCACHE="${task_root}/build"
+          export GOMODCACHE="${task_root}/modules"
+          export GOTMPDIR="${task_root}/tmp"
+          export GOBIN="${task_root}/bin"
+          go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+          "${GOBIN}/gremlins" unleash . --workers 4 --test-cpu 1 --timeout-coefficient 50 --threshold-efficacy 100 --threshold-mcover 100 --output-statuses lctv
+
+  live-broker:
+    name: RabbitMQ 4.3 TLS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: ./scripts/ci-live-broker.sh
+
+  operator-schema:
+    name: Operator schemas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: ./scripts/validate-operator-fixtures.sh
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
+        with:
+          languages: go
+          queries: security-extended,security-and-quality
+      - name: Build
+        run: |
+          set -euo pipefail
+          task_root="$(mktemp -d "${RUNNER_TEMP}/codeql.XXXXXX")"
+          trap 'chmod -R u+w "${task_root}" 2>/dev/null || true; find "${task_root}" -depth -delete' EXIT
+          mkdir -p "${task_root}/build" "${task_root}/modules" "${task_root}/tmp"
+          GOCACHE="${task_root}/build" GOMODCACHE="${task_root}/modules" GOTMPDIR="${task_root}/tmp" go build ./...
+      - uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
+
+  required:
+    name: Required
+    if: always()
+    needs: [quality, mutation, live-broker, operator-schema, codeql]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every result
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          MUTATION_RESULT: ${{ needs.mutation.result }}
+          LIVE_BROKER_RESULT: ${{ needs.live-broker.result }}
+          OPERATOR_SCHEMA_RESULT: ${{ needs.operator-schema.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+        run: |
+          set -euo pipefail
+          for result in \
+            "${QUALITY_RESULT}" \
+            "${MUTATION_RESULT}" \
+            "${LIVE_BROKER_RESULT}" \
+            "${OPERATOR_SCHEMA_RESULT}" \
+            "${CODEQL_RESULT}"; do
+            test "${result}" = success
+          done

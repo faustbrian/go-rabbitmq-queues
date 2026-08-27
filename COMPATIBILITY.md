@@ -6,7 +6,7 @@ Research and initial local policy tests use these immutable inputs as of
 | Input | Pin |
 |---|---|
 | RabbitMQ server | `v4.3.5`, Git `0dde27bfdd1984ff7e157226fd97656854a7f359` |
-| RabbitMQ container | `rabbitmq:4.3.5-management-alpine`, Linux arm64 digest `sha256:aa626c7c8b7d41c708796b336ff721897b176ab29c94d944a26eb2b1b2e3a455` |
+| RabbitMQ container | `rabbitmq:4.3.5-management-alpine`, Linux arm64 digest `sha256:aa626c7c8b7d41c708796b336ff721897b176ab29c94d944a26eb2b1b2e3a455`; Linux amd64 digest `sha256:7224161872a48060e980a611f4778ad18168f00cfa974cab30604dbd855511dc` |
 | `amqp091-go` | `v1.14.0`, Git `387d77a50ea8b8c38705bb18cc80f5d6599a8477` |
 | PHP interoperability runtime | PHP `8.5.8`, Composer `2.10.1` |
 | `php-amqplib/php-amqplib` | `v3.7.4`, Git `381b6f7c600e0e0c7463cdd7f7a1a3bc6268e5fd` |
@@ -17,7 +17,8 @@ Research and initial local policy tests use these immutable inputs as of
 | Go | `go1.27.0` |
 | Initial local OS/architecture | Darwin 27.0.0 arm64 |
 
-The container pin is the intended Linux arm64 broker fixture. The opt-in
+The arm64 container pin is the intended Kubernetes Operator fixture. The amd64
+pin is the CI-only single-node broker fixture. The opt-in
 [`livebroker` evidence harness](docs/live-broker-testing.md) exercises an
 externally provisioned TLS broker through the public API without controlling
 broker resources. Local unit, fuzz,

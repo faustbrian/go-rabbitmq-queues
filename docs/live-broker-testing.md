@@ -80,6 +80,16 @@ the exact repository, RabbitMQ, container or operating-system, Go, client, TLS,
 CPU architecture, and topology pins. A passing single-node run is not cluster,
 failover, operator, performance, PHP, Laravel, or production evidence.
 
+The repository CI runs this same public single-node contract against the pinned
+Linux amd64 RabbitMQ image through [`ci-live-broker.sh`](../scripts/ci-live-broker.sh).
+That script refuses to run outside GitHub Actions, creates a task-owned
+TLS-only container and temporary certificate authority, provisions a
+non-administrative client without configure permission, verifies TLS 1.2 and
+TLS 1.3, and removes the container and generated material on every exit. A
+passing CI job is retained single-node Linux amd64 evidence only; it does not
+replace the externally orchestrated three-node, Operator, PHP, performance, or
+application-rollout gates.
+
 ## PHP interoperability harness
 
 `TestLiveBrokerPHPInteroperability` uses the same single TLS endpoint and
