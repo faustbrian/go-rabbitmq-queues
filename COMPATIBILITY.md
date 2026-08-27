@@ -62,8 +62,12 @@ duplicate outcomes, and exactly one active consumer after every replacement.
 The prolonged-outage harness holds all three RabbitMQ 4.3.5 nodes down for 90
 seconds, samples producer and consumer liveness, readiness, and dependency
 health every 10 seconds, and requires complete message reconciliation after
-recovery. It is not retained compatibility evidence until its exact-head CI job
-passes.
+recovery. Retained run `33058061295` held the complete cluster down for 91
+seconds across 10 samples. Producer and consumer liveness remained live while
+readiness stayed not ready and dependency health stayed recovering. After
+recovery, the ledger accounted for all 34 attempts as 24 confirmed and
+delivered plus 10 not-sent, with zero rejected, ambiguous, or duplicate
+outcomes.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,

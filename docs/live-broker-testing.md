@@ -232,15 +232,22 @@ bounded reconnect-storm, and patch rolling-upgrade evidence. It is not
 installed-Operator reconciliation, application rollout, or production-capacity
 evidence.
 
-The CI matrix also defines a `prolonged-outage` gate that stops all three
+The CI matrix includes a `prolonged-outage` gate that stops all three
 RabbitMQ 4.3.5 nodes for 90 seconds. The public producer and consumer must stay
 live while remaining not ready with a recovering dependency throughout at
 least six 10-second samples. Each sample makes a uniquely identified publish
 attempt; after all three quorum members return, the gate requires client
 recovery, confirmed post-outage publications, and countable confirmed,
-rejected, ambiguous, not-sent, delivered, and duplicate totals. This is a
-defined gate, not retained prolonged-outage evidence until an exact-head CI
-execution passes.
+rejected, ambiguous, not-sent, delivered, and duplicate totals.
+
+Retained
+[run 33058061295](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33058061295)
+at commit `e575563dde4802c70581fa9a3703d55d7f75cb2d` held the complete
+cluster down for 91 seconds across 10 samples. Producer and consumer liveness
+remained live while readiness stayed not ready and dependency health stayed
+recovering. After recovery, the ledger accounted for all 34 attempts as 24
+confirmed and delivered plus 10 not-sent, with zero rejected, ambiguous, or
+duplicate outcomes.
 
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).

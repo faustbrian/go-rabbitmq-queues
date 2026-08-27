@@ -10,6 +10,8 @@
   staged adoption, and rollback gate.
 - Record adjacent-library ownership, API-to-Bill and Track migration
   requirements, evidence limitations, and application adoption gates.
+- Record retained CI evidence for a 91-second complete three-node RabbitMQ
+  outage, sustained client health, recovery, and message reconciliation.
 
 ### Added
 
