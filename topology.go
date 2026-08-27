@@ -302,9 +302,9 @@ type TopologyResult struct {
 }
 
 // Validate checks graph bounds, identities, references, exchange-specific
-// binding rules, lifecycle-safe named queues, and the passive-binding protocol
-// limitation. Server-named exclusive queues belong to a consumer generation;
-// ApplyTopology cannot return one because it closes its connection on return.
+// binding rules, lifecycle-safe queues, and the passive-binding protocol
+// limitation. Every exclusive queue belongs to its declaring connection;
+// ApplyTopology cannot retain one because it closes that connection on return.
 func (topology Topology) Validate(policy TopologyPolicy) error {
 	if err := policy.Validate(); err != nil {
 		return err
@@ -334,7 +334,7 @@ func (topology Topology) Validate(policy TopologyPolicy) error {
 		if err := queue.Validate(); err != nil {
 			return err
 		}
-		if queue.Name == "" {
+		if queue.Exclusive || queue.Name == "" {
 			return ErrInvalidTopology
 		}
 		if _, exists := queues[queue.Name]; exists {

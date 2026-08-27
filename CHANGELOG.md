@@ -30,6 +30,8 @@
   modes and declaration-equivalence validation.
 - Add bounded passive exchange and queue equivalence checks plus explicit
   development-only binding declaration without mutating production bindings.
+- Reject exclusive queues from detached topology operations that cannot retain
+  the declaring connection required for their lifetime.
 - Validate RabbitMQ 4.3 headers-exchange match modes and reject bindings whose
   criteria RabbitMQ would ignore, producing an unintended match-all route.
 - Add a language-neutral AMQP message corpus for byte-preserving interoperability

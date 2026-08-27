@@ -466,21 +466,31 @@ func TestApplyTopologyPreservesNativeEmptyDirectAndTopicBindingKeys(t *testing.T
 	}
 }
 
-func TestApplyTopologyRejectsServerNamedQueueItCannotKeepAlive(t *testing.T) {
+func TestApplyTopologyRejectsExclusiveQueuesItCannotKeepAlive(t *testing.T) {
 	t.Parallel()
 
-	dialed := false
-	result, err := applyTopologyWith(
-		t.Context(), testConnectionConfig(),
-		TopologyPolicy{Mode: TopologyDeclare, Development: PermitDevelopmentTopology()},
-		Topology{Queues: []Queue{{Type: QueueClassic, Exclusive: true, AutoDelete: true}}},
-		func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
-			dialed = true
-			return &fakeTopologyChannel{}, &concurrentCountingCloser{}, nil
-		},
-	)
-	if !errors.Is(err, ErrInvalidTopology) || len(result.QueueNames) != 0 || dialed {
-		t.Fatalf("applyTopologyWith() = (%#v, %v), dialed %t", result, err, dialed)
+	for name, queue := range map[string]Queue{
+		"server named": {Type: QueueClassic, Exclusive: true, AutoDelete: true},
+		"client named": {Name: "reply", Type: QueueClassic, Exclusive: true, AutoDelete: true},
+	} {
+		queue := queue
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			dialed := false
+			result, err := applyTopologyWith(
+				t.Context(), testConnectionConfig(),
+				TopologyPolicy{Mode: TopologyDeclare, Development: PermitDevelopmentTopology()},
+				Topology{Queues: []Queue{queue}},
+				func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
+					dialed = true
+					return &fakeTopologyChannel{}, &concurrentCountingCloser{}, nil
+				},
+			)
+			if !errors.Is(err, ErrInvalidTopology) || len(result.QueueNames) != 0 || dialed {
+				t.Fatalf("applyTopologyWith() = (%#v, %v), dialed %t", result, err, dialed)
+			}
+		})
 	}
 }
 

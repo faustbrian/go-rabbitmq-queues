@@ -107,11 +107,12 @@ rejects passive binding requests instead of calling the mutating bind method.
 Development-only declarations can create an explicitly modeled binding after
 `PermitDevelopmentTopology` is supplied.
 
-`ApplyTopology` rejects server-named exclusive queues because it closes its
-connection after verification or declaration, which would immediately delete
-such a queue. Use `QueueReference.Transient` when a consumer explicitly owns a
-connection-scoped queue. This is the bounded exception to operator-owned queue
-topology; its exchange remains pre-existing and is passively verified.
+`ApplyTopology` rejects every exclusive queue, including queues with static
+names, because it closes its connection after verification or declaration and
+RabbitMQ would immediately delete the queue. Use `QueueReference.Transient`
+when a consumer explicitly owns a connection-scoped queue. This is the bounded
+exception to operator-owned queue topology; its exchange remains pre-existing
+and is passively verified.
 
 ## Declaration-equivalent queue policy
 
