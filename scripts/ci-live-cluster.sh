@@ -118,7 +118,10 @@ docker network create \
     --label 'com.faustbrian.task=go-rabbitmq-queues-cluster-ci' \
     "${network_name}" >/dev/null
 
-for node_name in "${node_names[@]}"; do
+for index in "${!node_names[@]}"; do
+    node_name="${node_names[${index}]}"
+    amqp_ports["${node_name}"]="$((35671 + index))"
+    management_ports["${node_name}"]="$((45671 + index))"
     container_name="go-rabbitmq-queues-${node_name}-${fault_scenario}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
     container_names+=("${container_name}")
     mkdir "${task_root}/${node_name}-data"
@@ -138,8 +141,8 @@ for node_name in "${node_names[@]}"; do
         --mount "type=bind,source=${task_root}/rabbitmq.conf,target=/etc/rabbitmq/rabbitmq.conf,readonly" \
         --mount "type=bind,source=${task_root}/tls,target=/etc/rabbitmq/tls,readonly" \
         --mount "type=bind,source=${task_root}/${node_name}-data,target=/var/lib/rabbitmq" \
-        --publish 127.0.0.1::5671 \
-        --publish 127.0.0.1::15672 \
+        --publish "127.0.0.1:${amqp_ports[${node_name}]}:5671" \
+        --publish "127.0.0.1:${management_ports[${node_name}]}:15672" \
         "${image}" >/dev/null
 done
 
@@ -154,8 +157,6 @@ for index in "${!node_names[@]}"; do
     done
     docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null
     test "$(docker exec "${container_name}" rabbitmqctl version)" = '4.3.5'
-    amqp_ports["${node_name}"]="$(docker port "${container_name}" 5671/tcp | awk -F: 'NR == 1 { print $NF }')"
-    management_ports["${node_name}"]="$(docker port "${container_name}" 15672/tcp | awk -F: 'NR == 1 { print $NF }')"
     [[ "${amqp_ports[${node_name}]}" =~ ^[0-9]+$ ]]
     [[ "${management_ports[${node_name}]}" =~ ^[0-9]+$ ]]
 done
@@ -429,17 +430,22 @@ case "${fault_scenario}" in
         if [[ "${fault_scenario}" == quorum-network-partition ]]; then
             docker network connect --alias "${fault_node}" "${network_name}" "${fault_container}"
             for _ in $(seq 1 120); do
-                if get_json "${fault_node}" overview >/dev/null 2>&1 &&
-                    get_json "${observer_node}" nodes |
-                    jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null; then
+                if get_json "${observer_node}" nodes |
+                    jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null &&
+                    queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)" &&
+                    jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                        <<<"${queue_json}" >/dev/null; then
                     break
                 fi
                 sleep 1
             done
-            get_json "${fault_node}" overview >/dev/null
             get_json "${observer_node}" nodes |
                 jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null
-            recovery_event="partition-healed leader=${new_leader}"
+            queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
+            jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                <<<"${queue_json}" >/dev/null
+            healed_leader="$(jq -er '.leader' <<<"${queue_json}")"
+            recovery_event="partition-healed leader=${healed_leader}"
         else
             recovery_event="leader-elected leader=${new_leader}"
         fi
