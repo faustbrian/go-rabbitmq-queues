@@ -12,12 +12,12 @@ case "${fault_scenario}" in
     classic-node-loss)
         fault_queue_type='classic'
         ;;
-    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm | rolling-upgrade | prolonged-outage | quorum-performance-leader-loss)
+    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm | rolling-upgrade | application-rolling-deployment | prolonged-outage | quorum-performance-leader-loss)
         fault_queue_type='quorum'
         ;;
     *)
         printf '%s\n' \
-            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, reconnect-storm, rolling-upgrade, prolonged-outage, or quorum-performance-leader-loss' >&2
+            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, reconnect-storm, rolling-upgrade, application-rolling-deployment, prolonged-outage, or quorum-performance-leader-loss' >&2
         exit 1
         ;;
 esac
@@ -355,6 +355,9 @@ if [[ "${fault_scenario}" == reconnect-storm || "${fault_scenario}" == rolling-u
     fault_cycle_complete_gate_files_json="$(
         printf '%s\n' "${fault_cycle_complete_gate_files[@]}" | jq -R . | jq -s .
     )"
+elif [[ "${fault_scenario}" == application-rolling-deployment ]]; then
+    fault_cycle_gate_files+=("${task_root}/gates/new-consumer-verified")
+    fault_cycle_gate_files_json="$(printf '%s\n' "${fault_cycle_gate_files[@]}" | jq -R . | jq -s .)"
 fi
 jq -n \
     --argjson endpoints "${endpoints_json}" \
@@ -422,6 +425,9 @@ if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
     test_name='TestLiveBrokerThreeNodePerformanceLeaderLoss'
     ready_marker='PERFORMANCE_FAULT_READY'
     ready_wait_seconds=180
+elif [[ "${fault_scenario}" == application-rolling-deployment ]]; then
+    test_name='TestLiveBrokerApplicationRollingDeployment'
+    ready_marker='APPLICATION_ROLLOUT_OLD_ADMITTED'
 fi
 (
     cd "${project_root}"
@@ -458,6 +464,90 @@ if [[ "${ready}" != true ]]; then
         exit 1
     fi
     exit "${test_status}"
+fi
+
+if [[ "${fault_scenario}" == application-rolling-deployment ]]; then
+    rollout_queue_endpoint="queues/${encoded_vhost}/go-rabbitmq-queues.quorum"
+    old_admitted=false
+    for _ in $(seq 1 60); do
+        if queue_json="$(get_json rabbit1 "${rollout_queue_endpoint}")" &&
+            jq -e '.consumers == 1 and .messages_unacknowledged == 1' <<<"${queue_json}" >/dev/null; then
+            old_admitted=true
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${old_admitted}" != true ]]; then
+        printf '%s\n' 'old application consumer did not retain one admitted delivery' >&2
+        cat "${test_log}"
+        exit 1
+    fi
+    printf '%s\n' 'APPLICATION_ROLLOUT_BROKER phase=old-admitted consumers=1 unacknowledged=1'
+    : >"${fault_start_gate}"
+
+    old_drained=false
+    for _ in $(seq 1 60); do
+        if grep -q 'APPLICATION_ROLLOUT_OLD_DRAINED' "${test_log}" &&
+            queue_json="$(get_json rabbit1 "${rollout_queue_endpoint}")" &&
+            jq -e '.consumers == 0 and .messages_unacknowledged == 0' <<<"${queue_json}" >/dev/null; then
+            old_drained=true
+            break
+        fi
+        if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${old_drained}" != true ]]; then
+        printf '%s\n' 'old application consumer did not drain before handoff' >&2
+        cat "${test_log}"
+        exit 1
+    fi
+    printf '%s\n' 'APPLICATION_ROLLOUT_BROKER phase=old-drained consumers=0 unacknowledged=0'
+    : >"${fault_complete_gate}"
+
+    new_ready=false
+    for _ in $(seq 1 60); do
+        if grep -q 'APPLICATION_ROLLOUT_NEW_READY' "${test_log}" &&
+            queue_json="$(get_json rabbit1 "${rollout_queue_endpoint}")" &&
+            jq -e '.consumers == 1 and .messages_unacknowledged == 0' <<<"${queue_json}" >/dev/null; then
+            new_ready=true
+            break
+        fi
+        if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${new_ready}" != true ]]; then
+        printf '%s\n' 'new application consumer did not become sole queue owner' >&2
+        cat "${test_log}"
+        exit 1
+    fi
+    printf '%s\n' 'APPLICATION_ROLLOUT_BROKER phase=new-ready consumers=1 unacknowledged=0'
+    : >"${fault_cycle_gate_files[0]}"
+
+    if wait "${test_pid}"; then
+        test_status=0
+    else
+        test_status=$?
+    fi
+    test_pid=''
+    cat "${test_log}"
+    test "${test_status}" -eq 0
+    for _ in $(seq 1 60); do
+        if queue_json="$(get_json rabbit1 "${rollout_queue_endpoint}")" &&
+            jq -e '.consumers == 0 and .messages == 0 and .messages_unacknowledged == 0' \
+                <<<"${queue_json}" >/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    queue_json="$(get_json rabbit1 "${rollout_queue_endpoint}")"
+    jq -e '.consumers == 0 and .messages == 0 and .messages_unacknowledged == 0' \
+        <<<"${queue_json}" >/dev/null
+    printf '%s\n' 'APPLICATION_ROLLOUT_BROKER phase=complete consumers=0 messages=0 unacknowledged=0'
+    exit
 fi
 
 if [[ "${fault_scenario}" == reconnect-storm ]]; then

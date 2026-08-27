@@ -43,6 +43,7 @@ const (
 	liveFaultClusterRestart         liveFaultScenario = "cluster-restart"
 	liveFaultReconnectStorm         liveFaultScenario = "reconnect-storm"
 	liveFaultRollingUpgrade         liveFaultScenario = "rolling-upgrade"
+	liveFaultApplicationRollout     liveFaultScenario = "application-rolling-deployment"
 	liveFaultProlongedOutage        liveFaultScenario = "prolonged-outage"
 	liveFaultQuorumPerformanceLoss  liveFaultScenario = "quorum-performance-leader-loss"
 )
@@ -64,6 +65,12 @@ type liveRecoveryObservationLedger struct {
 type liveRecoveryCheckpoint struct {
 	producerRecovered int
 	consumerRecovered int
+}
+
+type liveApplicationRolloutLedger struct {
+	mu            sync.Mutex
+	oldDeliveries map[string]int
+	newDeliveries map[string]int
 }
 
 func TestLiveClusterFixtureValidation(t *testing.T) {
@@ -197,6 +204,40 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 			test.mutate(&fixture)
 			if err := validateLiveClusterFixture(fixture); err == nil {
 				t.Fatal("invalid rolling-upgrade fixture was accepted")
+			}
+		})
+	}
+
+	applicationRollout := valid
+	applicationRollout.FaultQueueType = rabbitmqqueue.QueueQuorum
+	applicationRollout.FaultScenario = liveFaultApplicationRollout
+	applicationRollout.FaultCycleGateFiles = []string{"new-consumer-verified"}
+	if err := validateLiveClusterFixture(applicationRollout); err != nil {
+		t.Fatalf("valid application rolling-deployment fixture: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*liveBrokerFixture)
+	}{
+		{name: "missing old-drain gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultStartGateFile = ""
+		}},
+		{name: "missing new-consumer gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleGateFiles = nil
+		}},
+		{name: "aliased new-consumer gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleGateFiles[0] = value.FaultCompleteGateFile
+		}},
+		{name: "unexpected completion gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleCompleteGateFiles = []string{"unexpected"}
+		}},
+	} {
+		t.Run("invalid application rolling deployment/"+test.name, func(t *testing.T) {
+			fixture := applicationRollout
+			fixture.FaultCycleGateFiles = append([]string(nil), applicationRollout.FaultCycleGateFiles...)
+			test.mutate(&fixture)
+			if err := validateLiveClusterFixture(fixture); err == nil {
+				t.Fatal("invalid application rolling-deployment fixture was accepted")
 			}
 		})
 	}
@@ -349,6 +390,17 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 			fixture.FaultResourcePairs != 0 {
 			return errInvalidLiveCluster
 		}
+	} else if fixture.FaultScenario == liveFaultApplicationRollout {
+		if fixture.FaultStartGateFile == "" || fixture.FaultCompleteGateFile == "" ||
+			fixture.FaultStartGateFile == fixture.FaultCompleteGateFile ||
+			len(fixture.FaultCycleGateFiles) != 1 || len(fixture.FaultCycleCompleteGateFiles) != 0 ||
+			fixture.FaultResourcePairs != 0 ||
+			!uniqueFaultGates(
+				[]string{fixture.FaultStartGateFile, fixture.FaultCompleteGateFile},
+				fixture.FaultCycleGateFiles,
+			) {
+			return errInvalidLiveCluster
+		}
 	} else if fixture.FaultStartGateFile == "" || fixture.FaultCompleteGateFile == "" ||
 		fixture.FaultStartGateFile == fixture.FaultCompleteGateFile || len(fixture.FaultCycleGateFiles) != 0 ||
 		len(fixture.FaultCycleCompleteGateFiles) != 0 ||
@@ -361,7 +413,8 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 			return errInvalidLiveCluster
 		}
 	case liveFaultQuorumLeaderLoss, liveFaultQuorumNetworkPartition, liveFaultClusterRestart,
-		liveFaultReconnectStorm, liveFaultRollingUpgrade, liveFaultProlongedOutage,
+		liveFaultReconnectStorm, liveFaultRollingUpgrade, liveFaultApplicationRollout,
+		liveFaultProlongedOutage,
 		liveFaultQuorumPerformanceLoss:
 		if fixture.FaultQueueType != rabbitmqqueue.QueueQuorum {
 			return errInvalidLiveCluster
@@ -374,6 +427,118 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 		return errInvalidLiveCluster
 	}
 	return nil
+}
+
+func TestLiveBrokerApplicationRollingDeployment(t *testing.T) {
+	fixture := readLiveBrokerFixtureForEnvironment(t, liveClusterConfigEnvironment)
+	if err := validateLiveClusterFixture(fixture); err != nil ||
+		fixture.FaultScenario != liveFaultApplicationRollout {
+		t.Fatalf("validate application rolling-deployment configuration: %v", err)
+	}
+	gates := []string{
+		fixture.FaultStartGateFile,
+		fixture.FaultCompleteGateFile,
+		fixture.FaultCycleGateFiles[0],
+	}
+	for _, gate := range gates {
+		if faultGateExists(t, gate) {
+			t.Fatal("application rollout gates must not exist before the test starts")
+		}
+	}
+
+	connection := fixture.connection(t)
+	connection.Recovery.MaxAttempts = clusterRecoveryAttempts
+	connection.Recovery.MaxDelay = clusterRecoveryMaxDelay
+	verifyLiveTopology(t, connection, fixture)
+	queue := fixture.Quorum
+	producer := openLiveProducer(t, connection)
+	defer closeLiveProducer(t, producer)
+	ledger := &liveClusterLedger{
+		attempts: make(map[string]rabbitmqqueue.PublishState), deliveries: make(map[string]int),
+		observed: make(chan struct{}, 1),
+	}
+	rollout := &liveApplicationRolloutLedger{
+		oldDeliveries: make(map[string]int), newDeliveries: make(map[string]int),
+	}
+	runToken := randomLiveToken(t)
+	oldAdmitted := make(chan struct{}, 1)
+	releaseOld := make(chan struct{})
+	oldConsumer := openLiveConsumerWithBounds(
+		t, connection, queue, rabbitmqqueue.QueueQuorum, 0, 1, 1, 2*clusterDeliveryTimeout,
+		func(_ context.Context, delivery rabbitmqqueue.Delivery) (rabbitmqqueue.Settlement, error) {
+			rollout.recordOld(delivery.MessageID)
+			select {
+			case oldAdmitted <- struct{}{}:
+			default:
+			}
+			<-releaseOld
+			ledger.recordDelivery(delivery.MessageID)
+			return rabbitmqqueue.Acknowledge(), nil
+		},
+	)
+	oldClosed := false
+	oldReleased := false
+	defer func() {
+		if !oldClosed {
+			if !oldReleased {
+				close(releaseOld)
+			}
+			closeLiveConsumer(t, oldConsumer)
+		}
+	}()
+	oldIDs := publishLiveRange(
+		t, producer, ledger, fixture, queue, runToken, "rollout-old-admitted", 0, 1, false,
+	)
+	select {
+	case <-oldAdmitted:
+	case <-time.After(clusterDeliveryTimeout):
+		t.Fatal("timed out waiting for the old consumer to admit work")
+	}
+	t.Log("APPLICATION_ROLLOUT_OLD_ADMITTED")
+	waitForFaultGate(t, fixture.FaultStartGateFile)
+
+	oldClose := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
+		defer cancel()
+		oldClose <- oldConsumer.Close(ctx)
+	}()
+	close(releaseOld)
+	oldReleased = true
+	if err := <-oldClose; err != nil {
+		t.Fatalf("drain old application consumer: %v", err)
+	}
+	oldClosed = true
+	t.Log("APPLICATION_ROLLOUT_OLD_DRAINED")
+	waitForFaultGate(t, fixture.FaultCompleteGateFile)
+
+	newConsumer := openLiveConsumer(
+		t, connection, queue, rabbitmqqueue.QueueQuorum, 0,
+		func(_ context.Context, delivery rabbitmqqueue.Delivery) (rabbitmqqueue.Settlement, error) {
+			rollout.recordNew(delivery.MessageID)
+			ledger.recordDelivery(delivery.MessageID)
+			return rabbitmqqueue.Acknowledge(), nil
+		},
+	)
+	defer closeLiveConsumer(t, newConsumer)
+	t.Log("APPLICATION_ROLLOUT_NEW_READY")
+	waitForFaultGate(t, fixture.FaultCycleGateFiles[0])
+	newIDs := publishLiveRange(
+		t, producer, ledger, fixture, queue, runToken, "rollout-new", 0, postFaultMessages, false,
+	)
+	allIDs := append(append([]string(nil), oldIDs...), newIDs...)
+	waitForConfirmedDeliveries(t, ledger, allIDs)
+	waitForDeliveryQuiet(t, ledger)
+	rollout.assert(t, oldIDs, newIDs)
+	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
+	if confirmed != len(allIDs) || rejected != 0 || ambiguous != 0 || notSent != 0 ||
+		delivered != len(allIDs) || duplicates != 0 {
+		t.Fatal("application rollout did not preserve exact message accounting")
+	}
+	t.Logf(
+		"APPLICATION_ROLLOUT_OUTCOMES old_admitted=%d old_delivered=%d new_attempted=%d new_delivered=%d confirmed=%d duplicates=%d",
+		len(oldIDs), len(oldIDs), len(newIDs), len(newIDs), confirmed, duplicates,
+	)
 }
 
 func validReconnectStormGates(start []string, complete []string) bool {
@@ -1158,6 +1323,37 @@ func (ledger *liveClusterLedger) recordDelivery(messageID string) {
 	select {
 	case ledger.observed <- struct{}{}:
 	default:
+	}
+}
+
+func (ledger *liveApplicationRolloutLedger) recordOld(messageID string) {
+	ledger.mu.Lock()
+	ledger.oldDeliveries[messageID]++
+	ledger.mu.Unlock()
+}
+
+func (ledger *liveApplicationRolloutLedger) recordNew(messageID string) {
+	ledger.mu.Lock()
+	ledger.newDeliveries[messageID]++
+	ledger.mu.Unlock()
+}
+
+func (ledger *liveApplicationRolloutLedger) assert(t *testing.T, oldIDs []string, newIDs []string) {
+	t.Helper()
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	for _, messageID := range oldIDs {
+		if ledger.oldDeliveries[messageID] != 1 || ledger.newDeliveries[messageID] != 0 {
+			t.Fatalf("old application delivery %s crossed the rollout boundary", messageID)
+		}
+	}
+	for _, messageID := range newIDs {
+		if ledger.oldDeliveries[messageID] != 0 || ledger.newDeliveries[messageID] != 1 {
+			t.Fatalf("new application delivery %s crossed the rollout boundary", messageID)
+		}
+	}
+	if len(ledger.oldDeliveries) != len(oldIDs) || len(ledger.newDeliveries) != len(newIDs) {
+		t.Fatal("application rollout observed an unexpected delivery identity")
 	}
 }
 

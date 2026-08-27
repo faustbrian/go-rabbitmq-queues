@@ -245,8 +245,23 @@ rejected, ambiguous, not-sent, or duplicate outcomes.
 
 This is CI-hosted node-loss, quorum-partition, complete-cluster-restart,
 bounded reconnect-storm, and patch rolling-upgrade evidence. It is not
-installed-Operator reconciliation, application rollout, or production-capacity
-evidence.
+installed-Operator reconciliation or production-capacity evidence.
+
+The CI matrix also includes an `application-rolling-deployment` gate. It holds
+one confirmed quorum delivery inside an old application consumer, requires the
+broker to report exactly one consumer and one unacknowledged delivery, and then
+closes the old consumer through its graceful drain path. The new application
+consumer cannot start until RabbitMQ reports zero consumers and zero
+unacknowledged deliveries. Before the new consumer receives work, the gate
+requires RabbitMQ to report it as the sole consumer. The final ledger assigns
+every old and new message identifier to exactly one application revision and
+requires an empty queue with no consumers or unacknowledged deliveries.
+
+Both application revisions are independent consumer resources built from the
+same package commit and wire contract. This proves the package lifecycle and
+broker handoff policy in CI-hosted Linux amd64 Docker; it does not prove a
+particular service deployment, cross-version envelope compatibility, Kubernetes
+rollout behavior, or production operation.
 
 The CI matrix includes a `prolonged-outage` gate that stops all three
 RabbitMQ 4.3.5 nodes for 90 seconds. The public producer and consumer must stay

@@ -21,6 +21,8 @@
   credentials and exercises the public single-node live-broker contract.
 - Add broker-backed authorization-denial and classic/quorum dead-letter
   evidence to the CI-only single-node fixture.
+- Add three-node application rolling-deployment evidence with an explicit
+  drained old-to-new consumer handoff and countable message outcomes.
 - Add an opt-in, externally provisioned live-broker evidence harness for TLS,
   classic/quorum routing, confirms, mandatory returns, and bounded settlement.
 - Add an externally coordinated three-node interruption harness with countable
