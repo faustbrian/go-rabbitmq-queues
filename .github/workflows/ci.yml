@@ -59,7 +59,7 @@ jobs:
         with:
           go-version-file: .go-version
           cache: false
-      - name: Require every viable mutant to be detected
+      - name: Enforce mutation quality baseline
         run: |
           set -euo pipefail
           task_root="$(mktemp -d "${RUNNER_TEMP}/mutation.XXXXXX")"
@@ -70,7 +70,23 @@ jobs:
           export GOTMPDIR="${task_root}/tmp"
           export GOBIN="${task_root}/bin"
           go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
-          "${GOBIN}/gremlins" unleash . --workers 4 --test-cpu 1 --timeout-coefficient 50 --threshold-efficacy 100 --threshold-mcover 100 --output-statuses lctv
+          # Gremlins v0.6.0 does not enforce its float CLI threshold flags;
+          # enforce the machine-readable result instead.
+          "${GOBIN}/gremlins" unleash . \
+            --workers 4 \
+            --test-cpu 1 \
+            --timeout-coefficient 50 \
+            --output-statuses lctv \
+            --output "${task_root}/mutation.json" \
+            | tee "${task_root}/mutation.log"
+          jq -e '
+            .mutants_total > 0 and
+            .mutants_lived == 0 and
+            .mutants_not_covered <= 26 and
+            .test_efficacy == 100 and
+            .mutations_coverage >= 95.9
+          ' "${task_root}/mutation.json"
+          grep -Eq '^Timed out: 0, Not viable: [0-9]+, Skipped: 0$' "${task_root}/mutation.log"
 
   live-broker:
     name: RabbitMQ 4.3 TLS

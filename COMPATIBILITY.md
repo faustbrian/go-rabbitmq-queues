@@ -16,12 +16,16 @@ Research and initial local policy tests use these immutable inputs as of
 | RabbitMQ documentation | Git `1c99c9687f012ad700385c1e9a6990f6520720d3` |
 | Go | `go1.27.0` |
 | Initial local OS/architecture | Darwin 27.0.0 arm64 |
+| Retained broker-evidence runner | GitHub Actions `ubuntu-24.04`, Linux amd64 |
 
 The arm64 container pin is the intended Kubernetes Operator fixture. The amd64
-pin is the CI-only single-node broker fixture. The opt-in
+pin is the CI-hosted single-node broker fixture. The opt-in
 [`livebroker` evidence harness](docs/live-broker-testing.md) exercises an
 externally provisioned TLS broker through the public API without controlling
-broker resources. Local unit, fuzz,
+broker resources. The retained GitHub Actions broker gate provisions the pinned
+amd64 container and proves verified TLS connections, classic and quorum queue
+round trips, mandatory-return reconciliation, and bounded quorum requeue
+behavior through that public harness. Local unit, fuzz,
 race, leak, stress, and wrapper benchmark harnesses exercise TLS configuration,
 producer/consumer AMQP client boundaries, manual settlement policy,
 synchronous/asynchronous/batch outcome handling, bounded producer and consumer
@@ -29,11 +33,10 @@ recovery seams, sanitized connection-blocked transitions, bounded health and
 observation seams, broker consumer-cancellation dispatch, passive topology
 equivalence mapping, connection-scoped transient-consumer setup, bounded
 delivery conversion, lifecycle behavior, and the pinned PHP runner's local
-corpus construction and validation
-without contacting a broker. The harness is not retained broker evidence until
-it is run against the pinned fixture. No container, live TLS handshake, broker
-settlement, cluster, runtime failure, or PHP interoperability claim is currently
-established. The operator manifests pass strict validation against the exact
+corpus construction and validation without contacting a broker. No three-node
+cluster, node or leader failover, rolling-upgrade, installed-operator
+reconciliation, or PHP broker-interoperability claim is currently established.
+The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,
 Kubernetes scheduling, TLS, failover, or rolling-upgrade evidence.
