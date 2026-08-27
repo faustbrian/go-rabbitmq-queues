@@ -161,7 +161,14 @@ post_json() {
         "${management_url}/${endpoint}" >/dev/null
 }
 
-read_permission='^go-rabbitmq-queues\.(classic|quorum)$'
+get_json() {
+    local endpoint="$1"
+    curl --fail --silent --show-error \
+        --user "${bootstrap_user}:${bootstrap_password}" \
+        "${management_url}/${endpoint}"
+}
+
+read_permission='^go-rabbitmq-queues\.(classic|quorum|dead-letter)$'
 if [[ "${suite}" == php ]]; then
     read_permission='^go-rabbitmq-queues\.(classic|quorum|go-to-php|php-to-go)$'
 elif [[ "${suite}" == performance ]]; then
@@ -173,14 +180,48 @@ put_json "permissions/${encoded_vhost}/${client_user}" \
         '{configure: "^$", write: "^go-rabbitmq-queues\\.events$", read: $read}')"
 put_json "exchanges/${encoded_vhost}/go-rabbitmq-queues.events" \
     '{"type":"direct","auto_delete":false,"durable":true,"internal":false,"arguments":{}}'
+put_json "exchanges/${encoded_vhost}/go-rabbitmq-queues.dead" \
+    '{"type":"direct","auto_delete":false,"durable":true,"internal":false,"arguments":{}}'
 put_json "queues/${encoded_vhost}/go-rabbitmq-queues.classic" \
     '{"auto_delete":false,"durable":true,"arguments":{"x-queue-type":"classic"}}'
 put_json "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" \
+    '{"auto_delete":false,"durable":true,"arguments":{"x-queue-type":"quorum"}}'
+put_json "queues/${encoded_vhost}/go-rabbitmq-queues.dead-letter" \
     '{"auto_delete":false,"durable":true,"arguments":{"x-queue-type":"quorum"}}'
 post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-queues.classic" \
     '{"routing_key":"classic","arguments":{}}'
 post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-queues.quorum" \
     '{"routing_key":"quorum","arguments":{}}'
+post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.dead/q/go-rabbitmq-queues.dead-letter" \
+    '{"routing_key":"dead","arguments":{}}'
+put_json "policies/${encoded_vhost}/go-rabbitmq-queues-classic-dead-letter" \
+    '{"pattern":"^go-rabbitmq-queues\\.classic$","apply-to":"classic_queues","priority":10,"definition":{"dead-letter-exchange":"go-rabbitmq-queues.dead","dead-letter-routing-key":"dead","overflow":"reject-publish-dlx"}}'
+put_json "policies/${encoded_vhost}/go-rabbitmq-queues-quorum-dead-letter" \
+    '{"pattern":"^go-rabbitmq-queues\\.quorum$","apply-to":"quorum_queues","priority":10,"definition":{"dead-letter-exchange":"go-rabbitmq-queues.dead","dead-letter-routing-key":"dead","dead-letter-strategy":"at-least-once","overflow":"reject-publish"}}'
+dead_letter_policies_ready=false
+for _ in $(seq 1 60); do
+    if classic_queue_json="$(get_json "queues/${encoded_vhost}/go-rabbitmq-queues.classic")" &&
+        quorum_queue_json="$(get_json "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")" &&
+        jq -e '
+            .effective_policy_definition["dead-letter-exchange"] == "go-rabbitmq-queues.dead" and
+            .effective_policy_definition["dead-letter-routing-key"] == "dead" and
+            .effective_policy_definition.overflow == "reject-publish-dlx"
+        ' <<<"${classic_queue_json}" >/dev/null &&
+        jq -e '
+            .effective_policy_definition["dead-letter-exchange"] == "go-rabbitmq-queues.dead" and
+            .effective_policy_definition["dead-letter-routing-key"] == "dead" and
+            .effective_policy_definition["dead-letter-strategy"] == "at-least-once" and
+            .effective_policy_definition.overflow == "reject-publish"
+        ' <<<"${quorum_queue_json}" >/dev/null; then
+        dead_letter_policies_ready=true
+        break
+    fi
+    sleep 1
+done
+if [[ "${dead_letter_policies_ready}" != true ]]; then
+    printf '%s\n' 'dead-letter policies did not become effective' >&2
+    exit 1
+fi
 if [[ "${suite}" == php ]]; then
     put_json "queues/${encoded_vhost}/go-rabbitmq-queues.go-to-php" \
         '{"auto_delete":false,"durable":true,"arguments":{"x-queue-type":"classic"}}'
@@ -236,6 +277,11 @@ jq -n \
         exchange: "go-rabbitmq-queues.events",
         classic: {name: "go-rabbitmq-queues.classic", routing_key: "classic"},
         quorum: {name: "go-rabbitmq-queues.quorum", routing_key: "quorum"},
+        dead_letter: {
+            exchange: "go-rabbitmq-queues.dead",
+            queue_name: "go-rabbitmq-queues.dead-letter",
+            routing_key: "dead"
+        },
         unroutable_routing_key: "intentionally-unbound",
         php_interoperability: {
             binary: $php_binary,

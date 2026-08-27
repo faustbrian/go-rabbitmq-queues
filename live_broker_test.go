@@ -41,6 +41,12 @@ type liveQueue struct {
 	RoutingKey string `json:"routing_key"`
 }
 
+type liveDeadLetterFixture struct {
+	Exchange   string `json:"exchange"`
+	QueueName  string `json:"queue_name"`
+	RoutingKey string `json:"routing_key"`
+}
+
 type livePerformanceFixture struct {
 	QueueType            rabbitmqqueue.QueueType `json:"queue_type"`
 	Queues               []liveQueue             `json:"queues"`
@@ -66,6 +72,7 @@ type liveBrokerFixture struct {
 	Exchange                    string                  `json:"exchange"`
 	Classic                     liveQueue               `json:"classic"`
 	Quorum                      liveQueue               `json:"quorum"`
+	DeadLetter                  liveDeadLetterFixture   `json:"dead_letter"`
 	UnroutableRoutingKey        string                  `json:"unroutable_routing_key"`
 	FaultStartGateFile          string                  `json:"fault_start_gate_file"`
 	FaultCompleteGateFile       string                  `json:"fault_complete_gate_file"`
@@ -84,6 +91,10 @@ func TestLiveBrokerSingleNode(t *testing.T) {
 	connection := fixture.connection(t)
 	verifyLiveTopology(t, connection, fixture)
 
+	t.Run("authorization denies topology mutation", func(t *testing.T) {
+		assertLiveTopologyMutationDenied(t, connection)
+	})
+
 	t.Run("classic round trip", func(t *testing.T) {
 		assertLiveRoundTrip(t, connection, fixture.Exchange, fixture.Classic, rabbitmqqueue.QueueClassic)
 	})
@@ -93,6 +104,9 @@ func TestLiveBrokerSingleNode(t *testing.T) {
 	t.Run("mandatory return", func(t *testing.T) {
 		assertLiveMandatoryReturn(t, connection, fixture)
 	})
+	t.Run("classic and quorum dead lettering", func(t *testing.T) {
+		assertLiveDeadLettering(t, connection, fixture)
+	})
 	t.Run("quorum bounded requeue", func(t *testing.T) {
 		assertLiveQuorumRequeueBound(t, connection, fixture)
 	})
@@ -101,8 +115,15 @@ func TestLiveBrokerSingleNode(t *testing.T) {
 func readLiveBrokerFixture(t *testing.T) liveBrokerFixture {
 	t.Helper()
 	fixture := readLiveBrokerFixtureForEnvironment(t, liveBrokerConfigEnvironment)
-	if len(fixture.Endpoints) != 1 {
-		t.Fatal("single-node live-broker configuration requires exactly one endpoint")
+	if len(fixture.Endpoints) != 1 ||
+		fixture.DeadLetter.Exchange == "" ||
+		fixture.DeadLetter.QueueName == "" ||
+		fixture.DeadLetter.RoutingKey == "" ||
+		fixture.DeadLetter.Exchange == fixture.Exchange ||
+		fixture.DeadLetter.RoutingKey == fixture.UnroutableRoutingKey ||
+		fixture.DeadLetter.QueueName == fixture.Classic.Name ||
+		fixture.DeadLetter.QueueName == fixture.Quorum.Name {
+		t.Fatal("single-node live-broker configuration is incomplete or aliases dedicated resources")
 	}
 	return fixture
 }
@@ -222,6 +243,15 @@ func verifyLiveTopology(
 	fixture liveBrokerFixture,
 ) {
 	t.Helper()
+	queues := []rabbitmqqueue.Queue{
+		{Name: fixture.Classic.Name, Type: rabbitmqqueue.QueueClassic, Durable: true},
+		{Name: fixture.Quorum.Name, Type: rabbitmqqueue.QueueQuorum, Durable: true},
+	}
+	if fixture.DeadLetter.QueueName != "" {
+		queues = append(queues, rabbitmqqueue.Queue{
+			Name: fixture.DeadLetter.QueueName, Type: rabbitmqqueue.QueueQuorum, Durable: true,
+		})
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
 	defer cancel()
 	result, err := rabbitmqqueue.ApplyTopology(
@@ -232,18 +262,137 @@ func verifyLiveTopology(
 			Exchanges: []rabbitmqqueue.Exchange{{
 				Name: fixture.Exchange, Kind: rabbitmqqueue.ExchangeDirect, Durable: true,
 			}},
-			Queues: []rabbitmqqueue.Queue{
-				{Name: fixture.Classic.Name, Type: rabbitmqqueue.QueueClassic, Durable: true},
-				{Name: fixture.Quorum.Name, Type: rabbitmqqueue.QueueQuorum, Durable: true},
-			},
+			Queues: queues,
 		},
 	)
 	if err != nil {
 		t.Fatalf("passively verify live-broker topology: %v", err)
 	}
 	want := []string{fixture.Classic.Name, fixture.Quorum.Name}
+	if fixture.DeadLetter.QueueName != "" {
+		want = append(want, fixture.DeadLetter.QueueName)
+	}
 	if !reflect.DeepEqual(result.QueueNames, want) {
 		t.Fatalf("verified queue identities = %v, want %v", result.QueueNames, want)
+	}
+}
+
+func assertLiveTopologyMutationDenied(
+	t *testing.T,
+	connection rabbitmqqueue.ConnectionConfig,
+) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
+	defer cancel()
+	_, err := rabbitmqqueue.ApplyTopology(
+		ctx,
+		connection,
+		rabbitmqqueue.TopologyPolicy{
+			Mode:        rabbitmqqueue.TopologyDeclare,
+			Development: rabbitmqqueue.PermitDevelopmentTopology(),
+		},
+		rabbitmqqueue.Topology{Exchanges: []rabbitmqqueue.Exchange{{
+			Name: "live-denied-" + randomLiveToken(t), Kind: rabbitmqqueue.ExchangeDirect,
+			Durable: true,
+		}}},
+	)
+	if !errors.Is(err, rabbitmqqueue.ErrTopologyUnauthorized) ||
+		err.Error() != rabbitmqqueue.ErrTopologyUnauthorized.Error() {
+		t.Fatalf("topology mutation error = %v, want sanitized authorization denial", err)
+	}
+}
+
+func assertLiveDeadLettering(
+	t *testing.T,
+	connection rabbitmqqueue.ConnectionConfig,
+	fixture liveBrokerFixture,
+) {
+	t.Helper()
+	deliveries := make(chan rabbitmqqueue.Delivery, 2)
+	deadLetterQueue := liveQueue{Name: fixture.DeadLetter.QueueName}
+	deadLetterConsumer := openLiveConsumer(
+		t, connection, deadLetterQueue, rabbitmqqueue.QueueQuorum, 0,
+		func(_ context.Context, delivery rabbitmqqueue.Delivery) (rabbitmqqueue.Settlement, error) {
+			deliveries <- delivery
+			return rabbitmqqueue.Acknowledge(), nil
+		},
+	)
+	defer closeLiveConsumer(t, deadLetterConsumer)
+
+	type deadLetterCase struct {
+		name      string
+		queue     liveQueue
+		queueType rabbitmqqueue.QueueType
+	}
+	cases := []deadLetterCase{
+		{
+			name: "classic", queue: fixture.Classic, queueType: rabbitmqqueue.QueueClassic,
+		},
+		{
+			name: "quorum", queue: fixture.Quorum, queueType: rabbitmqqueue.QueueQuorum,
+		},
+	}
+	want := make(map[string]deadLetterCase, len(cases))
+	for _, testCase := range cases {
+		testCase := testCase
+		messageID := "live-dead-letter-" + testCase.name + "-" + randomLiveToken(t)
+		want[messageID] = testCase
+		rejected := make(chan struct{}, 1)
+		sourceConsumer := openLiveConsumer(
+			t, connection, testCase.queue, testCase.queueType, 0,
+			func(_ context.Context, delivery rabbitmqqueue.Delivery) (rabbitmqqueue.Settlement, error) {
+				if delivery.MessageID != messageID {
+					t.Errorf("%s source received unexpected message %q", testCase.name, delivery.MessageID)
+				}
+				rejected <- struct{}{}
+				return rabbitmqqueue.Reject(false), nil
+			},
+		)
+		producer := openLiveProducer(t, connection)
+		ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
+		result, err := producer.Publish(ctx, rabbitmqqueue.Publication{
+			Exchange: fixture.Exchange, ExchangeKind: rabbitmqqueue.ExchangeDirect,
+			RoutingKey: testCase.queue.RoutingKey, Mandatory: true,
+			DeliveryMode: rabbitmqqueue.DeliveryPersistent,
+			Message: rabbitmqqueue.Message{
+				Body: []byte("dead-letter-" + testCase.name), MessageID: messageID,
+			},
+		})
+		cancel()
+		closeLiveProducer(t, producer)
+		select {
+		case <-rejected:
+		case <-time.After(liveOperationTimeout):
+			t.Fatalf("timed out waiting for %s source rejection", testCase.name)
+		}
+		closeLiveConsumer(t, sourceConsumer)
+		if err != nil || result.State != rabbitmqqueue.PublishConfirmed {
+			t.Fatalf("%s source publish result = %#v, error = %v; want confirmed", testCase.name, result, err)
+		}
+	}
+
+	for range cases {
+		select {
+		case delivery := <-deliveries:
+			testCase, ok := want[delivery.MessageID]
+			if !ok {
+				t.Fatalf("dead-letter queue received unexpected message %q", delivery.MessageID)
+			}
+			delete(want, delivery.MessageID)
+			if delivery.Exchange != fixture.DeadLetter.Exchange ||
+				delivery.RoutingKey != fixture.DeadLetter.RoutingKey ||
+				len(delivery.Deaths) != 1 {
+				t.Fatalf("%s dead-letter route or history was not preserved", testCase.name)
+			}
+			death := delivery.Deaths[0]
+			if death.Count != 1 || death.Reason != "rejected" ||
+				death.Queue != testCase.queue.Name || death.Exchange != fixture.Exchange ||
+				!reflect.DeepEqual(death.RoutingKeys, []string{testCase.queue.RoutingKey}) {
+				t.Fatalf("%s dead-letter history = %#v, want one rejected source delivery", testCase.name, death)
+			}
+		case <-time.After(liveOperationTimeout):
+			t.Fatal("timed out waiting for dead-letter delivery")
+		}
 	}
 }
 

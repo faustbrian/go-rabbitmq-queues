@@ -19,6 +19,8 @@
 
 - Add a CI-only RabbitMQ 4.3.5 TLS fixture that provisions least-scope
   credentials and exercises the public single-node live-broker contract.
+- Add broker-backed authorization-denial and classic/quorum dead-letter
+  evidence to the CI-only single-node fixture.
 - Add an opt-in, externally provisioned live-broker evidence harness for TLS,
   classic/quorum routing, confirms, mandatory returns, and bounded settlement.
 - Add an externally coordinated three-node interruption harness with countable

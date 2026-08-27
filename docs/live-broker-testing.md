@@ -12,17 +12,27 @@ The current suite proves, for the supplied broker endpoint:
 - exact persistent body, property, timestamp, and application-header mapping;
 - publisher-confirm acceptance reconciled with mandatory returns;
 - exact unroutable exchange and routing-key classification; and
+- sanitized denial of topology mutation for a least-scope identity;
+- classic at-most-once and quorum at-least-once dead-letter routing with
+  preserved bounded `x-death` history; and
 - RabbitMQ quorum `x-acquired-count` behavior across the package's bounded
   requeue policy.
 
 It does not trigger restart, partition, node loss, leader failover, rolling
-upgrade, credential rotation, authorization failure, or reconnect storms. Those
-remain separate externally orchestrated evidence gates.
+upgrade, credential rotation, or reconnect storms. Those remain separate
+externally orchestrated evidence gates.
 
 ## Fixture contract
 
 Provision a dedicated durable direct exchange, a durable classic queue, and a
 durable quorum queue. Bind each queue to its configured unique routing key.
+Provision a separate durable direct dead-letter exchange and durable quorum
+dead-letter queue with one dedicated binding key. Apply classic at-most-once
+dead-letter policy to the classic source queue. Apply `reject-publish` overflow
+and at-least-once dead-letter policy to the quorum source queue. Both policies
+must target the configured dead-letter route. The test identity must have read
+permission for the retained dead-letter queue but no write permission for the
+dead-letter exchange.
 Configure exactly one broker endpoint. The queues must be empty, must not have
 other publishers or consumers, and the quorum queue must not apply delayed
 retry. The configured unroutable key must have no binding. The test identity
@@ -53,6 +63,11 @@ Store the connection configuration in a permission-restricted JSON file:
   "exchange": "go-rabbitmq-queues.integration",
   "classic": {"name": "go-rabbitmq-queues.classic", "routing_key": "classic"},
   "quorum": {"name": "go-rabbitmq-queues.quorum", "routing_key": "quorum"},
+  "dead_letter": {
+    "exchange": "go-rabbitmq-queues.dead",
+    "queue_name": "go-rabbitmq-queues.dead",
+    "routing_key": "dead"
+  },
   "unroutable_routing_key": "intentionally-unbound"
 }
 ```
@@ -85,9 +100,10 @@ Linux amd64 RabbitMQ image through [`ci-live-broker.sh`](../scripts/ci-live-brok
 That script refuses to run outside GitHub Actions, creates a task-owned
 TLS-only container and temporary certificate authority, provisions a
 non-administrative client without configure permission, verifies TLS 1.2 and
-TLS 1.3, and removes the container and generated material on every exit. A
-passing CI job is retained single-node Linux amd64 evidence only; it does not
-replace the externally orchestrated three-node, Operator, PHP, performance, or
+TLS 1.3, provisions isolated classic and quorum dead-letter policies, and
+removes the container and generated material on every exit. A passing CI job is
+retained single-node Linux amd64 evidence only; it does not replace the
+externally orchestrated three-node, Operator, PHP, performance, or
 application-rollout gates.
 
 ## PHP interoperability harness

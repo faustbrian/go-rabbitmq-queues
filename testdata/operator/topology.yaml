@@ -192,6 +192,6 @@ spec:
   permissions:
     configure: '^$'
     write: '^go-rabbitmq-queues\.events$'
-    read: '^go-rabbitmq-queues\.(classic|quorum|go-to-php|php-to-go|performance\.(classic|quorum)\.[1-4])$'
+    read: '^go-rabbitmq-queues\.(classic|quorum|dead|go-to-php|php-to-go|performance\.(classic|quorum)\.[1-4])$'
   rabbitmqClusterReference:
     name: go-rabbitmq-queues

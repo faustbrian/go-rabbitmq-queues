@@ -17,8 +17,10 @@ operator-owned exchange without sharing consumer queues.
 RabbitMQ 4.3 permits passive declarations when the identity has any applicable
 resource permission, so the generated client has no configure permission:
 write access covers the exchange check and publishing, while read access covers
-queue checks, consumption, and settlement. This prevents the evidence client
-from actively declaring or mutating operator-owned topology.
+source and retained dead-letter queue checks, consumption, and settlement. The
+identity has no write permission for the dead-letter exchange. This prevents
+the evidence client from actively declaring or mutating operator-owned
+topology while allowing the live harness to acknowledge retained dead letters.
 
 Fresh RabbitMQ 4.3 nodes enable stable feature flags, including the
 `stream_queue` prerequisite for at-least-once dead lettering. The fixture does
