@@ -230,7 +230,7 @@ chmod 0600 "${task_root}/live-broker.json"
 (
     cd "${project_root}"
     if [[ "${suite}" == php ]]; then
-        test "$(php -r 'echo PHP_VERSION;')" = '8.5.8'
+        test "$(php -r 'echo PHP_VERSION;')" = '8.5.9'
         composer --version --no-ansi | grep -Eq '^Composer version 2\.10\.1 '
         COMPOSER_HOME="${task_root}/composer-home" \
             COMPOSER_VENDOR_DIR="${task_root}/php-vendor" \

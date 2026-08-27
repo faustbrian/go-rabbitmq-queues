@@ -10,7 +10,7 @@ use PhpAmqpLib\Connection\AbstractConnection;
 use PhpAmqpLib\Message\AMQPMessage;
 use PhpAmqpLib\Wire\AMQPTable;
 
-const EXPECTED_PHP_VERSION = '8.5.8';
+const EXPECTED_PHP_VERSION = '8.5.9';
 const EXPECTED_AMQPLIB_VERSION = 'v3.7.4';
 const EXPECTED_AMQPLIB_REFERENCE = '381b6f7c600e0e0c7463cdd7f7a1a3bc6268e5fd';
 const PUBLISH_TOKEN_HEADER = 'x-rabbitmqqueue-publish-token';
