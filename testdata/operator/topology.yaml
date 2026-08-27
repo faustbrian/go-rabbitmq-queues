@@ -1,0 +1,197 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: Vhost
+metadata:
+  name: go-rabbitmq-queues
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: /go-rabbitmq-queues
+  defaultQueueType: classic
+  deletionPolicy: retain
+  limits:
+    connections: 128
+    queues: 64
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Exchange
+metadata:
+  name: go-rabbitmq-queues-events
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.events
+  vhost: /go-rabbitmq-queues
+  type: direct
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-classic
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.classic
+  vhost: /go-rabbitmq-queues
+  type: classic
+  durable: true
+  autoDelete: false
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-quorum
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.quorum
+  vhost: /go-rabbitmq-queues
+  type: quorum
+  durable: true
+  autoDelete: false
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Exchange
+metadata:
+  name: go-rabbitmq-queues-dead
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.dead
+  vhost: /go-rabbitmq-queues
+  type: direct
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-dead
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.dead
+  vhost: /go-rabbitmq-queues
+  type: quorum
+  durable: true
+  autoDelete: false
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-classic
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.classic
+  destinationType: queue
+  routingKey: classic
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-quorum
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.quorum
+  destinationType: queue
+  routingKey: quorum
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-dead
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.dead
+  destination: go-rabbitmq-queues.dead
+  destinationType: queue
+  routingKey: dead
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Policy
+metadata:
+  name: go-rabbitmq-queues-classic-dead-letter
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues-classic-dead-letter
+  vhost: /go-rabbitmq-queues
+  pattern: ^go-rabbitmq-queues\.classic$
+  applyTo: classic_queues
+  priority: 10
+  definition:
+    dead-letter-exchange: go-rabbitmq-queues.dead
+    dead-letter-routing-key: dead
+    overflow: reject-publish-dlx
+    max-length-bytes: 1073741824
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Policy
+metadata:
+  name: go-rabbitmq-queues-quorum-delivery-limit
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues-quorum-delivery-limit
+  vhost: /go-rabbitmq-queues
+  pattern: ^go-rabbitmq-queues\.quorum$
+  applyTo: quorum_queues
+  priority: 10
+  definition:
+    delivery-limit: 20
+    dead-letter-exchange: go-rabbitmq-queues.dead
+    dead-letter-routing-key: dead
+    dead-letter-strategy: at-least-once
+    overflow: reject-publish
+    max-length-bytes: 1073741824
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: User
+metadata:
+  name: go-rabbitmq-queues-client
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  limits:
+    connections: 32
+    channels: 256
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Permission
+metadata:
+  name: go-rabbitmq-queues-client
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  userReference:
+    name: go-rabbitmq-queues-client
+  permissions:
+    configure: '^$'
+    write: '^go-rabbitmq-queues\.events$'
+    read: '^go-rabbitmq-queues\.(classic|quorum|go-to-php|php-to-go|performance\.(classic|quorum)\.[1-4])$'
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues

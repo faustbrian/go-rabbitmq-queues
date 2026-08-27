@@ -1,0 +1,57 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-go-to-php
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.go-to-php
+  vhost: /go-rabbitmq-queues
+  type: classic
+  durable: true
+  autoDelete: false
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-php-to-go
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.php-to-go
+  vhost: /go-rabbitmq-queues
+  type: classic
+  durable: true
+  autoDelete: false
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-go-to-php
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.go-to-php
+  destinationType: queue
+  routingKey: interop.go-to-php
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-php-to-go
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.php-to-go
+  destinationType: queue
+  routingKey: interop.php-to-go
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues

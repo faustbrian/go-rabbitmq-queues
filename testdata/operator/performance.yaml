@@ -1,0 +1,223 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-classic-1
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.classic.1
+  vhost: /go-rabbitmq-queues
+  type: classic
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-classic-2
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.classic.2
+  vhost: /go-rabbitmq-queues
+  type: classic
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-classic-3
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.classic.3
+  vhost: /go-rabbitmq-queues
+  type: classic
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-classic-4
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.classic.4
+  vhost: /go-rabbitmq-queues
+  type: classic
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-1
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.quorum.1
+  vhost: /go-rabbitmq-queues
+  type: quorum
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-2
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.quorum.2
+  vhost: /go-rabbitmq-queues
+  type: quorum
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-3
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.quorum.3
+  vhost: /go-rabbitmq-queues
+  type: quorum
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-4
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  name: go-rabbitmq-queues.performance.quorum.4
+  vhost: /go-rabbitmq-queues
+  type: quorum
+  durable: true
+  deletionPolicy: retain
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-classic-1
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.classic.1
+  destinationType: queue
+  routingKey: performance.classic.1
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-classic-2
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.classic.2
+  destinationType: queue
+  routingKey: performance.classic.2
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-classic-3
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.classic.3
+  destinationType: queue
+  routingKey: performance.classic.3
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-classic-4
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.classic.4
+  destinationType: queue
+  routingKey: performance.classic.4
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-1
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.quorum.1
+  destinationType: queue
+  routingKey: performance.quorum.1
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-2
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.quorum.2
+  destinationType: queue
+  routingKey: performance.quorum.2
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-3
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.quorum.3
+  destinationType: queue
+  routingKey: performance.quorum.3
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: go-rabbitmq-queues-performance-quorum-4
+  namespace: go-rabbitmq-queues-evidence
+spec:
+  vhost: /go-rabbitmq-queues
+  source: go-rabbitmq-queues.events
+  destination: go-rabbitmq-queues.performance.quorum.4
+  destinationType: queue
+  routingKey: performance.quorum.4
+  rabbitmqClusterReference:
+    name: go-rabbitmq-queues

@@ -21,6 +21,8 @@
   10M, and 100M messages-per-day steady and burst profiles.
 - Add a pinned PHP AMQP runner and opt-in bidirectional live-broker harness for
   corpus mapping, confirms, mandatory returns, and manual settlement.
+- Add pinned RabbitMQ Operator manifests and strict CRD-schema validation for
+  the operator-owned cluster, topology, identity, and permission boundary.
 - Reject sub-second publication timestamps that AMQP would silently truncate.
 - Add bounded connection, credential, verified TLS, and recovery policy types.
 - Make configurable message limits reducible only, preserving package-wide

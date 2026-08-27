@@ -29,6 +29,13 @@ retry. The configured unroutable key must have no binding. The test identity
 needs passive topology access, consume, publish, and settlement permissions but
 does not need topology mutation or resource deletion.
 
+The pinned [Kubernetes Operator fixture](operator-compatibility.md) provides a
+schema-validated reference for the exchange, base queues, PHP queues, classic
+and quorum performance queues, bindings, TLS-only cluster, and generated test
+identity. Applying that fixture is not itself live evidence; the environment
+must still supply its secrets and retain reconciled controller and broker
+state.
+
 Store the connection configuration in a permission-restricted JSON file:
 
 ```json

@@ -38,7 +38,8 @@
       "build_tags": [],
       "test_tags": [],
       "interoperability_tools": [
-        "PHP 8.5.8 and php-amqplib v3.7.4 livebroker harness"
+        "PHP 8.5.8 and php-amqplib v3.7.4 livebroker harness",
+        "kubeconform v0.8.0 against pinned RabbitMQ Operator CRDs"
       ],
       "specifications": [],
       "conformance_corpora": [

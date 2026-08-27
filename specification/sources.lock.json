@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "accessed": "2026-08-26",
+  "accessed": "2026-08-27",
   "sources": [
     {
       "name": "RabbitMQ server",
@@ -37,6 +37,18 @@
       "version": "4.3.5-management-alpine",
       "revision": "sha256:aa626c7c8b7d41c708796b336ff721897b176ab29c94d944a26eb2b1b2e3a455",
       "url": "https://hub.docker.com/_/rabbitmq"
+    },
+    {
+      "name": "kubeconform",
+      "version": "0.8.0",
+      "revision": "02374e583d700721f57300fae78e11acd27ee539",
+      "url": "https://github.com/yannh/kubeconform"
+    },
+    {
+      "name": "PyYAML",
+      "version": "6.0.3",
+      "revision": "6.0.3",
+      "url": "https://pypi.org/project/PyYAML/6.0.3/"
     },
     {
       "name": "Go",

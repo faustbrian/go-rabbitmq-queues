@@ -1,0 +1,46 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: go-rabbitmq-queues
+  namespace: go-rabbitmq-queues-evidence
+  labels:
+    app.kubernetes.io/name: go-rabbitmq-queues
+    app.kubernetes.io/part-of: go-rabbitmq-queues-evidence
+spec:
+  replicas: 3
+  image: rabbitmq:4.3.5-management-alpine@sha256:aa626c7c8b7d41c708796b336ff721897b176ab29c94d944a26eb2b1b2e3a455
+  service:
+    type: ClusterIP
+  persistence:
+    storage: 20Gi
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: go-rabbitmq-queues
+          topologyKey: kubernetes.io/hostname
+  rabbitmq:
+    additionalConfig: |
+      cluster_partition_handling = pause_minority
+      disk_free_limit.relative = 1.0
+      log.console.level = info
+  tls:
+    secretName: go-rabbitmq-queues-server-tls
+    caSecretName: go-rabbitmq-queues-server-ca
+    disableNonTLSListeners: true
+  override:
+    statefulSet:
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              kubernetes.io/arch: arm64
+            containers: []
