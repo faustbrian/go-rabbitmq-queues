@@ -58,24 +58,25 @@ type livePerformanceFixture struct {
 }
 
 type liveBrokerFixture struct {
-	Endpoints             []liveEndpoint          `json:"endpoints"`
-	VirtualHost           string                  `json:"virtual_host"`
-	Username              string                  `json:"username"`
-	Password              string                  `json:"password"`
-	TLS                   liveTLS                 `json:"tls"`
-	Exchange              string                  `json:"exchange"`
-	Classic               liveQueue               `json:"classic"`
-	Quorum                liveQueue               `json:"quorum"`
-	UnroutableRoutingKey  string                  `json:"unroutable_routing_key"`
-	FaultStartGateFile    string                  `json:"fault_start_gate_file"`
-	FaultCompleteGateFile string                  `json:"fault_complete_gate_file"`
-	FaultWindowMessages   int                     `json:"fault_window_messages"`
-	FaultQueueType        rabbitmqqueue.QueueType `json:"fault_queue_type"`
-	FaultScenario         liveFaultScenario       `json:"fault_scenario"`
-	FaultCycleGateFiles   []string                `json:"fault_cycle_gate_files"`
-	FaultResourcePairs    int                     `json:"fault_resource_pairs"`
-	Performance           livePerformanceFixture  `json:"performance"`
-	PHPInteroperability   livePHPInteropFixture   `json:"php_interoperability"`
+	Endpoints                   []liveEndpoint          `json:"endpoints"`
+	VirtualHost                 string                  `json:"virtual_host"`
+	Username                    string                  `json:"username"`
+	Password                    string                  `json:"password"`
+	TLS                         liveTLS                 `json:"tls"`
+	Exchange                    string                  `json:"exchange"`
+	Classic                     liveQueue               `json:"classic"`
+	Quorum                      liveQueue               `json:"quorum"`
+	UnroutableRoutingKey        string                  `json:"unroutable_routing_key"`
+	FaultStartGateFile          string                  `json:"fault_start_gate_file"`
+	FaultCompleteGateFile       string                  `json:"fault_complete_gate_file"`
+	FaultWindowMessages         int                     `json:"fault_window_messages"`
+	FaultQueueType              rabbitmqqueue.QueueType `json:"fault_queue_type"`
+	FaultScenario               liveFaultScenario       `json:"fault_scenario"`
+	FaultCycleGateFiles         []string                `json:"fault_cycle_gate_files"`
+	FaultCycleCompleteGateFiles []string                `json:"fault_cycle_complete_gate_files"`
+	FaultResourcePairs          int                     `json:"fault_resource_pairs"`
+	Performance                 livePerformanceFixture  `json:"performance"`
+	PHPInteroperability         livePHPInteropFixture   `json:"php_interoperability"`
 }
 
 func TestLiveBrokerSingleNode(t *testing.T) {

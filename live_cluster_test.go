@@ -114,6 +114,7 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 	reconnectStorm.FaultQueueType = rabbitmqqueue.QueueQuorum
 	reconnectStorm.FaultScenario = liveFaultReconnectStorm
 	reconnectStorm.FaultCycleGateFiles = []string{"cycle-1", "cycle-2", "cycle-3"}
+	reconnectStorm.FaultCycleCompleteGateFiles = []string{"complete-1", "complete-2", "complete-3"}
 	reconnectStorm.FaultResourcePairs = minimumReconnectResourcePairs
 	if err := validateLiveClusterFixture(reconnectStorm); err != nil {
 		t.Fatalf("valid reconnect-storm fixture: %v", err)
@@ -127,6 +128,15 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 		}},
 		{name: "duplicate cycle gate", mutate: func(value *liveBrokerFixture) {
 			value.FaultCycleGateFiles[1] = value.FaultCycleGateFiles[0]
+		}},
+		{name: "missing cycle completion gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleCompleteGateFiles = nil
+		}},
+		{name: "duplicate cycle completion gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleCompleteGateFiles[1] = value.FaultCycleCompleteGateFiles[0]
+		}},
+		{name: "overlapping cycle gates", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleCompleteGateFiles[1] = value.FaultCycleGateFiles[1]
 		}},
 		{name: "mixed gate protocols", mutate: func(value *liveBrokerFixture) {
 			value.FaultStartGateFile = "fault-started"
@@ -227,13 +237,14 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 	}
 	if fixture.FaultScenario == liveFaultReconnectStorm {
 		if fixture.FaultStartGateFile != "" || fixture.FaultCompleteGateFile != "" ||
-			!validReconnectStormGates(fixture.FaultCycleGateFiles) ||
+			!validReconnectStormGates(fixture.FaultCycleGateFiles, fixture.FaultCycleCompleteGateFiles) ||
 			fixture.FaultResourcePairs < minimumReconnectResourcePairs ||
 			fixture.FaultResourcePairs > maximumReconnectResourcePairs {
 			return errInvalidLiveCluster
 		}
 	} else if fixture.FaultStartGateFile == "" || fixture.FaultCompleteGateFile == "" ||
 		fixture.FaultStartGateFile == fixture.FaultCompleteGateFile || len(fixture.FaultCycleGateFiles) != 0 ||
+		len(fixture.FaultCycleCompleteGateFiles) != 0 ||
 		fixture.FaultResourcePairs != 0 {
 		return errInvalidLiveCluster
 	}
@@ -253,12 +264,13 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 	return nil
 }
 
-func validReconnectStormGates(gates []string) bool {
-	if len(gates) < minimumReconnectStormCycles || len(gates) > maximumReconnectStormCycles {
+func validReconnectStormGates(start []string, complete []string) bool {
+	if len(start) < minimumReconnectStormCycles || len(start) > maximumReconnectStormCycles ||
+		len(start) != len(complete) {
 		return false
 	}
-	seen := make(map[string]struct{}, len(gates))
-	for _, gate := range gates {
+	seen := make(map[string]struct{}, len(start)+len(complete))
+	for _, gate := range append(append([]string(nil), start...), complete...) {
 		if gate == "" {
 			return false
 		}
@@ -277,7 +289,7 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	}
 	gates := []string{fixture.FaultStartGateFile, fixture.FaultCompleteGateFile}
 	if fixture.FaultScenario == liveFaultReconnectStorm {
-		gates = fixture.FaultCycleGateFiles
+		gates = append(append([]string(nil), fixture.FaultCycleGateFiles...), fixture.FaultCycleCompleteGateFiles...)
 	}
 	for _, gate := range gates {
 		if faultGateExists(t, gate) {
@@ -418,6 +430,8 @@ func runLiveReconnectStorm(
 		allAttempts = append(allAttempts, postCycleIDs...)
 		waitForConfirmedDeliveries(t, ledger, postCycleIDs)
 		t.Logf("RECOVERY_CYCLE_READY cycle=%d", cycle)
+		waitForFaultGate(t, fixture.FaultCycleCompleteGateFiles[index])
+		t.Logf("RECOVERY_CYCLE_VERIFIED cycle=%d", cycle)
 	}
 	waitForConfirmedDeliveries(t, ledger, allAttempts)
 	waitForDeliveryQuiet(t, ledger)

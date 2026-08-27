@@ -268,14 +268,20 @@ endpoints_json="$({
 fault_start_gate="${task_root}/gates/fault-started"
 fault_complete_gate="${task_root}/gates/fault-complete"
 fault_cycle_gate_files=()
+fault_cycle_complete_gate_files=()
 fault_cycle_gate_files_json='[]'
+fault_cycle_complete_gate_files_json='[]'
 if [[ "${fault_scenario}" == reconnect-storm ]]; then
     fault_start_gate=''
     fault_complete_gate=''
     for cycle in $(seq 1 "${reconnect_storm_cycles}"); do
         fault_cycle_gate_files+=("${task_root}/gates/reconnect-cycle-${cycle}")
+        fault_cycle_complete_gate_files+=("${task_root}/gates/reconnect-cycle-${cycle}-verified")
     done
     fault_cycle_gate_files_json="$(printf '%s\n' "${fault_cycle_gate_files[@]}" | jq -R . | jq -s .)"
+    fault_cycle_complete_gate_files_json="$(
+        printf '%s\n' "${fault_cycle_complete_gate_files[@]}" | jq -R . | jq -s .
+    )"
 fi
 jq -n \
     --argjson endpoints "${endpoints_json}" \
@@ -288,6 +294,7 @@ jq -n \
     --arg fault_queue_type "${fault_queue_type}" \
     --arg fault_scenario "${fault_scenario}" \
     --argjson fault_cycle_gate_files "${fault_cycle_gate_files_json}" \
+    --argjson fault_cycle_complete_gate_files "${fault_cycle_complete_gate_files_json}" \
     --argjson fault_resource_pairs "${reconnect_storm_resource_pairs}" \
     '{
         endpoints: $endpoints,
@@ -309,6 +316,7 @@ jq -n \
         fault_queue_type: $fault_queue_type,
         fault_scenario: $fault_scenario,
         fault_cycle_gate_files: $fault_cycle_gate_files,
+        fault_cycle_complete_gate_files: $fault_cycle_complete_gate_files,
         fault_resource_pairs: (if $fault_scenario == "reconnect-storm" then $fault_resource_pairs else 0 end),
         fault_window_messages: 64
     }' >"${task_root}/live-cluster.json"
@@ -456,8 +464,18 @@ if [[ "${fault_scenario}" == reconnect-storm ]]; then
             sleep 1
         done
         queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
-        jq -e --argjson consumers "${reconnect_storm_resource_pairs}" \
-            '.state == "running" and .consumers == $consumers' <<<"${queue_json}" >/dev/null
+        observed_consumers="$(jq -er '.consumers' <<<"${queue_json}")"
+        if ! jq -e --argjson consumers "${reconnect_storm_resource_pairs}" \
+            '.state == "running" and .consumers == $consumers' <<<"${queue_json}" >/dev/null; then
+            printf 'CONSUMER_OUTCOMES scenario=%s cycle=%d expected=%d observed=%s state=%s\n' \
+                "${fault_scenario}" "${cycle}" "${reconnect_storm_resource_pairs}" \
+                "${observed_consumers}" "$(jq -er '.state' <<<"${queue_json}")" >&2
+            cat "${test_log}"
+            exit 1
+        fi
+        printf 'CONSUMER_OUTCOMES scenario=%s cycle=%d expected=%d observed=%s\n' \
+            "${fault_scenario}" "${cycle}" "${reconnect_storm_resource_pairs}" "${observed_consumers}"
+        : >"${fault_cycle_complete_gate_files[${index}]}"
     done
 
     if wait "${test_pid}"; then
