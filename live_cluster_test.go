@@ -206,6 +206,7 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	if !gateObserved {
 		waitForFaultGate(t, fixture.FaultCompleteGateFile)
 	}
+	waitForLiveClusterRecovery(t, producer, consumer)
 
 	postFaultIDs := publishLiveRange(
 		t, producer, ledger, fixture, faultQueue, runToken, "post", 0, postFaultMessages, false,
@@ -219,6 +220,33 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 		fixture.FaultScenario, fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous,
 		notSent, delivered, duplicates,
 	)
+}
+
+func waitForLiveClusterRecovery(
+	t *testing.T,
+	producer *rabbitmqqueue.Producer,
+	consumer *rabbitmqqueue.Consumer,
+) {
+	t.Helper()
+	timer := time.NewTimer(clusterDeliveryTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if producer.Readiness() == rabbitmqqueue.ReadinessReady &&
+			consumer.Readiness() == rabbitmqqueue.ReadinessReady {
+			return
+		}
+		select {
+		case <-timer.C:
+			t.Fatalf(
+				"cluster resources did not recover: producer=(%s, %s) consumer=(%s, %s)",
+				producer.Readiness(), producer.DependencyHealth(),
+				consumer.Readiness(), consumer.DependencyHealth(),
+			)
+		case <-ticker.C:
+		}
+	}
 }
 
 func publishLiveRange(
