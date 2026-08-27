@@ -255,6 +255,35 @@ func TestProducerCloseCancelsRuntimeRecoveryBackoff(t *testing.T) {
 	}
 }
 
+func TestProducerRecoveryDiscardsGenerationAfterClose(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	resource := &concurrentCountingCloser{}
+	eventsContext, stopEvents := context.WithCancel(context.Background())
+	defer stopEvents()
+	producer := &Producer{
+		config:        testProducerConfig(),
+		eventsContext: eventsContext,
+		observations:  newObservationStream(ObservationProducer, observationBufferSize),
+		closed:        true,
+		recovery: &producerRecovery{
+			connection: testConnectionConfig(),
+			session:    func() (string, error) { return "closed-recovery", nil },
+			dial: func(context.Context, Endpoint, ConnectionConfig, Credentials) (producerChannel, io.Closer, error) {
+				return channel, resource, nil
+			},
+		},
+	}
+
+	if producer.recoverRuntime() {
+		t.Fatal("closed producer installed a recovered generation")
+	}
+	if resource.count() != 1 || channel.closeCount() != 1 {
+		t.Fatalf("discarded generation cleanup = resource %d channel %d, want one each", resource.count(), channel.closeCount())
+	}
+}
+
 func TestProducerIgnoresFailureFromSupersededGeneration(t *testing.T) {
 	t.Parallel()
 

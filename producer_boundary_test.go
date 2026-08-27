@@ -455,6 +455,28 @@ func TestProducerContinuesAfterReturnListenerCloses(t *testing.T) {
 	}
 }
 
+func TestProducerDrainsReturnStreamsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	producer := &Producer{observations: newObservationStream(ObservationProducer, observationBufferSize)}
+	tracker := newPublishTracker(1)
+
+	closed := make(chan amqp.Return)
+	close(closed)
+	if !producer.drainReturns(tracker, closed) {
+		t.Fatal("closed return stream prevented confirmation processing")
+	}
+	if !producer.drainReturns(tracker, nil) {
+		t.Fatal("absent return stream prevented confirmation processing")
+	}
+
+	uncorrelated := make(chan amqp.Return, 1)
+	uncorrelated <- amqp.Return{Headers: amqp.Table{"other": "value"}}
+	if producer.drainReturns(tracker, uncorrelated) {
+		t.Fatal("uncorrelated mandatory return did not stop confirmation processing")
+	}
+}
+
 func TestProducerCloseSanitizesResourceFailures(t *testing.T) {
 	t.Parallel()
 
