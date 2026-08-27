@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"runtime"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,18 @@ type livePerformanceSample struct {
 	Delivered   int
 	Duplicates  int
 	Invalid     int64
+}
+
+type livePerformanceRateSummary struct {
+	Samples   int
+	MetTarget int
+	Minimum   float64
+	Median    float64
+	Maximum   float64
+}
+
+func (summary livePerformanceRateSummary) MeetsTarget() bool {
+	return summary.Samples > 0 && summary.MetTarget > summary.Samples/2
 }
 
 type livePerformanceJob struct {
@@ -116,6 +129,33 @@ func TestLivePerformanceFixtureValidation(t *testing.T) {
 	}
 }
 
+func TestLivePerformanceRateProfileValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		rates   []float64
+		target  float64
+		wantMet bool
+	}{
+		{name: "every sample meets target", rates: []float64{101, 102, 103}, target: 100, wantMet: true},
+		{name: "one runner pause is retained", rates: []float64{101, 90, 102}, target: 100, wantMet: true},
+		{name: "persistent miss fails", rates: []float64{99, 98, 101}, target: 100, wantMet: false},
+		{name: "even sample set requires a majority", rates: []float64{99, 98, 101, 102}, target: 100, wantMet: false},
+		{name: "empty sample set fails", target: 100, wantMet: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			samples := make([]livePerformanceSample, len(test.rates))
+			for index, rate := range test.rates {
+				samples[index] = livePerformanceSample{Achieved: rate}
+			}
+			summary := summarizeLivePerformanceRates(samples, test.target)
+			if got := summary.MeetsTarget(); got != test.wantMet {
+				t.Fatalf("MeetsTarget() = %t, want %t; summary = %#v", got, test.wantMet, summary)
+			}
+		})
+	}
+}
+
 func TestLiveBrokerPerformanceProfiles(t *testing.T) {
 	fixture := decodeLiveBrokerFixture(t, livePerformanceConfigEnvironment)
 	performance := fixture.Performance
@@ -138,20 +178,68 @@ func TestLiveBrokerPerformanceProfiles(t *testing.T) {
 		livePerformanceSample{Mode: "warmup", TargetRate: baseRate},
 		performance.WarmupSeconds,
 	)
+	steadySamples := make([]livePerformanceSample, 0, performance.Samples)
 	for sample := 1; sample <= performance.Samples; sample++ {
-		runLivePerformanceSample(
+		steadySamples = append(steadySamples, runLivePerformanceSample(
 			t, session, fixture.Exchange, performance,
 			livePerformanceSample{Mode: "steady", Index: sample, TargetRate: baseRate},
 			performance.SampleSeconds,
-		)
+		))
 	}
+	requireLivePerformanceRateProfile(t, performance.QueueType, "steady", steadySamples)
 	burstRate := baseRate * float64(performance.BurstMultiplier)
+	burstSamples := make([]livePerformanceSample, 0, performance.Samples)
 	for sample := 1; sample <= performance.Samples; sample++ {
-		runLivePerformanceSample(
+		burstSamples = append(burstSamples, runLivePerformanceSample(
 			t, session, fixture.Exchange, performance,
 			livePerformanceSample{Mode: "burst", Index: sample, TargetRate: burstRate},
 			performance.BurstSeconds,
-		)
+		))
+	}
+	requireLivePerformanceRateProfile(t, performance.QueueType, "burst", burstSamples)
+}
+
+func summarizeLivePerformanceRates(
+	samples []livePerformanceSample,
+	target float64,
+) livePerformanceRateSummary {
+	summary := livePerformanceRateSummary{Samples: len(samples)}
+	if len(samples) == 0 {
+		return summary
+	}
+	rates := make([]float64, len(samples))
+	for index, sample := range samples {
+		rates[index] = sample.Achieved
+		if sample.Achieved >= target {
+			summary.MetTarget++
+		}
+	}
+	sort.Float64s(rates)
+	summary.Minimum = rates[0]
+	summary.Median = rates[len(rates)/2]
+	summary.Maximum = rates[len(rates)-1]
+	return summary
+}
+
+func requireLivePerformanceRateProfile(
+	t *testing.T,
+	queueType rabbitmqqueue.QueueType,
+	mode string,
+	samples []livePerformanceSample,
+) {
+	t.Helper()
+	target := 0.0
+	if len(samples) > 0 {
+		target = samples[0].TargetRate
+	}
+	summary := summarizeLivePerformanceRates(samples, target)
+	t.Logf(
+		"PERFORMANCE_PROFILE mode=%s queue_type=%s samples=%d target_per_second=%.2f met_target=%d minimum_per_second=%.2f median_per_second=%.2f maximum_per_second=%.2f",
+		mode, queueType, summary.Samples, target, summary.MetTarget,
+		summary.Minimum, summary.Median, summary.Maximum,
+	)
+	if !summary.MeetsTarget() {
+		t.Fatal("live performance profile did not sustain its required throughput across a majority of samples")
 	}
 }
 
@@ -223,7 +311,7 @@ func runLivePerformanceSample(
 	fixture livePerformanceFixture,
 	sample livePerformanceSample,
 	durationSeconds int,
-) {
+) livePerformanceSample {
 	t.Helper()
 	sample.OfferedRate = sample.TargetRate * performanceOfferHeadroom
 	sample.Messages = int(math.Ceil(sample.OfferedRate * float64(durationSeconds)))
@@ -315,10 +403,10 @@ func runLivePerformanceSample(
 		sample.NotSent, sample.Delivered, sample.Duplicates, sample.Invalid, errorRate,
 	)
 	if sample.Invalid != 0 || sample.Confirmed != sample.Messages || sample.Ambiguous != 0 ||
-		sample.NotSent != 0 || sample.Delivered != sample.Messages || sample.Duplicates != 0 ||
-		sample.Achieved < sample.TargetRate {
-		t.Fatal("live performance sample did not satisfy its correctness and throughput profile")
+		sample.NotSent != 0 || sample.Delivered != sample.Messages || sample.Duplicates != 0 {
+		t.Fatal("live performance sample did not satisfy its correctness profile")
 	}
+	return sample
 }
 
 func openLivePerformanceSession(

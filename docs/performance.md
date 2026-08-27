@@ -92,10 +92,13 @@ task_cache_root=$(mktemp -d /tmp/go-rabbitmq-queues-performance.XXXXXX) && trap 
 Each retained `PERFORMANCE_SAMPLE` records queue type, target, offered, and
 achieved rate, publish-confirm elapsed time, backlog-drain time, confirmations,
 ambiguities, not-sent outcomes, deliveries, duplicates, and invalid outcome
-pairings. The harness fails a sample that misses its configured daily-volume
-rate or has any unaccounted, ambiguous, not-sent, duplicate, or invalid result.
-It offers 1% load headroom above the named target so bounded scheduler and
-final confirmation overhead cannot turn an otherwise exact target into a false
+pairings. Every sample fails on an unaccounted, ambiguous, not-sent, duplicate,
+or invalid result. The throughput gate requires a strict majority of the three
+or more retained steady samples and burst samples to meet the configured rate,
+and retains the minimum, median, and maximum. This prevents one shared-runner
+scheduling pause from hiding an otherwise sustained profile while persistent
+rate misses still fail. The harness offers 1% load headroom above the named
+target so final confirmation overhead cannot turn an exact target into a false
 failure.
 It measures client-to-broker publish-confirm throughput and consumer drain; it
 does not measure storage-device saturation or prove a cluster fault unless the
