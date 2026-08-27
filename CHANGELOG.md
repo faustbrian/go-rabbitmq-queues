@@ -70,6 +70,8 @@
   batches with independent per-item outcomes.
 - Add bounded producer runtime recovery with fresh confirm generations,
   endpoint and credential rotation, and sanitized connection-blocked state.
+- Preserve terminal producer-generation cleanup failures across idempotent
+  close calls without carrying them into a recovered generation.
 - Add an independent bounded consumer with manual ACK, NACK, reject and
   delegated settlement, owned delivery snapshots, dead-letter history,
   per-consumer QoS, explicit failure policy, and graceful drain/close.

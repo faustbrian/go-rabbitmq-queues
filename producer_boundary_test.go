@@ -473,6 +473,31 @@ func TestProducerCloseSanitizesResourceFailures(t *testing.T) {
 	}
 }
 
+func TestProducerCloseReportsEarlierGenerationCleanupFailure(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		channel.nextSequence()
+		return errors.New("connection lost after transmission")
+	}
+	resource := &concurrentCountingCloser{err: errors.New("connection cleanup failed")}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-runtime-cleanup-error", channel, resource)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+
+	result, publishErr := producer.Publish(t.Context(), testPublication())
+	if result.State != PublishAmbiguous || !errors.Is(publishErr, ErrPublishAmbiguous) {
+		t.Fatalf("Publish() = (%#v, %v), want ambiguous", result, publishErr)
+	}
+	waitForHealth(t, func() bool { return producer.Liveness() == LivenessFailed })
+
+	if err := producer.Close(t.Context()); !errors.Is(err, ErrProducerUnavailable) {
+		t.Fatalf("Close() error = %v, want %v", err, ErrProducerUnavailable)
+	}
+}
+
 func TestProducerCloseUsesCallerDeadlineForOwnedConnection(t *testing.T) {
 	t.Parallel()
 

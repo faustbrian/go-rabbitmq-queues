@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -209,7 +208,7 @@ func (producer *Producer) recoverRuntime() bool {
 		wipe(credentials.Password)
 		if dialErr != nil || channel == nil || resource == nil {
 			cancel()
-			_ = closeProducerGeneration(channel, resource, &sync.Once{}, deadline)
+			_ = closeProducerGeneration(channel, resource, &producerGenerationClose{}, deadline)
 			continue
 		}
 		returns, confirms, connectionClosed, connectionBlocked, setupErr := setupProducerChannel(
@@ -228,7 +227,7 @@ func (producer *Producer) recoverRuntime() bool {
 		if producer.closed {
 			producer.stateMu.Unlock()
 			producer.publishMu.Unlock()
-			_ = closeProducerGeneration(channel, resource, &sync.Once{}, deadline)
+			_ = closeProducerGeneration(channel, resource, &producerGenerationClose{}, deadline)
 			return false
 		}
 		producer.session = session
@@ -239,7 +238,7 @@ func (producer *Producer) recoverRuntime() bool {
 		producer.confirms = confirms
 		producer.connectionClosed = connectionClosed
 		producer.connectionBlocked = connectionBlocked
-		producer.generationClose = &sync.Once{}
+		producer.generationClose = &producerGenerationClose{}
 		producer.failure = make(chan struct{}, 1)
 		producer.unavailable = false
 		producer.recovering = false
@@ -264,11 +263,11 @@ func setupProducerChannel(
 	select {
 	case err := <-confirmed:
 		if err != nil {
-			_ = closeProducerGeneration(channel, resource, &sync.Once{}, deadlineFor(setupContext, config.PublishTimeout))
+			_ = closeProducerGeneration(channel, resource, &producerGenerationClose{}, deadlineFor(setupContext, config.PublishTimeout))
 			return nil, nil, nil, nil, ErrProducerUnavailable
 		}
 	case <-setupContext.Done():
-		_ = closeProducerGeneration(channel, resource, &sync.Once{}, deadlineFor(setupContext, config.PublishTimeout))
+		_ = closeProducerGeneration(channel, resource, &producerGenerationClose{}, deadlineFor(setupContext, config.PublishTimeout))
 		return nil, nil, nil, nil, ErrProducerUnavailable
 	}
 	returns := channel.NotifyReturn(make(chan amqp.Return, config.MaxOutstanding))

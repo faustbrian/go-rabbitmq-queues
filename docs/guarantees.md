@@ -52,6 +52,9 @@ internal transfer.
 - The producer makes in-flight work ambiguous on connection loss, rejects new
   work while recovering, then rebuilds a fresh confirm generation with bounded
   endpoint rotation and refreshed credentials. Exhausted recovery is terminal.
+- Producer generation cleanup is idempotent and retains its sanitized failure
+  result, so `Close` cannot report success after terminal cleanup already
+  failed. A recovered generation owns an independent cleanup result.
 - `BlockedNotifications` reports coalesced blocked/unblocked transitions without
   exposing broker reason text; a blocked connection does not by itself retry a
   publication.

@@ -55,7 +55,7 @@ type Producer struct {
 	confirms          <-chan amqp.Confirmation
 	connectionClosed  <-chan *amqp.Error
 	connectionBlocked <-chan amqp.Blocking
-	generationClose   *sync.Once
+	generationClose   *producerGenerationClose
 	recovery          *producerRecovery
 	eventsContext     context.Context
 	stopEvents        context.CancelFunc
@@ -126,7 +126,7 @@ func newProducerFromChannelWithRecovery(
 		channel:         channel,
 		resource:        resource,
 		tracker:         newPublishTracker(config.MaxOutstanding),
-		generationClose: &sync.Once{},
+		generationClose: &producerGenerationClose{},
 		recovery:        recovery,
 		eventsContext:   eventsContext,
 		stopEvents:      stopEvents,
@@ -472,7 +472,7 @@ func (producer *Producer) runEvents(
 	failure <-chan struct{},
 	channel producerChannel,
 	resource io.Closer,
-	generationClose *sync.Once,
+	generationClose *producerGenerationClose,
 ) {
 	defer func() {
 		producer.setBlocked(false)
@@ -722,26 +722,30 @@ func (producer *Producer) closeCurrentGeneration(deadline time.Time) error {
 func closeProducerGeneration(
 	channel producerChannel,
 	resource io.Closer,
-	once *sync.Once,
+	closeState *producerGenerationClose,
 	deadline time.Time,
 ) error {
-	if once == nil {
+	if closeState == nil {
 		return nil
 	}
-	var closeErr error
-	once.Do(func() {
+	closeState.once.Do(func() {
 		if resource != nil {
 			if err := closeWithDeadline(resource, deadline); err != nil {
-				closeErr = ErrProducerUnavailable
+				closeState.err = ErrProducerUnavailable
 			}
 		}
 		if channel != nil {
 			if err := channel.Close(); err != nil {
-				closeErr = ErrProducerUnavailable
+				closeState.err = ErrProducerUnavailable
 			}
 		}
 	})
-	return closeErr
+	return closeState.err
+}
+
+type producerGenerationClose struct {
+	once sync.Once
+	err  error
 }
 
 type deadlineCloser interface {
