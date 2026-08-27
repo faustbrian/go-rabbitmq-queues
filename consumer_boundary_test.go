@@ -469,16 +469,29 @@ func TestSettlementValidationRejectsInvalidFlagsAndMethods(t *testing.T) {
 func TestDeliveryExpirationAndIntegerHeaderVariants(t *testing.T) {
 	t.Parallel()
 
-	for name, value := range map[string]any{
-		"int8": int8(1), "int16": int16(2), "int32": int32(3), "int64": int64(4),
+	for name, test := range map[string]struct {
+		value any
+		want  int64
+	}{
+		"int8":   {value: int8(-1), want: -1},
+		"int16":  {value: int16(2), want: 2},
+		"int32":  {value: int32(3), want: 3},
+		"int64":  {value: int64(4), want: 4},
+		"uint8":  {value: uint8(255), want: 255},
+		"uint16": {value: uint16(65535), want: 65535},
+		"uint32": {value: uint32(4294967295), want: 4294967295},
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := testAMQPDelivery(20)
 			source.Expiration = "1500"
-			source.Headers = amqp.Table{"integer": value}
+			source.Headers = amqp.Table{"integer": test.value}
 			delivery, err := deliveryFromAMQP(source, testConsumerConfig())
-			if err != nil || delivery.Expiration != 1500*time.Millisecond || len(delivery.Headers) != 1 {
-				t.Fatalf("deliveryFromAMQP() = (%#v, %v)", delivery, err)
+			if err != nil {
+				t.Fatalf("deliveryFromAMQP(): %v", err)
+			}
+			if delivery.Expiration != 1500*time.Millisecond || len(delivery.Headers) != 1 ||
+				delivery.Headers[0].Kind != HeaderInt64 || delivery.Headers[0].Int64 != test.want {
+				t.Fatal("integer header was not normalized into the stable signed policy")
 			}
 		})
 	}

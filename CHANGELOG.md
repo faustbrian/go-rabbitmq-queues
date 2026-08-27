@@ -31,6 +31,8 @@
   checks without claiming broker or PHP evidence.
 - Preserve bounded string application-header contents across publication and
   delivery without treating control characters as identity data.
+- Normalize lossless AMQP unsigned byte, uint16, and uint32 delivery headers
+  into the stable signed int64 application-header policy.
 - Add bounded AMQP publication metadata and distinct publisher outcome states.
 - Add exchange-kind-aware publication routing so fanout and headers exchanges
   preserve their native empty routing key without weakening direct/topic policy.

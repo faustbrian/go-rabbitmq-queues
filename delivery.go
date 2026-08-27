@@ -285,6 +285,12 @@ func stableDeliveryHeader(key string, value any) (Header, int, bool) {
 		return Int64Header(key, int64(value)), 8, true
 	case int64:
 		return Int64Header(key, value), 8, true
+	case uint8:
+		return Int64Header(key, int64(value)), 8, true
+	case uint16:
+		return Int64Header(key, int64(value)), 8, true
+	case uint32:
+		return Int64Header(key, int64(value)), 8, true
 	default:
 		return Header{}, 0, false
 	}

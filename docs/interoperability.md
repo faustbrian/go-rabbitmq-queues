@@ -44,6 +44,9 @@ interoperability contract.
 String application-header values are bounded message metadata rather than
 identities. Their bytes, including control characters, are preserved across
 publication and delivery and are never copied into package observations.
+AMQP unsigned byte, uint16, and uint32 delivery headers are losslessly
+normalized into the package's signed int64 header policy so clients using those
+wire types remain interoperable without expanding the public type surface.
 
 `reply-to` and `correlation-id` expose the AMQP metadata needed for an
 application-owned request/reply flow. The package does not create reply queues,
