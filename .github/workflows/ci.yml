@@ -45,7 +45,7 @@ jobs:
           for fuzz in FuzzPublicationValidation FuzzDeliveryConversion FuzzPublishTrackerCorrelation FuzzTopologyValidation; do
             go test -run '^$' -fuzz "^${fuzz}$" -fuzztime=10s .
           done
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           "${GOBIN}/govulncheck" ./...
           shellcheck scripts/*.sh
 

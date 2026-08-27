@@ -12,6 +12,7 @@ task_root="$(mktemp -d "${RUNNER_TEMP}/go-rabbitmq-queues-live.XXXXXX")"
 container_name="go-rabbitmq-queues-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 bootstrap_password="$(openssl rand -hex 24)"
 client_password="$(openssl rand -hex 24)"
+erlang_cookie="$(openssl rand -hex 24)"
 cleanup() {
     result=$?
     trap - EXIT HUP INT TERM
@@ -19,7 +20,8 @@ cleanup() {
         docker logs "${container_name}" 2>&1 |
             sed \
                 -e "s/${bootstrap_password}/[REDACTED]/g" \
-                -e "s/${client_password}/[REDACTED]/g" >&2 || true
+                -e "s/${client_password}/[REDACTED]/g" \
+                -e "s/${erlang_cookie}/[REDACTED]/g" >&2 || true
     fi
     docker rm --force "${container_name}" >/dev/null 2>&1 || true
     if [[ -d "${task_root}" ]]; then
@@ -32,9 +34,11 @@ trap cleanup EXIT HUP INT TERM
 
 mkdir -p \
     "${task_root}/tls" \
+    "${task_root}/rabbitmq-data" \
     "${task_root}/go-build" \
     "${task_root}/go-modules" \
     "${task_root}/go-tmp"
+chmod 0700 "${task_root}/rabbitmq-data"
 
 openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
     -subj '/CN=go-rabbitmq-queues-ci-ca' \
@@ -80,12 +84,15 @@ image='rabbitmq:4.3.5-management-alpine@sha256:7224161872a48060e980a611f4778ad18
 
 docker run --detach \
     --name "${container_name}" \
+    --user "$(id -u):$(id -g)" \
     --label 'com.faustbrian.task=go-rabbitmq-queues-live-ci' \
     --env "RABBITMQ_DEFAULT_USER=${bootstrap_user}" \
     --env "RABBITMQ_DEFAULT_PASS=${bootstrap_password}" \
     --env "RABBITMQ_DEFAULT_VHOST=${vhost}" \
+    --env "RABBITMQ_ERLANG_COOKIE=${erlang_cookie}" \
     --mount "type=bind,source=${task_root}/rabbitmq.conf,target=/etc/rabbitmq/rabbitmq.conf,readonly" \
     --mount "type=bind,source=${task_root}/tls,target=/etc/rabbitmq/tls,readonly" \
+    --mount "type=bind,source=${task_root}/rabbitmq-data,target=/var/lib/rabbitmq" \
     --publish 127.0.0.1::5671 \
     --publish 127.0.0.1::15672 \
     "${image}" >/dev/null
