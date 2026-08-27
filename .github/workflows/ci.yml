@@ -118,6 +118,26 @@ jobs:
           coverage: none
       - run: ./scripts/ci-live-broker.sh php
 
+  performance:
+    name: Performance ${{ matrix.queue_type }} ${{ matrix.daily_messages }}/day
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        queue_type: [classic, quorum]
+        daily_messages: [1000000, 10000000, 100000000]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: ./scripts/ci-live-broker.sh performance
+        env:
+          QUEUE_TYPE: ${{ matrix.queue_type }}
+          DAILY_MESSAGES: ${{ matrix.daily_messages }}
+
   operator-schema:
     name: Operator schemas
     runs-on: ubuntu-24.04
@@ -160,7 +180,7 @@ jobs:
   required:
     name: Required
     if: always()
-    needs: [quality, mutation, live-broker, php-interop, operator-schema, codeql]
+    needs: [quality, mutation, live-broker, php-interop, performance, operator-schema, codeql]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -170,6 +190,7 @@ jobs:
           MUTATION_RESULT: ${{ needs.mutation.result }}
           LIVE_BROKER_RESULT: ${{ needs.live-broker.result }}
           PHP_INTEROP_RESULT: ${{ needs.php-interop.result }}
+          PERFORMANCE_RESULT: ${{ needs.performance.result }}
           OPERATOR_SCHEMA_RESULT: ${{ needs.operator-schema.result }}
           CODEQL_RESULT: ${{ needs.codeql.result }}
         run: |
@@ -179,6 +200,7 @@ jobs:
             "${MUTATION_RESULT}" \
             "${LIVE_BROKER_RESULT}" \
             "${PHP_INTEROP_RESULT}" \
+            "${PERFORMANCE_RESULT}" \
             "${OPERATOR_SCHEMA_RESULT}" \
             "${CODEQL_RESULT}"; do
             test "${result}" = success

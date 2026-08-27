@@ -8,14 +8,22 @@ if [[ "${CI:-}" != true || "${GITHUB_ACTIONS:-}" != true ]]; then
 fi
 
 suite="${1:-single}"
-if [[ "${suite}" != single && "${suite}" != php ]]; then
-    printf '%s\n' 'ci-live-broker.sh suite must be single or php' >&2
+if [[ "${suite}" != single && "${suite}" != php && "${suite}" != performance ]]; then
+    printf '%s\n' 'ci-live-broker.sh suite must be single, php, or performance' >&2
+    exit 1
+fi
+queue_type="${QUEUE_TYPE:-}"
+daily_messages="${DAILY_MESSAGES:-0}"
+if [[ "${suite}" == performance ]] &&
+    { [[ "${queue_type}" != classic && "${queue_type}" != quorum ]] ||
+        [[ ! "${daily_messages}" =~ ^(1000000|10000000|100000000)$ ]]; }; then
+    printf '%s\n' 'performance suite requires a supported queue type and daily message target' >&2
     exit 1
 fi
 
 project_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 task_root="$(mktemp -d "${RUNNER_TEMP}/go-rabbitmq-queues-live.XXXXXX")"
-container_name="go-rabbitmq-queues-live-${suite}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+container_name="go-rabbitmq-queues-live-${suite}-${queue_type:-none}-${daily_messages}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 bootstrap_password="$(openssl rand -hex 24)"
 client_password="$(openssl rand -hex 24)"
 erlang_cookie="$(openssl rand -hex 24)"
@@ -156,6 +164,8 @@ post_json() {
 read_permission='^go-rabbitmq-queues\.(classic|quorum)$'
 if [[ "${suite}" == php ]]; then
     read_permission='^go-rabbitmq-queues\.(classic|quorum|go-to-php|php-to-go)$'
+elif [[ "${suite}" == performance ]]; then
+    read_permission="^go-rabbitmq-queues\\.performance\\.${queue_type}\\.[1-4]$"
 fi
 put_json "users/${client_user}" "$(jq -cn --arg password "${client_password}" '{password: $password, tags: ""}')"
 put_json "permissions/${encoded_vhost}/${client_user}" \
@@ -180,6 +190,16 @@ if [[ "${suite}" == php ]]; then
         '{"routing_key":"interop.go-to-php","arguments":{}}'
     post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-queues.php-to-go" \
         '{"routing_key":"interop.php-to-go","arguments":{}}'
+elif [[ "${suite}" == performance ]]; then
+    for index in $(seq 1 4); do
+        queue_name="go-rabbitmq-queues.performance.${queue_type}.${index}"
+        put_json "queues/${encoded_vhost}/${queue_name}" \
+            "$(jq -cn --arg type "${queue_type}" \
+                '{auto_delete: false, durable: true, arguments: {"x-queue-type": $type}}')"
+        post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/${queue_name}" \
+            "$(jq -cn --arg routing_key "performance.${queue_type}.${index}" \
+                '{routing_key: $routing_key, arguments: {}}')"
+    done
 fi
 
 openssl s_client \
@@ -200,6 +220,8 @@ jq -n \
     --arg password "${client_password}" \
     --arg root_ca_file "${task_root}/tls/ca.pem" \
     --arg php_binary "$(command -v php || true)" \
+    --arg performance_queue_type "${queue_type}" \
+    --argjson daily_messages "${daily_messages}" \
     '{
         endpoints: [{host: "127.0.0.1", port: $port}],
         virtual_host: $vhost,
@@ -223,6 +245,24 @@ jq -n \
             php_to_go_queue: "go-rabbitmq-queues.php-to-go",
             php_to_go_routing_key: "interop.php-to-go",
             unroutable_routing_key: "interop.intentionally-unbound"
+        },
+        performance: {
+            queue_type: $performance_queue_type,
+            queues: [range(1; 5) | {
+                name: "go-rabbitmq-queues.performance.\($performance_queue_type).\(.)",
+                routing_key: "performance.\($performance_queue_type).\(.)"
+            }],
+            daily_messages: $daily_messages,
+            warmup_seconds: 5,
+            sample_seconds: 30,
+            samples: 3,
+            burst_multiplier: 4,
+            burst_seconds: 5,
+            publisher_concurrency: 64,
+            consumer_concurrency: 16,
+            payload_bytes: [256, 1024, 4096],
+            header_bytes: [0, 64, 512],
+            handler_delay_ms: 0
         }
     }' >"${task_root}/live-broker.json"
 chmod 0600 "${task_root}/live-broker.json"
@@ -249,6 +289,14 @@ chmod 0600 "${task_root}/live-broker.json"
             GOTMPDIR="${task_root}/go-tmp" \
             RABBITMQ_QUEUE_LIVE_CONFIG="${task_root}/live-broker.json" \
             go test -v -count=1 -tags=livebroker -run '^TestLiveBrokerPHPInteroperability$' .
+    elif [[ "${suite}" == performance ]]; then
+        GOTOOLCHAIN=local \
+            GOWORK=off \
+            GOCACHE="${task_root}/go-build" \
+            GOMODCACHE="${task_root}/go-modules" \
+            GOTMPDIR="${task_root}/go-tmp" \
+            RABBITMQ_QUEUE_PERFORMANCE_CONFIG="${task_root}/live-broker.json" \
+            go test -v -count=1 -tags=livebroker -run '^TestLiveBrokerPerformanceProfiles$' .
     else
         GOTOOLCHAIN=local \
             GOWORK=off \
