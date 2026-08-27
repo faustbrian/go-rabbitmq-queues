@@ -21,6 +21,8 @@ const (
 	postFaultMessages            = 16
 	clusterPublishTimeout        = 2 * time.Second
 	clusterDeliveryTimeout       = 60 * time.Second
+	clusterRecoveryAttempts      = rabbitmqqueue.MaxReconnectAttempts
+	clusterRecoveryMaxDelay      = 15 * time.Second
 )
 
 type liveClusterLedger struct {
@@ -76,6 +78,8 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	}
 
 	connection := fixture.connection(t)
+	connection.Recovery.MaxAttempts = clusterRecoveryAttempts
+	connection.Recovery.MaxDelay = clusterRecoveryMaxDelay
 	verifyLiveTopology(t, connection, fixture)
 	faultQueue := fixture.Classic
 	if fixture.FaultQueueType == rabbitmqqueue.QueueQuorum {
