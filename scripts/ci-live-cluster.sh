@@ -7,15 +7,24 @@ if [[ "${CI:-}" != true || "${GITHUB_ACTIONS:-}" != true ]]; then
     exit 1
 fi
 
-fault_queue_type="${1:-}"
-if [[ "${fault_queue_type}" != classic && "${fault_queue_type}" != quorum ]]; then
-    printf '%s\n' 'ci-live-cluster.sh requires classic or quorum' >&2
-    exit 1
-fi
+fault_scenario="${1:-}"
+case "${fault_scenario}" in
+    classic-node-loss)
+        fault_queue_type='classic'
+        ;;
+    quorum-leader-loss | quorum-network-partition | cluster-restart)
+        fault_queue_type='quorum'
+        ;;
+    *)
+        printf '%s\n' \
+            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, or cluster-restart' >&2
+        exit 1
+        ;;
+esac
 
 project_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 task_root="$(mktemp -d "${RUNNER_TEMP}/go-rabbitmq-queues-cluster.XXXXXX")"
-network_name="go-rabbitmq-queues-cluster-${fault_queue_type}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+network_name="go-rabbitmq-queues-cluster-${fault_scenario}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 image='rabbitmq:4.3.5-management-alpine@sha256:7224161872a48060e980a611f4778ad18168f00cfa974cab30604dbd855511dc'
 bootstrap_user='ci-bootstrap'
 client_user='ci-client'
@@ -110,7 +119,7 @@ docker network create \
     "${network_name}" >/dev/null
 
 for node_name in "${node_names[@]}"; do
-    container_name="go-rabbitmq-queues-${node_name}-${fault_queue_type}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+    container_name="go-rabbitmq-queues-${node_name}-${fault_scenario}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
     container_names+=("${container_name}")
     mkdir "${task_root}/${node_name}-data"
     chmod 0700 "${task_root}/${node_name}-data"
@@ -263,6 +272,7 @@ jq -n \
     --arg fault_start_gate_file "${fault_start_gate}" \
     --arg fault_complete_gate_file "${fault_complete_gate}" \
     --arg fault_queue_type "${fault_queue_type}" \
+    --arg fault_scenario "${fault_scenario}" \
     '{
         endpoints: $endpoints,
         virtual_host: $vhost,
@@ -281,6 +291,7 @@ jq -n \
         fault_start_gate_file: $fault_start_gate_file,
         fault_complete_gate_file: $fault_complete_gate_file,
         fault_queue_type: $fault_queue_type,
+        fault_scenario: $fault_scenario,
         fault_window_messages: 64
     }' >"${task_root}/live-cluster.json"
 chmod 0600 "${task_root}/live-cluster.json"
@@ -323,32 +334,53 @@ if [[ "${ready}" != true ]]; then
     exit "${test_status}"
 fi
 
-queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.${fault_queue_type}")"
-if [[ "${fault_queue_type}" == classic ]]; then
-    fault_member="$(jq -er '.node' <<<"${queue_json}")"
-else
-    fault_member="$(jq -er '.leader' <<<"${queue_json}")"
-fi
-fault_node="${fault_member#rabbit@}"
+fault_member=''
+fault_node=''
 fault_index=-1
+fault_container=''
 observer_node=''
-for index in "${!node_names[@]}"; do
-    if [[ "${node_names[${index}]}" == "${fault_node}" ]]; then
-        fault_index="${index}"
+if [[ "${fault_scenario}" != cluster-restart ]]; then
+    queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.${fault_queue_type}")"
+    if [[ "${fault_queue_type}" == classic ]]; then
+        fault_member="$(jq -er '.node' <<<"${queue_json}")"
     else
-        observer_node="${node_names[${index}]}"
+        fault_member="$(jq -er '.leader' <<<"${queue_json}")"
     fi
-done
-if ((fault_index < 0)) || [[ -z "${observer_node}" ]]; then
-    printf 'unable to map fault member %s to a cluster container\n' "${fault_member}" >&2
-    exit 1
+    fault_node="${fault_member#rabbit@}"
+    for index in "${!node_names[@]}"; do
+        if [[ "${node_names[${index}]}" == "${fault_node}" ]]; then
+            fault_index="${index}"
+        else
+            observer_node="${node_names[${index}]}"
+        fi
+    done
+    if ((fault_index < 0)) || [[ -z "${observer_node}" ]]; then
+        printf 'unable to map fault member %s to a cluster container\n' "${fault_member}" >&2
+        exit 1
+    fi
+    fault_container="${container_names[${fault_index}]}"
 fi
-fault_container="${container_names[${fault_index}]}"
-docker stop --time 10 "${fault_container}" >/dev/null
+
+case "${fault_scenario}" in
+    classic-node-loss | quorum-leader-loss)
+        docker stop --time 10 "${fault_container}" >/dev/null
+        fault_event="node-stopped node=${fault_member}"
+        ;;
+    quorum-network-partition)
+        docker network disconnect "${network_name}" "${fault_container}"
+        fault_event="node-partitioned node=${fault_member}"
+        ;;
+    cluster-restart)
+        for container_name in "${container_names[@]}"; do
+            docker stop --time 10 "${container_name}" >/dev/null
+        done
+        fault_event='cluster-stopped'
+        ;;
+esac
 fault_started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 : >"${fault_start_gate}"
-printf 'FAULT_TIMELINE queue_type=%s event=node-stopped node=%s at=%s\n' \
-    "${fault_queue_type}" "${fault_member}" "${fault_started_at}"
+printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=%s at=%s\n' \
+    "${fault_scenario}" "${fault_queue_type}" "${fault_event}" "${fault_started_at}"
 
 for _ in $(seq 1 30); do
     if grep -q 'FAULT_WINDOW_STARTED' "${test_log}"; then
@@ -358,48 +390,102 @@ for _ in $(seq 1 30); do
 done
 grep -q 'FAULT_WINDOW_STARTED' "${test_log}"
 
-if [[ "${fault_queue_type}" == classic ]]; then
-    sleep 3
-    docker start "${fault_container}" >/dev/null
-    for _ in $(seq 1 120); do
-        if docker exec "${fault_container}" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
-            break
-        fi
-        sleep 1
-    done
-    docker exec "${fault_container}" rabbitmq-diagnostics -q ping >/dev/null
-    for _ in $(seq 1 120); do
-        if queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.classic" 2>/dev/null)" &&
-            jq -e --arg node "${fault_member}" '.state == "running" and .node == $node' <<<"${queue_json}" >/dev/null; then
-            break
-        fi
-        sleep 1
-    done
-    queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.classic")"
-    jq -e --arg node "${fault_member}" '.state == "running" and .node == $node' <<<"${queue_json}" >/dev/null
-    recovery_event='node-restarted'
-else
-    new_leader=''
-    for _ in $(seq 1 120); do
-        if queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)"; then
-            new_leader="$(jq -r '.leader // ""' <<<"${queue_json}")"
-            if [[ -n "${new_leader}" && "${new_leader}" != "${fault_member}" ]] &&
-                jq -e '.state == "running" and (.members | length) >= 2' <<<"${queue_json}" >/dev/null; then
+case "${fault_scenario}" in
+    classic-node-loss)
+        sleep 3
+        docker start "${fault_container}" >/dev/null
+        for _ in $(seq 1 120); do
+            if docker exec "${fault_container}" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
                 break
             fi
+            sleep 1
+        done
+        docker exec "${fault_container}" rabbitmq-diagnostics -q ping >/dev/null
+        for _ in $(seq 1 120); do
+            if queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.classic" 2>/dev/null)" &&
+                jq -e --arg node "${fault_member}" '.state == "running" and .node == $node' <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.classic")"
+        jq -e --arg node "${fault_member}" '.state == "running" and .node == $node' <<<"${queue_json}" >/dev/null
+        recovery_event="node-restarted node=${fault_member}"
+        ;;
+    quorum-leader-loss | quorum-network-partition)
+        new_leader=''
+        for _ in $(seq 1 120); do
+            if queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)"; then
+                new_leader="$(jq -r '.leader // ""' <<<"${queue_json}")"
+                if [[ -n "${new_leader}" && "${new_leader}" != "${fault_member}" ]] &&
+                    jq -e '.state == "running" and (.members | length) >= 2' <<<"${queue_json}" >/dev/null; then
+                    break
+                fi
+            fi
+            sleep 1
+        done
+        [[ -n "${new_leader}" && "${new_leader}" != "${fault_member}" ]]
+        jq -e '.state == "running" and (.members | length) >= 2' <<<"${queue_json}" >/dev/null
+        if [[ "${fault_scenario}" == quorum-network-partition ]]; then
+            docker network connect --alias "${fault_node}" "${network_name}" "${fault_container}"
+            for _ in $(seq 1 120); do
+                if get_json "${fault_node}" overview >/dev/null 2>&1 &&
+                    get_json "${observer_node}" nodes |
+                    jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            get_json "${fault_node}" overview >/dev/null
+            get_json "${observer_node}" nodes |
+                jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null
+            recovery_event="partition-healed leader=${new_leader}"
+        else
+            recovery_event="leader-elected leader=${new_leader}"
         fi
-        sleep 1
-    done
-    [[ -n "${new_leader}" && "${new_leader}" != "${fault_member}" ]]
-    jq -e '.state == "running" and (.members | length) >= 2' <<<"${queue_json}" >/dev/null
-    sleep 1
-    recovery_event="leader-elected leader=${new_leader}"
-fi
+        ;;
+    cluster-restart)
+        prolonged_outage_seconds=20
+        sleep "${prolonged_outage_seconds}"
+        for container_name in "${container_names[@]}"; do
+            docker start "${container_name}" >/dev/null
+        done
+        for container_name in "${container_names[@]}"; do
+            for _ in $(seq 1 120); do
+                if docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+                    break
+                fi
+                sleep 1
+            done
+            docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null
+        done
+        for _ in $(seq 1 120); do
+            if get_json rabbit1 nodes |
+                jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        get_json rabbit1 nodes |
+            jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null
+        for _ in $(seq 1 120); do
+            if queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)" &&
+                jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
+        jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' <<<"${queue_json}" >/dev/null
+        new_leader="$(jq -er '.leader' <<<"${queue_json}")"
+        recovery_event="cluster-restarted hold_seconds=${prolonged_outage_seconds} leader=${new_leader}"
+        ;;
+esac
 
 fault_completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 : >"${fault_complete_gate}"
-printf 'FAULT_TIMELINE queue_type=%s event=%s at=%s\n' \
-    "${fault_queue_type}" "${recovery_event}" "${fault_completed_at}"
+printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=%s at=%s\n' \
+    "${fault_scenario}" "${fault_queue_type}" "${recovery_event}" "${fault_completed_at}"
 
 if wait "${test_pid}"; then
     test_status=0

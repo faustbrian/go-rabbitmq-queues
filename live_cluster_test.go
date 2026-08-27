@@ -25,11 +25,71 @@ const (
 	clusterRecoveryMaxDelay      = 15 * time.Second
 )
 
+var errInvalidLiveCluster = errors.New("invalid live cluster fixture")
+
+type liveFaultScenario string
+
+const (
+	liveFaultClassicNodeLoss        liveFaultScenario = "classic-node-loss"
+	liveFaultQuorumLeaderLoss       liveFaultScenario = "quorum-leader-loss"
+	liveFaultQuorumNetworkPartition liveFaultScenario = "quorum-network-partition"
+	liveFaultClusterRestart         liveFaultScenario = "cluster-restart"
+)
+
 type liveClusterLedger struct {
 	mu         sync.Mutex
 	attempts   map[string]rabbitmqqueue.PublishState
 	deliveries map[string]int
 	observed   chan struct{}
+}
+
+func TestLiveClusterFixtureValidation(t *testing.T) {
+	valid := liveBrokerFixture{
+		Endpoints:             []liveEndpoint{{}, {}, {}},
+		FaultStartGateFile:    "fault-started",
+		FaultCompleteGateFile: "fault-complete",
+		FaultWindowMessages:   minimumFaultWindowMessages,
+		FaultQueueType:        rabbitmqqueue.QueueClassic,
+		FaultScenario:         liveFaultClassicNodeLoss,
+	}
+	if err := validateLiveClusterFixture(valid); err != nil {
+		t.Fatalf("valid classic host-loss fixture: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*liveBrokerFixture)
+	}{
+		{name: "missing endpoint", mutate: func(value *liveBrokerFixture) { value.Endpoints = value.Endpoints[:2] }},
+		{name: "same gate", mutate: func(value *liveBrokerFixture) { value.FaultCompleteGateFile = value.FaultStartGateFile }},
+		{name: "small window", mutate: func(value *liveBrokerFixture) { value.FaultWindowMessages-- }},
+		{name: "unknown scenario", mutate: func(value *liveBrokerFixture) { value.FaultScenario = "unknown" }},
+		{name: "classic leader loss", mutate: func(value *liveBrokerFixture) { value.FaultScenario = liveFaultQuorumLeaderLoss }},
+		{name: "classic partition", mutate: func(value *liveBrokerFixture) { value.FaultScenario = liveFaultQuorumNetworkPartition }},
+		{name: "classic cluster restart", mutate: func(value *liveBrokerFixture) { value.FaultScenario = liveFaultClusterRestart }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := valid
+			test.mutate(&fixture)
+			if err := validateLiveClusterFixture(fixture); err == nil {
+				t.Fatal("invalid cluster fixture was accepted")
+			}
+		})
+	}
+
+	for _, scenario := range []liveFaultScenario{
+		liveFaultQuorumLeaderLoss,
+		liveFaultQuorumNetworkPartition,
+		liveFaultClusterRestart,
+	} {
+		fixture := valid
+		fixture.FaultQueueType = rabbitmqqueue.QueueQuorum
+		fixture.FaultScenario = scenario
+		if err := validateLiveClusterFixture(fixture); err != nil {
+			t.Fatalf("valid %s fixture: %v", scenario, err)
+		}
+	}
 }
 
 func TestLiveClusterLedgerAccounting(t *testing.T) {
@@ -60,16 +120,33 @@ func TestLiveClusterLedgerAccounting(t *testing.T) {
 	}
 }
 
-func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
-	fixture := readLiveBrokerFixtureForEnvironment(t, liveClusterConfigEnvironment)
+func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 	if len(fixture.Endpoints) != 3 || fixture.FaultStartGateFile == "" ||
 		fixture.FaultCompleteGateFile == "" ||
 		fixture.FaultStartGateFile == fixture.FaultCompleteGateFile ||
-		(fixture.FaultQueueType != rabbitmqqueue.QueueClassic &&
-			fixture.FaultQueueType != rabbitmqqueue.QueueQuorum) ||
 		fixture.FaultWindowMessages < minimumFaultWindowMessages ||
 		fixture.FaultWindowMessages > maximumFaultWindowMessages {
-		t.Fatal("three-node configuration requires three endpoints, a classic or quorum queue type, distinct fault gates, and a bounded message window")
+		return errInvalidLiveCluster
+	}
+	switch fixture.FaultScenario {
+	case liveFaultClassicNodeLoss:
+		if fixture.FaultQueueType != rabbitmqqueue.QueueClassic {
+			return errInvalidLiveCluster
+		}
+	case liveFaultQuorumLeaderLoss, liveFaultQuorumNetworkPartition, liveFaultClusterRestart:
+		if fixture.FaultQueueType != rabbitmqqueue.QueueQuorum {
+			return errInvalidLiveCluster
+		}
+	default:
+		return errInvalidLiveCluster
+	}
+	return nil
+}
+
+func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
+	fixture := readLiveBrokerFixtureForEnvironment(t, liveClusterConfigEnvironment)
+	if err := validateLiveClusterFixture(fixture); err != nil {
+		t.Fatalf("validate three-node configuration: %v", err)
 	}
 	for _, gate := range []string{fixture.FaultStartGateFile, fixture.FaultCompleteGateFile} {
 		if faultGateExists(t, gate) {
@@ -138,8 +215,9 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 	waitForDeliveryQuiet(t, ledger)
 	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
 	t.Logf(
-		"MESSAGE_OUTCOMES queue_type=%s attempted=%d confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d",
-		fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous, notSent, delivered, duplicates,
+		"MESSAGE_OUTCOMES scenario=%s queue_type=%s attempted=%d confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d",
+		fixture.FaultScenario, fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous,
+		notSent, delivered, duplicates,
 	)
 }
 

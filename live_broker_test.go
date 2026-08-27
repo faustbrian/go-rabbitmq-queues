@@ -71,6 +71,7 @@ type liveBrokerFixture struct {
 	FaultCompleteGateFile string                  `json:"fault_complete_gate_file"`
 	FaultWindowMessages   int                     `json:"fault_window_messages"`
 	FaultQueueType        rabbitmqqueue.QueueType `json:"fault_queue_type"`
+	FaultScenario         liveFaultScenario       `json:"fault_scenario"`
 	Performance           livePerformanceFixture  `json:"performance"`
 	PHPInteroperability   livePHPInteropFixture   `json:"php_interoperability"`
 }
