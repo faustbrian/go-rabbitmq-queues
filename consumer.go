@@ -327,9 +327,13 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 	pendingHead := 0
 	pendingCount := 0
 	cancellations := generation.cancellations
+	recoveryDone := consumer.recoveryContext.Done()
+	lifetimeDone := consumer.lifetimeContext.Done()
+	draining := false
+	deliveriesClosed := false
 	for {
 		consumer.admissionMu.Lock()
-		paused := consumer.paused
+		paused := consumer.paused && !draining
 		resume := consumer.resume
 		if pendingCount > 0 && !paused {
 			select {
@@ -347,15 +351,24 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 			resume = nil
 		}
 		deliveries := generation.deliveries
-		if (!paused && pendingCount > 0) || pendingCount == len(pending) {
+		if deliveriesClosed || (!paused && pendingCount > 0) || pendingCount == len(pending) {
 			deliveries = nil
+		}
+		if draining && deliveriesClosed && pendingCount == 0 {
+			return false
 		}
 
 		select {
 		case source, open := <-deliveries:
 			if !open {
 				consumer.observePendingCancellation(cancellations)
-				return !consumer.isStopping()
+				deliveriesClosed = true
+				if !consumer.isStopping() {
+					return true
+				}
+				draining = true
+				recoveryDone = nil
+				continue
 			}
 			consumer.observe(Observation{Kind: ObservationDelivery, Outcome: ObservationDelivered})
 			if source.Redelivered {
@@ -391,10 +404,22 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 			consumer.observe(Observation{
 				Kind: ObservationConsumerCancellation, Outcome: ObservationCancelled,
 			})
+			if consumer.isStopping() {
+				draining = true
+				recoveryDone = nil
+				cancellations = nil
+				continue
+			}
 			return !consumer.isStopping()
 		case <-generation.failure:
 			return true
-		case <-consumer.recoveryContext.Done():
+		case <-recoveryDone:
+			if !consumer.isStopping() {
+				return false
+			}
+			draining = true
+			recoveryDone = nil
+		case <-lifetimeDone:
 			return false
 		}
 	}
@@ -598,8 +623,9 @@ func (consumer *Consumer) signalAdmissionChanged() {
 	}
 }
 
-// Drain cancels broker intake and waits for admitted handlers without closing
-// the healthy owned connection. A drain deadline forces the connection closed.
+// Drain cancels broker intake and waits for every delivery already received
+// from the broker without closing the healthy owned connection. A drain
+// deadline forces the connection closed.
 func (consumer *Consumer) Drain(ctx context.Context) error {
 	if ctx == nil {
 		return ErrContextRequired

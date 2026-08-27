@@ -71,6 +71,8 @@
 - Add an independent bounded consumer with manual ACK, NACK, reject and
   delegated settlement, owned delivery snapshots, dead-letter history,
   per-consumer QoS, explicit failure policy, and graceful drain/close.
+- Ensure graceful drain admits and settles deliveries already buffered by the
+  consumer, including while paused, before leaving healthy resources open.
 - Preserve RabbitMQ 4.3 acquired and failed-delivery counters as separate
   bounded delivery metadata.
 - Bound quorum requeue requests with RabbitMQ 4.3's acquired count, including

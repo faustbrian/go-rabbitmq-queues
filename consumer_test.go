@@ -328,6 +328,63 @@ func TestConsumerDrainStopsIntakeWithoutClosingOwnedResources(t *testing.T) {
 	}
 }
 
+func TestConsumerDrainSettlesDeliveryBufferedDuringPause(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	started := make(chan struct{}, 1)
+	resource := &countingCloser{}
+	consumer, err := newConsumerFromChannel(
+		t.Context(),
+		testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) {
+			started <- struct{}{}
+			return Acknowledge(), nil
+		},
+		channel,
+		resource,
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+	if err := consumer.Pause(); err != nil {
+		t.Fatalf("Pause(): %v", err)
+	}
+	channel.deliveries <- testAMQPDelivery(52)
+	for {
+		select {
+		case observation := <-consumer.Observations():
+			if observation.Kind == ObservationDelivery {
+				goto deliveryBuffered
+			}
+		case <-time.After(time.Second):
+			t.Fatal("paused consumer did not buffer the delivery")
+		}
+	}
+
+deliveryBuffered:
+	if err := consumer.Drain(t.Context()); err != nil {
+		t.Fatalf("Drain(): %v", err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("Drain() discarded the buffered delivery without handler admission")
+	}
+	select {
+	case settled := <-channel.settled:
+		if settled.method != SettlementAcknowledge || settled.tag != 52 {
+			t.Fatalf("settlement = %#v, want ACK for buffered delivery", settled)
+		}
+	default:
+		t.Fatal("Drain() returned before the buffered delivery settled")
+	}
+	if resource.calls != 0 || channel.closeCount() != 0 || channel.cancelCount() != 1 {
+		t.Fatalf("drain resources = resource %d channel %d cancel %d", resource.calls, channel.closeCount(), channel.cancelCount())
+	}
+}
+
 func TestConsumerPauseAndResumeTemporarilyStopsHandlerAdmission(t *testing.T) {
 	t.Parallel()
 

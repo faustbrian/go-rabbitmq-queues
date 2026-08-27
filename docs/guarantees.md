@@ -86,6 +86,10 @@ internal transfer.
   prefetch may remain unsettled, runtime recovery continues, and `Resume`
   restores admission. A paused consumer remains live with an available
   dependency but is not ready.
+- `Drain` cancels broker intake, overrides paused admission for deliveries the
+  package already received, and waits for their handlers and settlements. A
+  successful drain leaves the healthy owned connection open; expiration of the
+  bounded drain closes it so RabbitMQ can redeliver unsettled work.
 - Connection loss can redeliver a message while its earlier handler invocation
   is still completing. Applications must tolerate concurrent duplicates.
 - Manual settlement provides at-least-once processing; applications remain
