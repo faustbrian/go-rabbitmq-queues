@@ -2,6 +2,7 @@ package rabbitmqqueue
 
 import (
 	"math"
+	"strings"
 	"time"
 )
 
@@ -373,10 +374,35 @@ func validExchangeBindingWithLimits(
 	case ExchangeFanout:
 		return routingKey == "" && len(arguments) == 0
 	case ExchangeHeaders:
-		return routingKey == "" && len(arguments) > 0
+		return routingKey == "" && validHeadersBindingArguments(arguments)
 	default:
 		return false
 	}
+}
+
+func validHeadersBindingArguments(arguments []Header) bool {
+	match := "all"
+	for _, argument := range arguments {
+		if argument.Key != "x-match" {
+			continue
+		}
+		if argument.Kind != HeaderString {
+			return false
+		}
+		switch argument.String {
+		case "all", "any", "all-with-x", "any-with-x":
+			match = argument.String
+		default:
+			return false
+		}
+	}
+	includeExtensions := match == "all-with-x" || match == "any-with-x"
+	for _, argument := range arguments {
+		if argument.Key != "x-match" && (includeExtensions || !strings.HasPrefix(argument.Key, "x-")) {
+			return true
+		}
+	}
+	return false
 }
 
 func validBindingArguments(arguments []Header) bool {

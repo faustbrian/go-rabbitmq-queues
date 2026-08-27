@@ -511,6 +511,18 @@ func TestTopologyRejectsUnsafeOrAmbiguousBindingArguments(t *testing.T) {
 	policy := TopologyPolicy{Mode: TopologyDeclare, Development: PermitDevelopmentTopology()}
 	tests := map[string][]Header{
 		"missing criteria": nil,
+		"x-match without criteria": {
+			StringHeader("x-match", "all"),
+		},
+		"invalid x-match value": {
+			StringHeader("x-match", "some"), StringHeader("format", "json"),
+		},
+		"invalid x-match type": {
+			BoolHeader("x-match", true), StringHeader("format", "json"),
+		},
+		"default ignores extension-only criteria": {
+			StringHeader("x-tenant", "orders"),
+		},
 		"duplicate": {
 			StringHeader("format", "json"), StringHeader("format", "xml"),
 		},
@@ -544,6 +556,43 @@ func TestTopologyRejectsUnsafeOrAmbiguousBindingArguments(t *testing.T) {
 			})
 			if err := topology.Validate(policy); !errors.Is(err, ErrInvalidTopology) {
 				t.Fatalf("Topology.Validate() error = %v, want invalid topology", err)
+			}
+		})
+	}
+}
+
+func TestTopologyAcceptsRabbitMQHeadersMatchModes(t *testing.T) {
+	t.Parallel()
+
+	base := Topology{
+		Exchanges: []Exchange{{Name: "events", Kind: ExchangeHeaders, Durable: true}},
+		Queues:    []Queue{{Name: "orders", Type: QueueClassic, Durable: true}},
+	}
+	policy := TopologyPolicy{Mode: TopologyDeclare, Development: PermitDevelopmentTopology()}
+	tests := map[string][]Header{
+		"default all": {StringHeader("format", "json")},
+		"explicit all": {
+			StringHeader("x-match", "all"), StringHeader("format", "json"),
+		},
+		"explicit any": {
+			StringHeader("x-match", "any"), StringHeader("format", "json"),
+		},
+		"all with extensions": {
+			StringHeader("x-match", "all-with-x"), StringHeader("x-tenant", "orders"),
+		},
+		"any with extensions": {
+			StringHeader("x-match", "any-with-x"), StringHeader("x-tenant", "orders"),
+		},
+	}
+	for name, arguments := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			topology := topologyWithBinding(base, Binding{
+				Exchange: "events", Queue: "orders", Arguments: arguments,
+			})
+			if err := topology.Validate(policy); err != nil {
+				t.Fatalf("Topology.Validate() error = %v", err)
 			}
 		})
 	}

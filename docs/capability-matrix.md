@@ -37,6 +37,11 @@ Important RabbitMQ 4.3 distinctions:
 - RabbitMQ's predeclared default direct exchange is represented only by an
   empty `Publication.Exchange` paired with an explicit `ExchangeDirect` kind.
   Its routing key is the destination queue identity;
+- headers bindings accept RabbitMQ 4.3's optional `x-match` values `all`,
+  `any`, `all-with-x`, and `any-with-x`. Omission defaults to `all`. The first
+  two modes ignore `x-*` arguments, while the `with-x` modes include them; the
+  package requires at least one criterion that the selected mode evaluates so
+  a binding cannot become an unintended match-all route;
 - AMQP 0-9-1 `basic.nack` does not increment the 4.3 quorum
   `x-delivery-count`, while `basic.reject` and connection loss do;
 - `Delivery.AcquiredCount` preserves RabbitMQ 4.3's `x-acquired-count`, which
