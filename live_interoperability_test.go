@@ -34,7 +34,12 @@ type livePHPInteropFixture struct {
 
 type liveInteropCorpus struct {
 	SchemaVersion int `json:"schema_version"`
-	Properties    struct {
+	Routing       struct {
+		Exchange   string `json:"exchange"`
+		RoutingKey string `json:"routing_key"`
+		Mandatory  bool   `json:"mandatory"`
+	} `json:"routing"`
+	Properties struct {
 		DeliveryMode    string `json:"delivery_mode"`
 		ContentType     string `json:"content_type"`
 		ContentEncoding string `json:"content_encoding"`
@@ -215,7 +220,9 @@ func readLiveInteropCorpus(t *testing.T) liveInteropCorpus {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		t.Fatal("interoperability corpus must contain exactly one JSON object")
 	}
-	if corpus.SchemaVersion != 1 || corpus.Properties.DeliveryMode != "persistent" ||
+	if corpus.SchemaVersion != 1 || corpus.Routing.Exchange == "" ||
+		corpus.Routing.RoutingKey == "" || !corpus.Routing.Mandatory ||
+		corpus.Properties.DeliveryMode != "persistent" ||
 		corpus.Properties.ExpirationMS < 0 || corpus.Properties.Priority > 255 {
 		t.Fatal("interoperability corpus has unsupported metadata")
 	}
