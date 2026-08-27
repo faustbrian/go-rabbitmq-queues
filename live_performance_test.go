@@ -20,24 +20,26 @@ const (
 	livePerformanceConfigEnvironment = "RABBITMQ_QUEUE_PERFORMANCE_CONFIG"
 	secondsPerDay                    = 86_400
 	maximumPerformanceMessages       = 250_000
+	performanceOfferHeadroom         = 1.01
 )
 
 var errInvalidLivePerformance = errors.New("invalid live performance fixture")
 
 type livePerformanceSample struct {
-	Mode       string
-	Index      int
-	TargetRate float64
-	Messages   int
-	Elapsed    time.Duration
-	Drain      time.Duration
-	Achieved   float64
-	Confirmed  int
-	Ambiguous  int
-	NotSent    int
-	Delivered  int
-	Duplicates int
-	Invalid    int64
+	Mode        string
+	Index       int
+	TargetRate  float64
+	OfferedRate float64
+	Messages    int
+	Elapsed     time.Duration
+	Drain       time.Duration
+	Achieved    float64
+	Confirmed   int
+	Ambiguous   int
+	NotSent     int
+	Delivered   int
+	Duplicates  int
+	Invalid     int64
 }
 
 type livePerformanceJob struct {
@@ -223,7 +225,8 @@ func runLivePerformanceSample(
 	durationSeconds int,
 ) {
 	t.Helper()
-	sample.Messages = int(math.Ceil(sample.TargetRate * float64(durationSeconds)))
+	sample.OfferedRate = sample.TargetRate * performanceOfferHeadroom
+	sample.Messages = int(math.Ceil(sample.OfferedRate * float64(durationSeconds)))
 	ledger := &liveClusterLedger{
 		attempts:   make(map[string]rabbitmqqueue.PublishState, sample.Messages),
 		deliveries: make(map[string]int, sample.Messages),
@@ -278,7 +281,7 @@ func runLivePerformanceSample(
 	}
 
 	started := time.Now()
-	interval := float64(time.Second) / sample.TargetRate
+	interval := float64(time.Second) / sample.OfferedRate
 	for index := 0; index < sample.Messages; index++ {
 		messageID := "live-performance-" + runToken + "-" + sample.Mode + "-" + strconv.Itoa(index)
 		ids[index] = messageID
@@ -306,8 +309,8 @@ func runLivePerformanceSample(
 	sample.Achieved = float64(sample.Messages) / sample.Elapsed.Seconds()
 	errorRate := float64(sample.Messages-sample.Confirmed) / float64(sample.Messages)
 	t.Logf(
-		"PERFORMANCE_SAMPLE mode=%s sample=%d queue_type=%s messages=%d target_per_second=%.2f achieved_per_second=%.2f publish_elapsed=%s backlog_drain=%s confirmed=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d invalid=%d error_rate=%.6f",
-		sample.Mode, sample.Index, fixture.QueueType, sample.Messages, sample.TargetRate,
+		"PERFORMANCE_SAMPLE mode=%s sample=%d queue_type=%s messages=%d target_per_second=%.2f offered_per_second=%.2f achieved_per_second=%.2f publish_elapsed=%s backlog_drain=%s confirmed=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d invalid=%d error_rate=%.6f",
+		sample.Mode, sample.Index, fixture.QueueType, sample.Messages, sample.TargetRate, sample.OfferedRate,
 		sample.Achieved, sample.Elapsed, sample.Drain, sample.Confirmed, sample.Ambiguous,
 		sample.NotSent, sample.Delivered, sample.Duplicates, sample.Invalid, errorRate,
 	)

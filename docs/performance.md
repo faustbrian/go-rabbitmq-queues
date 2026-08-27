@@ -89,11 +89,14 @@ at least three measured samples.
 task_cache_root=$(mktemp -d /tmp/go-rabbitmq-queues-performance.XXXXXX) && trap 'chmod -R u+w "$task_cache_root"; find "$task_cache_root" -depth -delete' EXIT HUP INT TERM && mkdir "$task_cache_root/build" "$task_cache_root/modules" && RABBITMQ_QUEUE_PERFORMANCE_CONFIG=/secure/path/live-performance.json GOCACHE="$task_cache_root/build" GOMODCACHE="$task_cache_root/modules" go test -v -tags=livebroker -run '^TestLiveBrokerPerformanceProfiles$' -count=1 .
 ```
 
-Each retained `PERFORMANCE_SAMPLE` records queue type, scheduled and achieved
-rate, publish-confirm elapsed time, backlog-drain time, confirmations,
+Each retained `PERFORMANCE_SAMPLE` records queue type, target, offered, and
+achieved rate, publish-confirm elapsed time, backlog-drain time, confirmations,
 ambiguities, not-sent outcomes, deliveries, duplicates, and invalid outcome
 pairings. The harness fails a sample that misses its configured daily-volume
 rate or has any unaccounted, ambiguous, not-sent, duplicate, or invalid result.
+It offers 1% load headroom above the named target so bounded scheduler and
+final confirmation overhead cannot turn an otherwise exact target into a false
+failure.
 It measures client-to-broker publish-confirm throughput and consumer drain; it
 does not measure storage-device saturation or prove a cluster fault unless the
 run is paired with separately retained broker and fault evidence.
