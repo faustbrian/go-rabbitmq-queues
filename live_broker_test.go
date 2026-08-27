@@ -42,15 +42,19 @@ type liveQueue struct {
 }
 
 type liveBrokerFixture struct {
-	Endpoints            []liveEndpoint `json:"endpoints"`
-	VirtualHost          string         `json:"virtual_host"`
-	Username             string         `json:"username"`
-	Password             string         `json:"password"`
-	TLS                  liveTLS        `json:"tls"`
-	Exchange             string         `json:"exchange"`
-	Classic              liveQueue      `json:"classic"`
-	Quorum               liveQueue      `json:"quorum"`
-	UnroutableRoutingKey string         `json:"unroutable_routing_key"`
+	Endpoints             []liveEndpoint          `json:"endpoints"`
+	VirtualHost           string                  `json:"virtual_host"`
+	Username              string                  `json:"username"`
+	Password              string                  `json:"password"`
+	TLS                   liveTLS                 `json:"tls"`
+	Exchange              string                  `json:"exchange"`
+	Classic               liveQueue               `json:"classic"`
+	Quorum                liveQueue               `json:"quorum"`
+	UnroutableRoutingKey  string                  `json:"unroutable_routing_key"`
+	FaultStartGateFile    string                  `json:"fault_start_gate_file"`
+	FaultCompleteGateFile string                  `json:"fault_complete_gate_file"`
+	FaultWindowMessages   int                     `json:"fault_window_messages"`
+	FaultQueueType        rabbitmqqueue.QueueType `json:"fault_queue_type"`
 }
 
 func TestLiveBrokerSingleNode(t *testing.T) {
@@ -74,9 +78,18 @@ func TestLiveBrokerSingleNode(t *testing.T) {
 
 func readLiveBrokerFixture(t *testing.T) liveBrokerFixture {
 	t.Helper()
-	configPath := os.Getenv(liveBrokerConfigEnvironment)
+	fixture := readLiveBrokerFixtureForEnvironment(t, liveBrokerConfigEnvironment)
+	if len(fixture.Endpoints) != 1 {
+		t.Fatal("single-node live-broker configuration requires exactly one endpoint")
+	}
+	return fixture
+}
+
+func readLiveBrokerFixtureForEnvironment(t *testing.T, environment string) liveBrokerFixture {
+	t.Helper()
+	configPath := os.Getenv(environment)
 	if configPath == "" {
-		t.Fatalf("%s must point to the live-broker fixture configuration", liveBrokerConfigEnvironment)
+		t.Fatalf("%s must point to the live-broker fixture configuration", environment)
 	}
 	file, err := os.Open(configPath)
 	if err != nil {
@@ -99,7 +112,7 @@ func readLiveBrokerFixture(t *testing.T) liveBrokerFixture {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		t.Fatal("live-broker configuration must contain exactly one JSON object")
 	}
-	if len(fixture.Endpoints) != 1 || fixture.Username == "" || fixture.Password == "" ||
+	if len(fixture.Endpoints) == 0 || fixture.Username == "" || fixture.Password == "" ||
 		fixture.TLS.ServerName == "" || fixture.Exchange == "" ||
 		fixture.Classic.Name == "" || fixture.Classic.RoutingKey == "" ||
 		fixture.Quorum.Name == "" || fixture.Quorum.RoutingKey == "" ||

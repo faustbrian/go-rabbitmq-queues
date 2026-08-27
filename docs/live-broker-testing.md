@@ -72,3 +72,39 @@ caller owns the externally provisioned fixture. Retain the raw test output with
 the exact repository, RabbitMQ, container or operating-system, Go, client, TLS,
 CPU architecture, and topology pins. A passing single-node run is not cluster,
 failover, operator, performance, PHP, Laravel, or production evidence.
+
+## Three-node interruption harness
+
+`TestLiveBrokerThreeNodeInterruption` reuses the same dedicated topology with
+exactly three TLS endpoints. Add these fields to a separate configuration:
+
+```json
+{
+  "fault_start_gate_file": "/secure/operator-owned/fault-started",
+  "fault_complete_gate_file": "/secure/operator-owned/failover-complete",
+  "fault_queue_type": "quorum",
+  "fault_window_messages": 1000
+}
+```
+
+The complete JSON object still needs every connection and topology field from
+the single-node example. Run separate retained executions with
+`fault_queue_type` set to `classic` and `quorum`. Neither gate file may exist
+when the test starts. Run the test with verbose output and wait for
+`FAULT_WINDOW_READY`. An external operator may then perform the recorded node
+loss, leader failover, or bounded network-interruption scenario. Create the
+start gate once the fault is active; the test then publishes throughout the
+bounded fault window. Create the complete gate only after the intended recovery
+condition is observable.
+
+```sh
+task_cache_root=$(mktemp -d /tmp/go-rabbitmq-queues-cluster.XXXXXX) && trap 'chmod -R u+w "$task_cache_root"; find "$task_cache_root" -depth -delete' EXIT HUP INT TERM && mkdir "$task_cache_root/build" "$task_cache_root/modules" && RABBITMQ_QUEUE_CLUSTER_CONFIG=/secure/path/live-cluster.json GOCACHE="$task_cache_root/build" GOMODCACHE="$task_cache_root/modules" go test -v -tags=livebroker -run '^TestLiveBrokerThreeNodeInterruption$' -count=1 .
+```
+
+The test requires every confirmed publication to arrive, permits deliveries
+only for confirmed or explicitly ambiguous attempts, rejects returned or
+broker-rejected outcomes on the bound route, and emits countable confirmed,
+ambiguous, not-sent, delivered, and duplicate totals. A passing client run must
+be retained with the external fault timeline and broker evidence; the gate file
+alone does not prove that any fault occurred. The external operator owns gate
+removal and broker restoration.
