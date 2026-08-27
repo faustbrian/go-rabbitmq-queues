@@ -14,7 +14,10 @@ Research and initial local policy tests use these immutable inputs as of
 | Go | `go1.27.0` |
 | Initial local OS/architecture | Darwin 27.0.0 arm64 |
 
-The container pin is the intended Linux arm64 broker fixture. Local unit, fuzz,
+The container pin is the intended Linux arm64 broker fixture. The opt-in
+[`livebroker` evidence harness](docs/live-broker-testing.md) exercises an
+externally provisioned TLS broker through the public API without controlling
+broker resources. Local unit, fuzz,
 race, leak, stress, and wrapper benchmark harnesses exercise TLS configuration,
 producer/consumer AMQP client boundaries, manual settlement policy,
 synchronous/asynchronous/batch outcome handling, bounded producer and consumer
@@ -22,9 +25,10 @@ recovery seams, sanitized connection-blocked transitions, bounded health and
 observation seams, broker consumer-cancellation dispatch, passive topology
 equivalence mapping, connection-scoped transient-consumer setup, bounded
 delivery conversion, and lifecycle behavior
-without contacting a broker. No container, live TLS handshake, broker
+without contacting a broker. The harness is not retained broker evidence until
+it is run against the pinned fixture. No container, live TLS handshake, broker
 settlement, cluster, operator, runtime failure, or PHP interoperability claim is
-established by those tests.
+currently established.
 
 See [performance evidence](docs/performance.md) for workload targets, the local
 wrapper benchmark boundary, and the required live three-node profile.

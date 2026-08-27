@@ -13,6 +13,8 @@
 
 ### Added
 
+- Add an opt-in, externally provisioned live-broker evidence harness for TLS,
+  classic/quorum routing, confirms, mandatory returns, and bounded settlement.
 - Reject sub-second publication timestamps that AMQP would silently truncate.
 - Add bounded connection, credential, verified TLS, and recovery policy types.
 - Make configurable message limits reducible only, preserving package-wide

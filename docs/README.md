@@ -12,6 +12,7 @@
 - [Adoption audit](adoption-audit.md)
 - [`go-queue/rabbitmq` migration and rollback](go-queue-migration.md)
 - [Performance](performance.md)
+- [Live broker evidence harness](live-broker-testing.md)
 - [Compatibility policy](../COMPATIBILITY.md)
 
 ## API reference
