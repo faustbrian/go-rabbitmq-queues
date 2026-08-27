@@ -937,12 +937,35 @@ if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
         cat "${test_log}"
         exit 1
     fi
-    for index in $(seq 1 4); do
-        queue_name="go-rabbitmq-queues.performance.quorum.${index}"
-        queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/${queue_name}")"
-        jq -e '.state == "running" and .messages == 0' <<<"${queue_json}" >/dev/null
+    management_backlog_drained=false
+    for _ in $(seq 1 180); do
+        backlog_depths=()
+        management_backlog_drained=true
+        for index in $(seq 1 4); do
+            queue_name="go-rabbitmq-queues.performance.quorum.${index}"
+            if ! queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/${queue_name}" 2>/dev/null)" ||
+                ! queue_depth="$(jq -er '.messages' <<<"${queue_json}")" ||
+                ! jq -e '.state == "running"' <<<"${queue_json}" >/dev/null; then
+                management_backlog_drained=false
+                break
+            fi
+            backlog_depths+=("${queue_depth}")
+            if ((queue_depth != 0)); then
+                management_backlog_drained=false
+            fi
+        done
+        if [[ "${management_backlog_drained}" == true ]]; then
+            break
+        fi
+        sleep 1
     done
-    printf 'BACKLOG_SNAPSHOT scenario=%s phase=after-drain total=0 queues=0,0,0,0\n' "${fault_scenario}"
+    if [[ "${management_backlog_drained}" != true ]]; then
+        printf '%s\n' 'management backlog depth did not converge to zero after application drain' >&2
+        cat "${test_log}"
+        exit 1
+    fi
+    printf 'BACKLOG_SNAPSHOT scenario=%s phase=after-drain total=0 queues=%s\n' \
+        "${fault_scenario}" "$(IFS=,; printf '%s' "${backlog_depths[*]}")"
 
     docker start "${fault_container}" >/dev/null
     for _ in $(seq 1 120); do
