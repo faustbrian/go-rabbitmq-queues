@@ -422,6 +422,71 @@ func TestConsumerDrainClosesGenerationWhenAdmittedSettlementFails(t *testing.T) 
 	}
 }
 
+func TestConsumerDrainClosesGenerationWithDelegatedDelivery(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	handled := make(chan struct{})
+	resource := &countingCloser{}
+	consumer, err := newConsumerFromChannel(
+		t.Context(),
+		testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) {
+			defer close(handled)
+			return Delegate(), nil
+		},
+		channel,
+		resource,
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { _ = consumer.Close(t.Context()) })
+	channel.deliveries <- testAMQPDelivery(54)
+	<-handled
+	if err := consumer.Drain(t.Context()); err != nil {
+		t.Fatalf("Drain(): %v", err)
+	}
+	select {
+	case settled := <-channel.settled:
+		t.Fatalf("delegated delivery was settled: %#v", settled)
+	default:
+	}
+	if resource.calls != 1 || channel.closeCount() != 1 {
+		t.Fatalf("delegated drain cleanup = resource %d channel %d, want one each", resource.calls, channel.closeCount())
+	}
+}
+
+func TestConsumerDrainReportsDelegatedGenerationCloseFailure(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	handled := make(chan struct{})
+	resource := &countingCloser{err: errors.New("lost connection close")}
+	consumer, err := newConsumerFromChannel(
+		t.Context(),
+		testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) {
+			defer close(handled)
+			return Delegate(), nil
+		},
+		channel,
+		resource,
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { _ = consumer.Close(t.Context()) })
+	channel.deliveries <- testAMQPDelivery(55)
+	<-handled
+	if err := consumer.Drain(t.Context()); !errors.Is(err, ErrConsumerUnavailable) {
+		t.Fatalf("Drain() error = %v, want %v", err, ErrConsumerUnavailable)
+	}
+	if resource.calls != 1 || channel.closeCount() != 1 {
+		t.Fatalf("failed delegated cleanup = resource %d channel %d, want one each", resource.calls, channel.closeCount())
+	}
+}
+
 func TestConsumerPauseAndResumeTemporarilyStopsHandlerAdmission(t *testing.T) {
 	t.Parallel()
 

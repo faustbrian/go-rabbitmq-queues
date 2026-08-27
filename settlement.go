@@ -11,7 +11,8 @@ const (
 )
 
 // Settlement is a handler's explicit request for one delivery. Delegate leaves
-// the delivery unsettled until the consumer closes or its connection is lost.
+// the delivery unsettled until the consumer drains, closes, or loses its
+// connection.
 type Settlement struct {
 	Method  SettlementMethod
 	Requeue bool

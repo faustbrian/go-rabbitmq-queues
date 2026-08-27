@@ -91,7 +91,8 @@ internal transfer.
   successful drain leaves the healthy owned connection open; expiration of the
   bounded drain closes it so RabbitMQ can redeliver unsettled work. A failed
   settlement also closes the generation for redelivery and makes the drain
-  unavailable instead of reporting success.
+  unavailable instead of reporting success. Delegated settlement closes the
+  generation during drain because its connection lifecycle owns redelivery.
 - Connection loss can redeliver a message while its earlier handler invocation
   is still completing. Applications must tolerate concurrent duplicates.
 - Manual settlement provides at-least-once processing; applications remain

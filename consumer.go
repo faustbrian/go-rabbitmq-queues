@@ -40,6 +40,7 @@ type consumerGeneration struct {
 	closed        atomic.Bool
 	cancelOnce    sync.Once
 	cancelErr     error
+	delegated     atomic.Bool
 }
 
 type consumerEnvelope struct {
@@ -312,9 +313,10 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 	}
 	close(consumer.jobs)
 	workers.Wait()
-	if consumer.drainError() != nil {
+	generation = consumer.currentGeneration()
+	if consumer.drainError() != nil || generation.delegated.Load() {
 		consumer.setResourceError(consumer.closeGeneration(
-			consumer.currentGeneration(), time.Now().Add(consumer.config.HandlerTimeout),
+			generation, time.Now().Add(consumer.config.HandlerTimeout),
 		))
 	}
 	consumer.stateMu.Lock()
@@ -453,6 +455,7 @@ func (consumer *Consumer) handle(envelope consumerEnvelope) {
 		requested = consumer.config.Failure
 	}
 	if requested.Method == SettlementDelegate {
+		envelope.generation.delegated.Store(true)
 		return
 	}
 	requested = boundedSettlement(envelope.delivery, requested, consumer.config)
@@ -574,7 +577,10 @@ func (consumer *Consumer) setResourceError(err error) {
 func (consumer *Consumer) drainError() error {
 	consumer.stateMu.Lock()
 	defer consumer.stateMu.Unlock()
-	return consumer.drainErr
+	if consumer.drainErr != nil || consumer.resourceErr != nil {
+		return ErrConsumerUnavailable
+	}
+	return nil
 }
 
 func (consumer *Consumer) currentGeneration() *consumerGeneration {
@@ -640,8 +646,8 @@ func (consumer *Consumer) signalAdmissionChanged() {
 }
 
 // Drain cancels broker intake and waits for every delivery already received
-// from the broker without closing the healthy owned connection. A drain
-// deadline forces the connection closed.
+// from the broker. It leaves the healthy owned connection open after complete
+// settlement; delegated work or a drain deadline closes the connection.
 func (consumer *Consumer) Drain(ctx context.Context) error {
 	if ctx == nil {
 		return ErrContextRequired
