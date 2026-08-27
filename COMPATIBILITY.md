@@ -68,6 +68,14 @@ readiness stayed not ready and dependency health stayed recovering. After
 recovery, the ledger accounted for all 34 attempts as 24 confirmed and
 delivered plus 10 not-sent, with zero rejected, ambiguous, or duplicate
 outcomes.
+The retained replicated-performance matrix runs four three-member quorum queues
+over verified TLS at the 1M, 10M, and 100M messages-per-day targets while
+stopping the current leader. Retained run `33063180768` met the steady-rate gate
+in 3/3, 3/3, and 2/3 samples respectively, confirmed and delivered every
+leader-loss publication, recovered queue leaders in 47 to 64 milliseconds,
+drained the application backlog in 502 milliseconds to 8.561 seconds, and
+reported zero management backlog after drain. This is CI-hosted replicated
+failure evidence, not application or production capacity evidence.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,
@@ -95,7 +103,10 @@ Retained CI evidence:
   at commit `a9b0be10a291c92bc179e8073530e3f53c4a131c`;
 - three-node RabbitMQ 4.3.4 to 4.3.5 rolling upgrade:
   [run 33055826884](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33055826884)
-  at commit `6a8e5b4728e34dbd1c61e28dca2d2e756b47bcc9`.
+  at commit `6a8e5b4728e34dbd1c61e28dca2d2e756b47bcc9`;
+- three-node replicated performance under quorum leader loss:
+  [run 33063180768](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33063180768)
+  at commit `22ef3cda679874abe978d878b57d5ec54c9a32b9`.
 
 ## Authoritative sources
 

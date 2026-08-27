@@ -128,8 +128,25 @@ queues, 64 publisher workers, 16 consumer workers, payload shapes of 256,
 1,024, and 4,096 bytes, header shapes of 0, 64, and 512 bytes, a 5-second
 warmup, three 30-second steady samples, and three 5-second 4x burst samples.
 
-This is CI-runner capacity evidence, not production capacity evidence. The
-hosted runner does not pin broker CPU, memory, or storage class, the quorum
-queues had one member, and no node fault occurred. Three-node replication,
-leader loss, backlog recovery under failure, storage saturation, application
-handlers, and deployment-specific capacity remain unverified.
+GitHub Actions [run 33063180768](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33063180768)
+at commit `22ef3cda679874abe978d878b57d5ec54c9a32b9` retained the
+three-node quorum leader-loss matrix below. Each isolated job used four
+three-member quorum queues over verified TLS and three RabbitMQ 4.3.5 nodes,
+each limited to one CPU and 2 GiB memory on the `overlay2` storage driver. A
+strict majority of steady samples met the daily target. During leader loss,
+every publication was confirmed and delivered, with zero rejected, ambiguous,
+not-sent, duplicate, invalid, or error outcomes. The management API reported
+all four queues at zero depth after the application drain.
+
+| Daily volume | Steady samples/second (min/median/max; target hits) | Leader-loss messages | Leader-loss achieved/second | Leader recovery | Backlog drain | Redelivered |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1M | 11.68 / 11.70 / 11.70; 3/3 | 234 | 32.26 | 47 ms | 502 ms | 117 |
+| 10M | 116.92 / 116.92 / 116.93; 3/3 | 2,338 | 247.50 | 64 ms | 1.317 s | 256 |
+| 100M | 1,124.41 / 1,165.86 / 1,168.10; 2/3 | 23,380 | 1,606.34 | 52 ms | 8.561 s | 256 |
+
+This is CI-runner capacity and failure-recovery evidence, not production
+capacity evidence. The hosted runner constrains container CPU and memory but
+does not represent deployment storage, network contention, application
+handlers, traffic shape, or production topology. Storage saturation,
+application integration, deployment-specific capacity, and production behavior
+remain unverified.

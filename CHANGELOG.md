@@ -12,6 +12,8 @@
   requirements, evidence limitations, and application adoption gates.
 - Record retained CI evidence for a 91-second complete three-node RabbitMQ
   outage, sustained client health, recovery, and message reconciliation.
+- Record retained CI evidence for the 1M, 10M, and 100M messages-per-day
+  three-node quorum profiles under leader loss.
 
 ### Added
 
