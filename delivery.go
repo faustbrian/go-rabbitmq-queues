@@ -45,19 +45,25 @@ type QueueReference struct {
 
 // Validate rejects missing queue identities and unsupported queue types.
 func (reference QueueReference) Validate() error {
+	return reference.validate(DefaultLimits())
+}
+
+func (reference QueueReference) validate(limits Limits) error {
 	if reference.Transient != nil {
 		if reference.Name != "" || reference.Type != QueueClassic || reference.SingleActiveConsumer ||
 			reference.Transient.Exchange.Validate() != nil ||
-			!validExchangeBinding(
+			invalidIdentity(reference.Transient.Exchange.Name, limits.MaxNameBytes) ||
+			!validExchangeBindingWithLimits(
 				reference.Transient.Exchange.Kind,
 				reference.Transient.RoutingKey,
 				reference.Transient.Arguments,
+				limits,
 			) {
 			return ErrInvalidConsumer
 		}
 		return nil
 	}
-	if invalidIdentity(reference.Name, 255) {
+	if invalidIdentity(reference.Name, limits.MaxNameBytes) {
 		return ErrInvalidConsumer
 	}
 	switch reference.Type {
@@ -90,13 +96,8 @@ type ConsumerConfig struct {
 
 // Validate rejects unbounded consumption and unsafe automatic failure outcomes.
 func (config ConsumerConfig) Validate() error {
-	if !config.Limits.valid() || config.Queue.Validate() != nil || invalidIdentity(config.Name, 255) ||
-		(config.Queue.Transient != nil && !validExchangeBindingWithLimits(
-			config.Queue.Transient.Exchange.Kind,
-			config.Queue.Transient.RoutingKey,
-			config.Queue.Transient.Arguments,
-			config.Limits,
-		)) ||
+	if !config.Limits.valid() || config.Queue.validate(config.Limits) != nil ||
+		invalidIdentity(config.Name, config.Limits.MaxNameBytes) ||
 		(config.Exclusive && (config.Queue.Type != QueueClassic || config.Queue.SingleActiveConsumer)) ||
 		config.Prefetch < 1 || config.Prefetch > MaxConsumerPrefetch ||
 		config.Concurrency < 1 || config.Concurrency > MaxConsumerConcurrency ||

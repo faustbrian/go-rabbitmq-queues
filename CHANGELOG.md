@@ -17,6 +17,8 @@
 - Add bounded connection, credential, verified TLS, and recovery policy types.
 - Make configurable message limits reducible only, preserving package-wide
   allocation caps and AMQP short-string bounds.
+- Apply reduced name limits to consumer, queue, and transient-exchange
+  identities before broker intake begins.
 - Add explicit classic/quorum queue and passive/development topology policy.
 - Add bounded declaration-equivalent queue TTL, expiry, length, overflow, and
   dead-letter policy with explicit RabbitMQ 4.3 queue-type restrictions.

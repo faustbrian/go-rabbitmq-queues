@@ -46,6 +46,9 @@ internal transfer.
   another worker.
 - Batches validate every item before publishing, preserve input order, and
   report independent per-item outcomes; they are not atomic broker operations.
+- Reduced message-name limits also constrain consumer-owned consumer, queue,
+  and transient-exchange identities, preventing a valid configuration from
+  rejecting every delivery when RabbitMQ echoes those identities.
 - The producer makes in-flight work ambiguous on connection loss, rejects new
   work while recovering, then rebuilds a fresh confirm generation with bounded
   endpoint rotation and refreshed credentials. Exhausted recovery is terminal.

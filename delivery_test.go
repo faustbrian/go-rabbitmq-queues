@@ -51,6 +51,41 @@ func TestConsumerConfigRequiresBoundedQueueAndFailurePolicy(t *testing.T) {
 	}
 }
 
+func TestConsumerConfigAppliesReducedNameLimitToOwnedIdentities(t *testing.T) {
+	t.Parallel()
+
+	valid := testConsumerConfig()
+	valid.Limits.MaxNameBytes = 5
+	valid.Queue.Name = "jobs"
+	valid.Name = "work"
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid reduced-name config: %v", err)
+	}
+
+	tests := map[string]func(*ConsumerConfig){
+		"consumer": func(config *ConsumerConfig) { config.Name = "worker" },
+		"queue":    func(config *ConsumerConfig) { config.Queue.Name = "orders" },
+		"transient exchange": func(config *ConsumerConfig) {
+			config.Queue = QueueReference{
+				Type: QueueClassic,
+				Transient: &TransientQueue{
+					Exchange: Exchange{Name: "events", Kind: ExchangeDirect, Durable: true},
+				},
+			}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			config := valid
+			mutate(&config)
+			if err := config.Validate(); !errors.Is(err, ErrInvalidConsumer) {
+				t.Fatalf("Validate() error = %v, want %v", err, ErrInvalidConsumer)
+			}
+		})
+	}
+}
+
 func TestConsumerConfigModelsQueueSpecificPriorityAndExclusivity(t *testing.T) {
 	t.Parallel()
 
