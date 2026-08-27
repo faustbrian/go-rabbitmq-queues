@@ -56,6 +56,10 @@ func boundedSettlement(delivery Delivery, requested Settlement, config ConsumerC
 	if config.MaxRequeues == 0 {
 		return requested
 	}
+	if config.Queue.Type == QueueQuorum && delivery.AcquiredCount != nil {
+		requested.Requeue = *delivery.AcquiredCount < uint64(config.MaxRequeues)
+		return requested
+	}
 	if requested.Method == SettlementNegativeAcknowledge && delivery.Redelivered {
 		return requested
 	}

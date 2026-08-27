@@ -73,7 +73,8 @@ func (reference QueueReference) Validate() error {
 // including zero. Exclusive requests classic-queue exclusivity and cannot be
 // combined with single-active-consumer topology. HandlerTimeout also bounds
 // settlement and supplies the shutdown fallback; handlers must observe their
-// context for graceful draining.
+// context for graceful draining. MaxRequeues uses RabbitMQ 4.3's quorum
+// acquired count when available and otherwise permits at most one redelivery.
 type ConsumerConfig struct {
 	Limits         Limits
 	Queue          QueueReference

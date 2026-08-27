@@ -42,7 +42,8 @@ Important RabbitMQ 4.3 distinctions:
 - quorum `reject-publish-dlx` overflow is unsupported and `reject-publish` may
   overshoot a length limit by in-flight messages;
 - requeue loops remain an application/client-policy risk even where a quorum
-  delivery limit exists;
+  delivery limit exists. The package uses `x-acquired-count` to apply
+  `MaxRequeues` to quorum returns even when `x-delivery-count` is unchanged;
 - `Queue.DeliveryLimit` distinguishes omission from an explicit zero. Omission
   leaves the RabbitMQ policy or 4.3 default of 20 effective; zero makes the
   first failed redelivery exceed the limit. The package intentionally cannot

@@ -344,6 +344,11 @@ func TestSettlementPolicyPreventsUnboundedRequeue(t *testing.T) {
 		{name: "redelivered classic nack", queueType: QueueClassic, delivery: Delivery{Redelivered: true}, requested: NegativeAcknowledge(true)},
 		{name: "quorum below limit", queueType: QueueQuorum, delivery: deliveryWithCount(1), requested: Reject(true), requeue: true},
 		{name: "quorum at limit", queueType: QueueQuorum, delivery: deliveryWithCount(2), requested: Reject(true)},
+		{name: "first quorum acquisition", queueType: QueueQuorum, delivery: deliveryWithAcquiredCount(0), requested: NegativeAcknowledge(true), requeue: true},
+		{name: "quorum nack below acquired limit", queueType: QueueQuorum, delivery: deliveryWithAcquiredCount(1), requested: NegativeAcknowledge(true), requeue: true},
+		{name: "quorum nack at acquired limit", queueType: QueueQuorum, delivery: deliveryWithAcquiredCount(2), requested: NegativeAcknowledge(true)},
+		{name: "quorum reject below acquired limit", queueType: QueueQuorum, delivery: deliveryWithCounts(1, 0), requested: Reject(true), requeue: true},
+		{name: "quorum reject at acquired limit", queueType: QueueQuorum, delivery: deliveryWithCounts(2, 0), requested: Reject(true)},
 		{name: "quorum nack redelivery", queueType: QueueQuorum, delivery: Delivery{Redelivered: true}, requested: NegativeAcknowledge(true)},
 		{name: "no configured requeue", queueType: QueueClassic, requested: Reject(true)},
 	}
@@ -366,6 +371,16 @@ func TestSettlementPolicyPreventsUnboundedRequeue(t *testing.T) {
 
 func deliveryWithCount(count uint64) Delivery {
 	return Delivery{Redelivered: true, DeliveryCount: &count}
+}
+
+func deliveryWithAcquiredCount(count uint64) Delivery {
+	return Delivery{Redelivered: count > 0, AcquiredCount: &count}
+}
+
+func deliveryWithCounts(acquired, failed uint64) Delivery {
+	return Delivery{
+		Redelivered: acquired > 0, AcquiredCount: &acquired, DeliveryCount: &failed,
+	}
 }
 
 func testConsumerConfig() ConsumerConfig {

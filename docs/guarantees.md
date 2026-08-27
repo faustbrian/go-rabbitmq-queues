@@ -77,7 +77,10 @@ internal transfer.
 - Deliveries preserve RabbitMQ 4.3's bounded `x-acquired-count` and
   `x-delivery-count` as separate optional unsigned counters. Assignment to a
   consumer does not prove that the handler observed the message, and only the
-  failed-delivery counter participates in the quorum delivery limit.
+  failed-delivery counter participates in the quorum delivery limit. The
+  package applies `MaxRequeues` to the acquired count when available, so returns
+  caused by NACK, reject, or connection loss all consume the local retry bound.
+  Without that quorum counter, the fallback permits at most one redelivery.
 - Publications and deliveries preserve bounded `reply-to` and correlation
   metadata for application-owned request/reply flows. The package does not own
   reply queues or provide an RPC lifecycle abstraction.
