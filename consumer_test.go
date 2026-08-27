@@ -51,6 +51,45 @@ func TestConsumerConfiguresManualQOSAndAcknowledgesAfterHandler(t *testing.T) {
 	}
 }
 
+func TestConsumerAcknowledgesFanoutDeliveryWithEmptyRoutingKey(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	handled := make(chan Delivery, 1)
+	consumer, err := newConsumerFromChannel(
+		t.Context(), testConsumerConfig(),
+		func(_ context.Context, delivery Delivery) (Settlement, error) {
+			handled <- delivery
+			return Acknowledge(), nil
+		},
+		channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+
+	delivery := testAMQPDelivery(2)
+	delivery.RoutingKey = ""
+	delivery.Headers = amqp.Table{
+		deathHeader: []any{amqp.Table{
+			"count": int64(1), "reason": "rejected", "queue": "events",
+			"exchange": "events", "routing-keys": []any{""},
+			"time": time.Unix(100, 0),
+		}},
+	}
+	channel.deliveries <- delivery
+
+	settled := <-channel.settled
+	if settled.method != SettlementAcknowledge || settled.tag != 2 {
+		t.Fatalf("settlement = %#v, want ACK for fanout delivery", settled)
+	}
+	if received := <-handled; received.RoutingKey != "" || len(received.Deaths) != 1 ||
+		len(received.Deaths[0].RoutingKeys) != 1 || received.Deaths[0].RoutingKeys[0] != "" {
+		t.Fatalf("handler delivery = %#v, want native empty current and dead-letter routing keys", received)
+	}
+}
+
 func TestConsumerMapsSignedPriorityAndClassicExclusivity(t *testing.T) {
 	t.Parallel()
 

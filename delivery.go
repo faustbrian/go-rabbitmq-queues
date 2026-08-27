@@ -164,7 +164,7 @@ type Delivery struct {
 func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, error) {
 	if err := config.Validate(); err != nil || source.DeliveryTag == 0 ||
 		invalidIdentity(source.ConsumerTag, config.Limits.MaxNameBytes) ||
-		source.RoutingKey == "" || len(source.RoutingKey) > config.Limits.MaxRoutingKeyBytes ||
+		len(source.RoutingKey) > config.Limits.MaxRoutingKeyBytes ||
 		containsControl(source.RoutingKey) || len(source.Exchange) > config.Limits.MaxNameBytes ||
 		containsControl(source.Exchange) || len(source.Body) > config.Limits.MaxPayloadBytes {
 		return Delivery{}, ErrInvalidDelivery
@@ -352,7 +352,7 @@ func deliveryDeath(fields amqp.Table, limits Limits) (Death, int, error) {
 	metadataBytes := 16 + len(reason) + len(queue) + len(exchange)
 	for _, value := range routingValues {
 		routingKey, ok := value.(string)
-		if !ok || routingKey == "" || len(routingKey) > limits.MaxRoutingKeyBytes || containsControl(routingKey) {
+		if !ok || len(routingKey) > limits.MaxRoutingKeyBytes || containsControl(routingKey) {
 			return Death{}, 0, ErrInvalidDelivery
 		}
 		metadataBytes += len(routingKey)
