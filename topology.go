@@ -115,7 +115,7 @@ type QueueDelayedRetry struct {
 // A nil DeliveryLimit preserves the broker policy or default; a pointer emits
 // an explicit bounded value, including zero.
 // ConsumerTimeout is RabbitMQ 4.3's quorum-only delivery-acknowledgement
-// timeout and must be at least one minute with millisecond precision.
+// timeout and accepts non-negative values with millisecond precision.
 // DisconnectedConsumerTimeout is RabbitMQ 4.3's quorum-only wait before held
 // deliveries are returned after a consumer node becomes unreachable.
 // DelayedRetry is RabbitMQ 4.3's quorum-only linear-backoff policy.
@@ -211,7 +211,7 @@ func validQueueDuration(value *time.Duration, allowZero bool) bool {
 }
 
 func validConsumerTimeout(value *time.Duration) bool {
-	return value == nil || (*value >= time.Minute && *value%time.Millisecond == 0)
+	return validQueueDuration(value, true)
 }
 
 func validDelayedRetry(value *QueueDelayedRetry) bool {

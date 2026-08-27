@@ -71,9 +71,9 @@ Important RabbitMQ 4.3 distinctions:
   zero is emitted as a signed `x-priority` argument; positive and negative
   priorities are supported on classic and quorum queues;
 - per-queue delivery-acknowledgement timeout is quorum-only in 4.3;
-  `ConsumerTimeout` emits `x-consumer-timeout`, accepts the broker minimum of
-  one minute at millisecond precision, and remains distinct from the package's
-  handler deadline;
+  `ConsumerTimeout` emits `x-consumer-timeout`, accepts non-negative values at
+  millisecond precision, and remains distinct from the package's handler
+  deadline;
 - disconnected-consumer timeout is quorum-only in 4.3.
   `DisconnectedConsumerTimeout` emits `x-consumer-disconnected-timeout` and
   bounds how long the broker waits before returning deliveries held by a
@@ -147,8 +147,8 @@ Queue-type validation preserves the RabbitMQ 4.3 distinctions:
   `reject-publish-dlx`;
 - quorum delivery limit is optional, accepts bounded unsigned values including
   zero, and is rejected for classic queues;
-- quorum consumer timeout is optional, must be at least one minute, and is
-  rejected for classic queues;
+- quorum consumer timeout is optional, accepts non-negative millisecond values,
+  and is rejected for classic queues;
 - quorum disconnected-consumer timeout is optional, accepts non-negative
   millisecond values, and is rejected for classic queues;
 - quorum delayed retry is optional, requires a positive millisecond minimum

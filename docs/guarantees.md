@@ -129,11 +129,12 @@ internal transfer.
   `basic.nack` returns do not increment `x-delivery-count`, so applications
   still need the package's bounded requeue policy.
 - `Queue.ConsumerTimeout` models RabbitMQ 4.3's quorum-only broker deadline for
-  delivery acknowledgement. It is omitted by default, must be at least one
-  minute, and is independent of `ConsumerConfig.HandlerTimeout`. When the
-  broker deadline expires, RabbitMQ closes the channel and requeues all of its
-  outstanding deliveries; application handler deadlines should finish before
-  the effective broker timeout.
+  delivery acknowledgement. It is omitted by default, accepts non-negative
+  millisecond values, and is independent of `ConsumerConfig.HandlerTimeout`.
+  When the broker deadline expires, RabbitMQ cancels the AMQP 0.9.1 consumer
+  when cancellation notifications are supported, otherwise it closes the
+  channel; outstanding deliveries are returned in either case. Application
+  handler deadlines should finish before the effective broker timeout.
 - `Queue.DisconnectedConsumerTimeout` models how long a RabbitMQ 4.3 quorum
   queue waits before returning deliveries held by a consumer node that becomes
   unreachable. It is omitted by default, preserving the broker's 60-second

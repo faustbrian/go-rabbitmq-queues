@@ -25,7 +25,7 @@
 - Distinguish an omitted quorum delivery limit from explicit bounded values,
   including zero, without exposing RabbitMQ's unlimited compatibility mode.
 - Add quorum-only delivery-acknowledgement timeout policy with RabbitMQ 4.3
-  minimum and declaration-equivalence validation.
+  non-negative millisecond values and declaration-equivalence validation.
 - Add quorum-only disconnected-consumer timeout policy with explicit RabbitMQ
   4.3 partition-recovery bounds and declaration-equivalence validation.
 - Add quorum-only delayed-retry policy with bounded RabbitMQ 4.3 linear-backoff

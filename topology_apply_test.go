@@ -125,7 +125,7 @@ func TestApplyTopologyMapsBoundedQuorumQueuePolicyArguments(t *testing.T) {
 func TestApplyTopologyMapsQuorumConsumerTimeout(t *testing.T) {
 	t.Parallel()
 
-	consumerTimeout := 5 * time.Minute
+	consumerTimeout := time.Duration(0)
 	var captured amqp.Table
 	channel := &fakeTopologyChannel{queuePassive: func(
 		_ string, _, _, _ bool, arguments amqp.Table,
@@ -147,7 +147,7 @@ func TestApplyTopologyMapsQuorumConsumerTimeout(t *testing.T) {
 		t.Fatalf("applyTopologyWith() error = %v", err)
 	}
 	if len(captured) != 2 || captured["x-queue-type"] != "quorum" ||
-		captured["x-consumer-timeout"] != int64(300_000) {
+		captured["x-consumer-timeout"] != int64(0) {
 		t.Fatalf("passive queue arguments = %#v", captured)
 	}
 }

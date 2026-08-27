@@ -215,10 +215,11 @@ func TestQueuePolicyDistinguishesOmittedAndExplicitQuorumDeliveryLimit(t *testin
 func TestQueuePolicyModelsQuorumConsumerTimeout(t *testing.T) {
 	t.Parallel()
 
-	minimum := time.Minute
+	immediate := time.Duration(0)
+	minimum := time.Millisecond
 	recommended := 5 * time.Minute
-	belowMinimum := time.Minute - time.Millisecond
 	subMillisecond := time.Minute + time.Microsecond
+	negative := -time.Millisecond
 
 	tests := map[string]struct {
 		queue Queue
@@ -226,6 +227,12 @@ func TestQueuePolicyModelsQuorumConsumerTimeout(t *testing.T) {
 	}{
 		"omitted quorum timeout": {
 			queue: Queue{Name: "orders", Type: QueueQuorum, Durable: true},
+		},
+		"immediate quorum timeout": {
+			queue: Queue{
+				Name: "orders", Type: QueueQuorum, Durable: true,
+				ConsumerTimeout: &immediate,
+			},
 		},
 		"minimum quorum timeout": {
 			queue: Queue{
@@ -246,10 +253,10 @@ func TestQueuePolicyModelsQuorumConsumerTimeout(t *testing.T) {
 			},
 			want: ErrUnsupportedQueuePolicy,
 		},
-		"timeout below broker minimum": {
+		"negative timeout": {
 			queue: Queue{
 				Name: "orders", Type: QueueQuorum, Durable: true,
-				ConsumerTimeout: &belowMinimum,
+				ConsumerTimeout: &negative,
 			},
 			want: ErrUnsupportedQueuePolicy,
 		},
