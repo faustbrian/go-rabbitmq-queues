@@ -12,15 +12,25 @@ case "${fault_scenario}" in
     classic-node-loss)
         fault_queue_type='classic'
         ;;
-    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm | rolling-upgrade | prolonged-outage)
+    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm | rolling-upgrade | prolonged-outage | quorum-performance-leader-loss)
         fault_queue_type='quorum'
         ;;
     *)
         printf '%s\n' \
-            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, reconnect-storm, rolling-upgrade, or prolonged-outage' >&2
+            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, reconnect-storm, rolling-upgrade, prolonged-outage, or quorum-performance-leader-loss' >&2
         exit 1
         ;;
 esac
+daily_messages="${DAILY_MESSAGES:-0}"
+node_resource_args=()
+if [[ "${fault_scenario}" == quorum-performance-leader-loss ]] &&
+    [[ ! "${daily_messages}" =~ ^(1000000|10000000|100000000)$ ]]; then
+    printf '%s\n' 'quorum-performance-leader-loss requires a supported daily message target' >&2
+    exit 1
+fi
+if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
+    node_resource_args=(--cpus 1 --memory 2g --memory-swap 2g)
+fi
 
 project_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 task_root="$(mktemp -d "${RUNNER_TEMP}/go-rabbitmq-queues-cluster.XXXXXX")"
@@ -162,6 +172,7 @@ run_node_container() {
         --mount "type=bind,source=${task_root}/rabbitmq.conf,target=/etc/rabbitmq/rabbitmq.conf,readonly" \
         --mount "type=bind,source=${task_root}/tls,target=/etc/rabbitmq/tls,readonly" \
         --mount "type=bind,source=${task_root}/${node_name}-data,target=/var/lib/rabbitmq" \
+        "${node_resource_args[@]}" \
         --publish "127.0.0.1:${amqp_ports[${node_name}]}:5671" \
         --publish "127.0.0.1:${management_ports[${node_name}]}:15672" \
         "${node_image}" >/dev/null
@@ -254,8 +265,13 @@ get_json rabbit1 nodes | jq -e '[.[] | select(.running == true)] | length == 3' 
 
 put_json rabbit1 "users/${client_user}" \
     "$(jq -cn --arg password "${client_password}" '{password: $password, tags: ""}')"
+read_permission='^go-rabbitmq-queues\.(classic|quorum)$'
+if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
+    read_permission='^go-rabbitmq-queues\.performance\.quorum\.[1-4]$'
+fi
 put_json rabbit1 "permissions/${encoded_vhost}/${client_user}" \
-    '{"configure":"^$","write":"^go-rabbitmq-queues\\.events$","read":"^go-rabbitmq-queues\\.(classic|quorum)$"}'
+    "$(jq -cn --arg read "${read_permission}" \
+        '{configure: "^$", write: "^go-rabbitmq-queues\\.events$", read: $read}')"
 put_json rabbit1 "exchanges/${encoded_vhost}/go-rabbitmq-queues.events" \
     '{"type":"direct","auto_delete":false,"durable":true,"internal":false,"arguments":{}}'
 put_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.classic" \
@@ -266,6 +282,16 @@ post_json rabbit1 "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-ra
     '{"routing_key":"classic","arguments":{}}'
 post_json rabbit1 "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-queues.quorum" \
     '{"routing_key":"quorum","arguments":{}}'
+if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
+    for index in $(seq 1 4); do
+        queue_name="go-rabbitmq-queues.performance.quorum.${index}"
+        put_json rabbit1 "queues/${encoded_vhost}/${queue_name}" \
+            '{"auto_delete":false,"durable":true,"arguments":{"x-queue-type":"quorum","x-quorum-initial-group-size":3}}'
+        post_json rabbit1 "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/${queue_name}" \
+            "$(jq -cn --arg routing_key "performance.quorum.${index}" \
+                '{routing_key: $routing_key, arguments: {}}')"
+    done
+fi
 
 for _ in $(seq 1 60); do
     if queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")" &&
@@ -276,6 +302,22 @@ for _ in $(seq 1 60); do
 done
 queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
 jq -e '.members | length == 3' <<<"${queue_json}" >/dev/null
+if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
+    for index in $(seq 1 4); do
+        queue_name="go-rabbitmq-queues.performance.quorum.${index}"
+        for _ in $(seq 1 60); do
+            if queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/${queue_name}")" &&
+                jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                    <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/${queue_name}")"
+        jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+            <<<"${queue_json}" >/dev/null
+    done
+fi
 
 for node_name in "${node_names[@]}"; do
     openssl s_client \
@@ -324,6 +366,7 @@ jq -n \
     --arg fault_complete_gate_file "${fault_complete_gate}" \
     --arg fault_queue_type "${fault_queue_type}" \
     --arg fault_scenario "${fault_scenario}" \
+    --argjson daily_messages "${daily_messages}" \
     --argjson fault_cycle_gate_files "${fault_cycle_gate_files_json}" \
     --argjson fault_cycle_complete_gate_files "${fault_cycle_complete_gate_files_json}" \
     --argjson fault_resource_pairs "${reconnect_storm_resource_pairs}" \
@@ -349,11 +392,35 @@ jq -n \
         fault_cycle_gate_files: $fault_cycle_gate_files,
         fault_cycle_complete_gate_files: $fault_cycle_complete_gate_files,
         fault_resource_pairs: (if $fault_scenario == "reconnect-storm" then $fault_resource_pairs else 0 end),
-        fault_window_messages: 64
+        fault_window_messages: 64,
+        performance: (if $fault_scenario == "quorum-performance-leader-loss" then {
+            queue_type: "quorum",
+            queues: [range(1; 5) | {
+                name: "go-rabbitmq-queues.performance.quorum.\(.)",
+                routing_key: "performance.quorum.\(.)"
+            }],
+            daily_messages: $daily_messages,
+            warmup_seconds: 5,
+            sample_seconds: 30,
+            samples: 3,
+            burst_multiplier: 4,
+            burst_seconds: 5,
+            publisher_concurrency: 64,
+            consumer_concurrency: 16,
+            payload_bytes: [256, 1024, 4096],
+            header_bytes: [0, 64, 512],
+            handler_delay_ms: 0
+        } else {} end)
     }' >"${task_root}/live-cluster.json"
 chmod 0600 "${task_root}/live-cluster.json"
 
 test_log="${task_root}/cluster-test.log"
+test_name='TestLiveBrokerThreeNodeInterruption'
+ready_marker='FAULT_WINDOW_READY'
+if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
+    test_name='TestLiveBrokerThreeNodePerformanceLeaderLoss'
+    ready_marker='PERFORMANCE_FAULT_READY'
+fi
 (
     cd "${project_root}"
     GOTOOLCHAIN=local \
@@ -362,13 +429,13 @@ test_log="${task_root}/cluster-test.log"
         GOMODCACHE="${task_root}/go-modules" \
         GOTMPDIR="${task_root}/go-tmp" \
         RABBITMQ_QUEUE_CLUSTER_CONFIG="${task_root}/live-cluster.json" \
-        go test -v -count=1 -tags=livebroker -run '^TestLiveBrokerThreeNodeInterruption$' .
+        go test -v -count=1 -tags=livebroker -run "^${test_name}$" .
 ) >"${test_log}" 2>&1 &
 test_pid=$!
 
 ready=false
 for _ in $(seq 1 120); do
-    if grep -q 'FAULT_WINDOW_READY' "${test_log}"; then
+    if grep -q "${ready_marker}" "${test_log}"; then
         ready=true
         break
     fi
@@ -746,6 +813,170 @@ if [[ "${fault_scenario}" == prolonged-outage ]]; then
     recovered_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
     printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=cluster-restarted leader=%s at=%s\n' \
         "${fault_scenario}" "${fault_queue_type}" "$(jq -er '.leader' <<<"${queue_json}")" "${recovered_at}"
+
+    if wait "${test_pid}"; then
+        test_status=0
+    else
+        test_status=$?
+    fi
+    test_pid=''
+    cat "${test_log}"
+    test "${test_status}" -eq 0
+    exit
+fi
+
+if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
+    backlog_ready=false
+    for _ in $(seq 1 30); do
+        backlog_total=0
+        backlog_depths=()
+        backlog_ready=true
+        for index in $(seq 1 4); do
+            queue_name="go-rabbitmq-queues.performance.quorum.${index}"
+            queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/${queue_name}")"
+            queue_depth="$(jq -er '.messages' <<<"${queue_json}")"
+            backlog_depths+=("${queue_depth}")
+            backlog_total="$((backlog_total + queue_depth))"
+            if ((queue_depth <= 0)); then
+                backlog_ready=false
+            fi
+        done
+        if [[ "${backlog_ready}" == true ]]; then
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${backlog_ready}" != true ]]; then
+        printf '%s\n' 'all four performance queues did not contain a backlog before leader loss' >&2
+        cat "${test_log}"
+        exit 1
+    fi
+    printf 'BACKLOG_SNAPSHOT scenario=%s phase=before-fault total=%d queues=%s\n' \
+        "${fault_scenario}" "${backlog_total}" "$(IFS=,; printf '%s' "${backlog_depths[*]}")"
+    storage_driver="$(docker info --format '{{.Driver}}')"
+    cpu_limit="$(docker inspect --format '{{.HostConfig.NanoCpus}}' "${container_names[0]}")"
+    memory_limit="$(docker inspect --format '{{.HostConfig.Memory}}' "${container_names[0]}")"
+    printf 'PERFORMANCE_ENVIRONMENT scenario=%s rabbitmq=%s image=%s daily_messages=%d queues=4 replicas=3 tls=true cpu_limit_nanocpus=%s memory_limit_bytes=%s storage_driver=%s\n' \
+        "${fault_scenario}" "${image_version}" "${image}" "${daily_messages}" \
+        "${cpu_limit}" "${memory_limit}" "${storage_driver}"
+
+    queue_json="$(get_json rabbit1 "queues/${encoded_vhost}/go-rabbitmq-queues.performance.quorum.1")"
+    fault_member="$(jq -er '.leader' <<<"${queue_json}")"
+    fault_node="${fault_member#rabbit@}"
+    fault_index=-1
+    observer_node=''
+    for index in "${!node_names[@]}"; do
+        if [[ "${node_names[${index}]}" == "${fault_node}" ]]; then
+            fault_index="${index}"
+        else
+            observer_node="${node_names[${index}]}"
+        fi
+    done
+    if ((fault_index < 0)) || [[ -z "${observer_node}" ]]; then
+        printf 'unable to map performance leader %s to a cluster container\n' "${fault_member}" >&2
+        exit 1
+    fi
+    fault_container="${container_names[${fault_index}]}"
+    docker stop --time 10 "${fault_container}" >/dev/null
+    fault_started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    fault_started_ms="$(date -u +%s%3N)"
+    : >"${fault_start_gate}"
+    printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=node-stopped node=%s at=%s\n' \
+        "${fault_scenario}" "${fault_queue_type}" "${fault_member}" "${fault_started_at}"
+
+    recovered=false
+    for _ in $(seq 1 120); do
+        recovered=true
+        if ! get_json "${observer_node}" nodes |
+            jq -e '[.[] | select(.running == true)] | length == 2' >/dev/null; then
+            recovered=false
+        fi
+        for index in $(seq 1 4); do
+            queue_name="go-rabbitmq-queues.performance.quorum.${index}"
+            if ! queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/${queue_name}" 2>/dev/null)" ||
+                ! jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                    <<<"${queue_json}" >/dev/null; then
+                recovered=false
+                break
+            fi
+            if [[ "${index}" == 1 ]] && [[ "$(jq -er '.leader' <<<"${queue_json}")" == "${fault_member}" ]]; then
+                recovered=false
+                break
+            fi
+        done
+        if [[ "${recovered}" == true ]]; then
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${recovered}" != true ]]; then
+        printf '%s\n' 'four-queue quorum topology did not recover after leader loss' >&2
+        cat "${test_log}"
+        exit 1
+    fi
+    recovered_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    recovered_ms="$(date -u +%s%3N)"
+    recovery_duration_ms="$((recovered_ms - fault_started_ms))"
+    : >"${fault_complete_gate}"
+    printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=leaders-recovered stopped=%s recovery_ms=%d at=%s\n' \
+        "${fault_scenario}" "${fault_queue_type}" "${fault_member}" \
+        "${recovery_duration_ms}" "${recovered_at}"
+
+    backlog_drained=false
+    for _ in $(seq 1 180); do
+        if grep -q 'PERFORMANCE_BACKLOG_DRAINED' "${test_log}"; then
+            backlog_drained=true
+            break
+        fi
+        if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${backlog_drained}" != true ]]; then
+        cat "${test_log}"
+        exit 1
+    fi
+    for index in $(seq 1 4); do
+        queue_name="go-rabbitmq-queues.performance.quorum.${index}"
+        queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/${queue_name}")"
+        jq -e '.state == "running" and .messages == 0' <<<"${queue_json}" >/dev/null
+    done
+    printf 'BACKLOG_SNAPSHOT scenario=%s phase=after-drain total=0 queues=0,0,0,0\n' "${fault_scenario}"
+
+    docker start "${fault_container}" >/dev/null
+    for _ in $(seq 1 120); do
+        if docker exec "${fault_container}" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    docker exec "${fault_container}" rabbitmq-diagnostics -q ping >/dev/null
+    for _ in $(seq 1 120); do
+        if get_json "${observer_node}" nodes |
+            jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    get_json "${observer_node}" nodes |
+        jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null
+    for index in $(seq 1 4); do
+        queue_name="go-rabbitmq-queues.performance.quorum.${index}"
+        for _ in $(seq 1 120); do
+            if queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/${queue_name}" 2>/dev/null)" &&
+                jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                    <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json "${observer_node}" "queues/${encoded_vhost}/${queue_name}")"
+        jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+            <<<"${queue_json}" >/dev/null
+    done
+    printf 'FAULT_TIMELINE scenario=%s queue_type=%s event=node-restored node=%s members=3\n' \
+        "${fault_scenario}" "${fault_queue_type}" "${fault_member}"
 
     if wait "${test_pid}"; then
         test_status=0

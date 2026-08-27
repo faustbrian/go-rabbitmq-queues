@@ -44,6 +44,7 @@ const (
 	liveFaultReconnectStorm         liveFaultScenario = "reconnect-storm"
 	liveFaultRollingUpgrade         liveFaultScenario = "rolling-upgrade"
 	liveFaultProlongedOutage        liveFaultScenario = "prolonged-outage"
+	liveFaultQuorumPerformanceLoss  liveFaultScenario = "quorum-performance-leader-loss"
 )
 
 type liveClusterLedger struct {
@@ -118,6 +119,43 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 	prolongedOutage.FaultScenario = liveFaultProlongedOutage
 	if err := validateLiveClusterFixture(prolongedOutage); err != nil {
 		t.Fatalf("valid prolonged-outage fixture: %v", err)
+	}
+	performanceLeaderLoss := prolongedOutage
+	performanceLeaderLoss.FaultScenario = liveFaultQuorumPerformanceLoss
+	performanceLeaderLoss.Performance = livePerformanceFixture{
+		QueueType: rabbitmqqueue.QueueQuorum,
+		Queues: []liveQueue{
+			{Name: "performance.one", RoutingKey: "performance.one"},
+			{Name: "performance.two", RoutingKey: "performance.two"},
+			{Name: "performance.three", RoutingKey: "performance.three"},
+			{Name: "performance.four", RoutingKey: "performance.four"},
+		},
+		DailyMessages: 100_000_000, WarmupSeconds: 5, SampleSeconds: 30, Samples: 3,
+		BurstMultiplier: 4, BurstSeconds: 5, PublisherConcurrency: 64,
+		ConsumerConcurrency: 16, PayloadBytes: []int{256, 1024, 4096},
+		HeaderBytes: []int{0, 64, 512},
+	}
+	if err := validateLiveClusterFixture(performanceLeaderLoss); err != nil {
+		t.Fatalf("valid quorum performance leader-loss fixture: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*liveBrokerFixture)
+	}{
+		{name: "missing performance profile", mutate: func(value *liveBrokerFixture) {
+			value.Performance = livePerformanceFixture{}
+		}},
+		{name: "classic performance queues", mutate: func(value *liveBrokerFixture) {
+			value.Performance.QueueType = rabbitmqqueue.QueueClassic
+		}},
+	} {
+		t.Run("invalid quorum performance leader loss/"+test.name, func(t *testing.T) {
+			fixture := performanceLeaderLoss
+			test.mutate(&fixture)
+			if err := validateLiveClusterFixture(fixture); err == nil {
+				t.Fatal("invalid quorum performance leader-loss fixture was accepted")
+			}
+		})
 	}
 
 	rollingUpgrade := valid
@@ -315,11 +353,16 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 			return errInvalidLiveCluster
 		}
 	case liveFaultQuorumLeaderLoss, liveFaultQuorumNetworkPartition, liveFaultClusterRestart,
-		liveFaultReconnectStorm, liveFaultRollingUpgrade, liveFaultProlongedOutage:
+		liveFaultReconnectStorm, liveFaultRollingUpgrade, liveFaultProlongedOutage,
+		liveFaultQuorumPerformanceLoss:
 		if fixture.FaultQueueType != rabbitmqqueue.QueueQuorum {
 			return errInvalidLiveCluster
 		}
 	default:
+		return errInvalidLiveCluster
+	}
+	if fixture.FaultScenario == liveFaultQuorumPerformanceLoss &&
+		(fixture.Performance.QueueType != rabbitmqqueue.QueueQuorum || fixture.Performance.Validate() != nil) {
 		return errInvalidLiveCluster
 	}
 	return nil

@@ -34,6 +34,7 @@ type livePerformanceSample struct {
 	Messages    int
 	Elapsed     time.Duration
 	Drain       time.Duration
+	FaultWindow time.Duration
 	Achieved    float64
 	Confirmed   int
 	Rejected    int
@@ -41,6 +42,7 @@ type livePerformanceSample struct {
 	NotSent     int
 	Delivered   int
 	Duplicates  int
+	Redelivered int64
 	Invalid     int64
 }
 
@@ -63,16 +65,18 @@ type livePerformanceJob struct {
 }
 
 type livePerformanceReceiver struct {
-	mu     sync.RWMutex
-	ledger *liveClusterLedger
-	orphan atomic.Int64
+	mu          sync.RWMutex
+	ledger      *liveClusterLedger
+	orphan      atomic.Int64
+	redelivered atomic.Int64
 }
 
 type livePerformanceSession struct {
-	producer *rabbitmqqueue.Producer
-	receiver *livePerformanceReceiver
-	payloads [][]byte
-	headers  [][]byte
+	producer  *rabbitmqqueue.Producer
+	consumers []*rabbitmqqueue.Consumer
+	receiver  *livePerformanceReceiver
+	payloads  [][]byte
+	headers   [][]byte
 }
 
 func TestLivePerformanceFixtureValidation(t *testing.T) {
@@ -200,6 +204,173 @@ func TestLiveBrokerPerformanceProfiles(t *testing.T) {
 	requireLivePerformanceRateProfile(t, performance.QueueType, "burst", burstSamples)
 }
 
+func TestLiveBrokerThreeNodePerformanceLeaderLoss(t *testing.T) {
+	fixture := decodeLiveBrokerFixture(t, liveClusterConfigEnvironment)
+	if err := validateLiveClusterFixture(fixture); err != nil ||
+		fixture.FaultScenario != liveFaultQuorumPerformanceLoss {
+		t.Fatalf("validate three-node performance leader-loss fixture: %v", errInvalidLiveCluster)
+	}
+	for _, gate := range []string{fixture.FaultStartGateFile, fixture.FaultCompleteGateFile} {
+		if faultGateExists(t, gate) {
+			t.Fatal("performance fault gates must not exist before the test starts")
+		}
+	}
+	performance := fixture.Performance
+	connection := fixture.connection(t)
+	connection.Recovery.MaxAttempts = clusterRecoveryAttempts
+	connection.Recovery.MaxDelay = clusterRecoveryMaxDelay
+	verifyLivePerformanceTopology(t, connection, fixture.Exchange, performance)
+	session := openLivePerformanceSession(t, connection, performance)
+	baseRate := float64(performance.DailyMessages) / secondsPerDay
+	t.Logf(
+		"PERFORMANCE_RUN go=%s os=%s arch=%s endpoints=%d queue_type=%s daily_messages=%d samples=%d fault=%s",
+		runtime.Version(), runtime.GOOS, runtime.GOARCH, len(fixture.Endpoints),
+		performance.QueueType, performance.DailyMessages, performance.Samples, fixture.FaultScenario,
+	)
+	runLivePerformanceSample(
+		t, session, fixture.Exchange, performance,
+		livePerformanceSample{Mode: "cluster-warmup", TargetRate: baseRate},
+		performance.WarmupSeconds,
+	)
+	steadySamples := make([]livePerformanceSample, 0, performance.Samples)
+	for sample := 1; sample <= performance.Samples; sample++ {
+		steadySamples = append(steadySamples, runLivePerformanceSample(
+			t, session, fixture.Exchange, performance,
+			livePerformanceSample{Mode: "cluster-steady", Index: sample, TargetRate: baseRate},
+			performance.SampleSeconds,
+		))
+	}
+	requireLivePerformanceRateProfile(t, performance.QueueType, "cluster-steady", steadySamples)
+	runLivePerformanceLeaderLossSample(t, session, fixture, baseRate)
+	t.Log("PERFORMANCE_BACKLOG_DRAINED")
+}
+
+func runLivePerformanceLeaderLossSample(
+	t *testing.T,
+	session *livePerformanceSession,
+	fixture liveBrokerFixture,
+	minimumRate float64,
+) livePerformanceSample {
+	t.Helper()
+	performance := fixture.Performance
+	sample := livePerformanceSample{
+		Mode: "leader-loss", TargetRate: minimumRate * float64(performance.BurstMultiplier),
+	}
+	sample.OfferedRate = sample.TargetRate * performanceOfferHeadroom
+	sample.Messages = int(math.Ceil(sample.OfferedRate * float64(performance.BurstSeconds)))
+	for _, consumer := range session.consumers {
+		if err := consumer.Pause(); err != nil {
+			t.Fatalf("pause performance consumer: %v", err)
+		}
+	}
+	resumed := false
+	defer func() {
+		if !resumed {
+			for _, consumer := range session.consumers {
+				_ = consumer.Resume()
+			}
+		}
+	}()
+	if orphans := session.receiver.orphan.Swap(0); orphans != 0 {
+		t.Fatalf("received %d deliveries outside a measured sample", orphans)
+	}
+	if redelivered := session.receiver.redelivered.Swap(0); redelivered != 0 {
+		t.Fatalf("received %d redeliveries outside a measured sample", redelivered)
+	}
+	ledger := &liveClusterLedger{
+		attempts:   make(map[string]rabbitmqqueue.PublishState, sample.Messages),
+		deliveries: make(map[string]int, sample.Messages), observed: make(chan struct{}, 1),
+	}
+	session.receiver.setLedger(ledger)
+	attached := true
+	defer func() {
+		if attached {
+			session.receiver.setLedger(nil)
+		}
+	}()
+
+	runToken := randomLiveToken(t)
+	ids := make([]string, sample.Messages)
+	jobs := make(chan livePerformanceJob, performance.PublisherConcurrency)
+	var invalid atomic.Int64
+	var workers sync.WaitGroup
+	workers.Add(performance.PublisherConcurrency)
+	for range performance.PublisherConcurrency {
+		go func() {
+			defer workers.Done()
+			for job := range jobs {
+				queue := performance.Queues[job.Queue]
+				result, err := session.publish(fixture.Exchange, queue, sample.Mode, job)
+				if !result.Valid() ||
+					(result.State == rabbitmqqueue.PublishConfirmed) != (err == nil) {
+					invalid.Add(1)
+				}
+				ledger.recordAttempt(job.MessageID, result.State)
+			}
+		}()
+	}
+
+	started := time.Now()
+	interval := float64(time.Second) / sample.OfferedRate
+	faultStarted := time.Time{}
+	for index := 0; index < sample.Messages; index++ {
+		if index == sample.Messages/2 {
+			t.Logf("PERFORMANCE_FAULT_READY queued=%d total=%d", index, sample.Messages)
+			waitForFaultGate(t, fixture.FaultStartGateFile)
+			faultStarted = time.Now()
+		}
+		messageID := "live-performance-" + runToken + "-" + sample.Mode + "-" + strconv.Itoa(index)
+		ids[index] = messageID
+		due := started.Add(time.Duration(float64(index) * interval))
+		if remaining := time.Until(due); remaining > 0 {
+			timer := time.NewTimer(remaining)
+			<-timer.C
+		}
+		jobs <- livePerformanceJob{MessageID: messageID, Queue: index % len(performance.Queues), Shape: index}
+	}
+	close(jobs)
+	workers.Wait()
+	sample.Elapsed = time.Since(started)
+	if faultStarted.IsZero() {
+		t.Fatal("leader-loss sample did not enter its fault window")
+	}
+	waitForFaultGate(t, fixture.FaultCompleteGateFile)
+	sample.FaultWindow = time.Since(faultStarted)
+	waitForLiveClusterResourcesRecovery(
+		t, []*rabbitmqqueue.Producer{session.producer}, session.consumers,
+	)
+	for _, consumer := range session.consumers {
+		if err := consumer.Resume(); err != nil {
+			t.Fatalf("resume performance consumer: %v", err)
+		}
+	}
+	resumed = true
+	drainStarted := time.Now()
+	waitForConfirmedDeliveries(t, ledger, ids)
+	waitForDeliveryQuiet(t, ledger)
+	sample.Drain = time.Since(drainStarted)
+	session.receiver.setLedger(nil)
+	attached = false
+	sample.Confirmed, sample.Rejected, sample.Ambiguous, sample.NotSent,
+		sample.Delivered, sample.Duplicates = ledger.summary(t)
+	sample.Redelivered = session.receiver.redelivered.Swap(0)
+	sample.Invalid = invalid.Load()
+	sample.Achieved = float64(sample.Confirmed) / sample.Elapsed.Seconds()
+	nonConfirmed := sample.Rejected + sample.Ambiguous + sample.NotSent
+	errorRate := float64(nonConfirmed) / float64(sample.Messages)
+	t.Logf(
+		"PERFORMANCE_FAILURE_SAMPLE queue_type=%s messages=%d required_per_second=%.2f burst_target_per_second=%.2f offered_per_second=%.2f achieved_per_second=%.2f publish_elapsed=%s fault_gate_elapsed=%s backlog_drain=%s confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d redelivered=%d invalid=%d error_rate=%.6f",
+		performance.QueueType, sample.Messages, minimumRate, sample.TargetRate, sample.OfferedRate, sample.Achieved,
+		sample.Elapsed, sample.FaultWindow, sample.Drain, sample.Confirmed, sample.Rejected, sample.Ambiguous,
+		sample.NotSent, sample.Delivered, sample.Duplicates, sample.Redelivered, sample.Invalid, errorRate,
+	)
+	if sample.Invalid != 0 || sample.Confirmed+nonConfirmed != sample.Messages ||
+		sample.Confirmed == 0 || sample.Achieved < minimumRate || sample.FaultWindow > clusterDeliveryTimeout {
+		t.Fatal("three-node performance leader-loss sample did not satisfy its bounded correctness profile")
+	}
+	return sample
+}
+
 func summarizeLivePerformanceRates(
 	samples []livePerformanceSample,
 	target float64,
@@ -324,6 +495,9 @@ func runLivePerformanceSample(
 	if orphans := session.receiver.orphan.Swap(0); orphans != 0 {
 		t.Fatalf("received %d deliveries outside a measured sample", orphans)
 	}
+	if redelivered := session.receiver.redelivered.Swap(0); redelivered != 0 {
+		t.Fatalf("received %d redeliveries outside a measured sample", redelivered)
+	}
 	session.receiver.setLedger(ledger)
 	attached := true
 	defer func() {
@@ -342,24 +516,7 @@ func runLivePerformanceSample(
 			defer workers.Done()
 			for job := range jobs {
 				queue := fixture.Queues[job.Queue]
-				ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
-				result, err := session.producer.Publish(ctx, rabbitmqqueue.Publication{
-					Exchange: exchange, ExchangeKind: rabbitmqqueue.ExchangeDirect,
-					RoutingKey: queue.RoutingKey, Mandatory: true,
-					DeliveryMode: rabbitmqqueue.DeliveryPersistent,
-					Message: rabbitmqqueue.Message{
-						Body:      session.payloads[job.Shape%len(session.payloads)],
-						MessageID: job.MessageID, ContentType: "application/octet-stream",
-						Headers: []rabbitmqqueue.Header{
-							rabbitmqqueue.Int64Header("schema-version", 1),
-							rabbitmqqueue.StringHeader("profile", sample.Mode),
-							rabbitmqqueue.BytesHeader(
-								"metadata", session.headers[job.Shape%len(session.headers)],
-							),
-						},
-					},
-				})
-				cancel()
+				result, err := session.publish(exchange, queue, sample.Mode, job)
 				if !result.Valid() ||
 					(result.State == rabbitmqqueue.PublishConfirmed) != (err == nil) {
 					invalid.Add(1)
@@ -394,20 +551,47 @@ func runLivePerformanceSample(
 	attached = false
 	sample.Confirmed, sample.Rejected, sample.Ambiguous, sample.NotSent,
 		sample.Delivered, sample.Duplicates = ledger.summary(t)
+	sample.Redelivered = session.receiver.redelivered.Swap(0)
 	sample.Invalid = invalid.Load()
 	sample.Achieved = float64(sample.Messages) / sample.Elapsed.Seconds()
 	errorRate := float64(sample.Messages-sample.Confirmed) / float64(sample.Messages)
 	t.Logf(
-		"PERFORMANCE_SAMPLE mode=%s sample=%d queue_type=%s messages=%d target_per_second=%.2f offered_per_second=%.2f achieved_per_second=%.2f publish_elapsed=%s backlog_drain=%s confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d invalid=%d error_rate=%.6f",
+		"PERFORMANCE_SAMPLE mode=%s sample=%d queue_type=%s messages=%d target_per_second=%.2f offered_per_second=%.2f achieved_per_second=%.2f publish_elapsed=%s backlog_drain=%s confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d redelivered=%d invalid=%d error_rate=%.6f",
 		sample.Mode, sample.Index, fixture.QueueType, sample.Messages, sample.TargetRate, sample.OfferedRate,
 		sample.Achieved, sample.Elapsed, sample.Drain, sample.Confirmed, sample.Rejected, sample.Ambiguous,
-		sample.NotSent, sample.Delivered, sample.Duplicates, sample.Invalid, errorRate,
+		sample.NotSent, sample.Delivered, sample.Duplicates, sample.Redelivered, sample.Invalid, errorRate,
 	)
 	if sample.Invalid != 0 || sample.Confirmed != sample.Messages || sample.Rejected != 0 || sample.Ambiguous != 0 ||
-		sample.NotSent != 0 || sample.Delivered != sample.Messages || sample.Duplicates != 0 {
+		sample.NotSent != 0 || sample.Delivered != sample.Messages || sample.Duplicates != 0 || sample.Redelivered != 0 {
 		t.Fatal("live performance sample did not satisfy its correctness profile")
 	}
 	return sample
+}
+
+func (session *livePerformanceSession) publish(
+	exchange string,
+	queue liveQueue,
+	mode string,
+	job livePerformanceJob,
+) (rabbitmqqueue.PublishResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
+	defer cancel()
+	return session.producer.Publish(ctx, rabbitmqqueue.Publication{
+		Exchange: exchange, ExchangeKind: rabbitmqqueue.ExchangeDirect,
+		RoutingKey: queue.RoutingKey, Mandatory: true,
+		DeliveryMode: rabbitmqqueue.DeliveryPersistent,
+		Message: rabbitmqqueue.Message{
+			Body:      session.payloads[job.Shape%len(session.payloads)],
+			MessageID: job.MessageID, ContentType: "application/octet-stream",
+			Headers: []rabbitmqqueue.Header{
+				rabbitmqqueue.Int64Header("schema-version", 1),
+				rabbitmqqueue.StringHeader("profile", mode),
+				rabbitmqqueue.BytesHeader(
+					"metadata", session.headers[job.Shape%len(session.headers)],
+				),
+			},
+		},
+	})
 }
 
 func openLivePerformanceSession(
@@ -432,9 +616,10 @@ func openLivePerformanceSession(
 			case <-timer.C:
 			}
 		}
-		receiver.record(delivery.MessageID)
+		receiver.record(delivery.MessageID, delivery.Redelivered)
 		return rabbitmqqueue.Acknowledge(), nil
 	}
+	consumers := make([]*rabbitmqqueue.Consumer, 0, len(fixture.Queues))
 	for _, queue := range fixture.Queues {
 		consumer := openLiveConsumerWithBounds(
 			t, connection, queue, fixture.QueueType, 1,
@@ -442,6 +627,7 @@ func openLivePerformanceSession(
 			liveOperationTimeout, handler,
 		)
 		t.Cleanup(func() { closeLiveConsumer(t, consumer) })
+		consumers = append(consumers, consumer)
 	}
 	producer := openLiveProducerWithBounds(
 		t, connection, fixture.PublisherConcurrency, liveOperationTimeout,
@@ -450,7 +636,7 @@ func openLivePerformanceSession(
 	payloads := performanceByteShapes(fixture.PayloadBytes)
 	headers := performanceByteShapes(fixture.HeaderBytes)
 	return &livePerformanceSession{
-		producer: producer, receiver: receiver, payloads: payloads, headers: headers,
+		producer: producer, consumers: consumers, receiver: receiver, payloads: payloads, headers: headers,
 	}
 }
 
@@ -460,13 +646,16 @@ func (receiver *livePerformanceReceiver) setLedger(ledger *liveClusterLedger) {
 	receiver.mu.Unlock()
 }
 
-func (receiver *livePerformanceReceiver) record(messageID string) {
+func (receiver *livePerformanceReceiver) record(messageID string, redelivered bool) {
 	receiver.mu.RLock()
 	defer receiver.mu.RUnlock()
 	ledger := receiver.ledger
 	if ledger == nil {
 		receiver.orphan.Add(1)
 		return
+	}
+	if redelivered {
+		receiver.redelivered.Add(1)
 	}
 	ledger.recordDelivery(messageID)
 }
