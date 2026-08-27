@@ -185,9 +185,20 @@ at commit `d28812cb7d510319d5d0ac57ce145c5566dd8849` recorded:
   attempts, confirmations, and deliveries, with zero rejected, ambiguous,
   not-sent, or duplicate outcomes.
 
-This is CI-hosted node-loss evidence. It is not network-partition,
-rolling-upgrade, installed-Operator reconciliation, application rollout, or
-production-capacity evidence.
+Retained
+[run 33047281659](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33047281659)
+at commit `57467ae61533d21c16dae019a45ddea2342d9a5e` recorded:
+
+- quorum partition of `rabbit@rabbit1`, healed with `rabbit@rabbit2` as leader:
+  88 attempts, 59 confirmed, 29 ambiguous, zero rejected or not-sent, 88
+  delivered, and zero duplicates; and
+- complete quorum-cluster restart after a 20-second stopped interval, with
+  `rabbit@rabbit3` as leader after recovery: 88 attempts, 24 confirmed, 64
+  not-sent, zero rejected or ambiguous, 24 delivered, and zero duplicates.
+
+This is CI-hosted node-loss, quorum-partition, and complete-cluster-restart
+evidence. It is not reconnect-storm, rolling-upgrade, installed-Operator
+reconciliation, application rollout, or production-capacity evidence.
 
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).

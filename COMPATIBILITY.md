@@ -43,9 +43,12 @@ single-node performance matrix proves CI-runner throughput for classic and
 single-member quorum queues at the 1M, 10M, and 100M daily-volume profiles. The
 retained three-node matrix proves bounded client behavior while the classic
 queue's hosting node is stopped and restarted, and while a quorum leader is
-stopped and replaced. It does not establish network-partition behavior,
-rolling upgrades, installed-operator reconciliation, Laravel-framework
-integration, or production performance capacity.
+stopped and replaced. It also proves delivery reconciliation while one quorum
+node is partitioned and healed, and recovery after a complete three-node
+cluster restart with a 20-second outage. It does not establish reconnect-storm
+or rolling-upgrade behavior, installed-operator reconciliation,
+Laravel-framework integration, application rollout, or production performance
+capacity.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,
@@ -64,7 +67,10 @@ Retained CI evidence:
   at commit `a233bb315a72f878c8412d9c6d3ea3529b1507a2`;
 - three-node classic host loss and quorum leader loss:
   [run 33044777633](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33044777633)
-  at commit `d28812cb7d510319d5d0ac57ce145c5566dd8849`.
+  at commit `d28812cb7d510319d5d0ac57ce145c5566dd8849`;
+- three-node quorum partition and complete cluster restart:
+  [run 33047281659](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33047281659)
+  at commit `57467ae61533d21c16dae019a45ddea2342d9a5e`.
 
 ## Authoritative sources
 
