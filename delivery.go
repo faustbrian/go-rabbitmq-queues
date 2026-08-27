@@ -127,12 +127,13 @@ func ownConsumerConfig(config ConsumerConfig) ConsumerConfig {
 
 // Death preserves one bounded RabbitMQ x-death record without exposing a raw field table.
 type Death struct {
-	Count       uint64
-	Reason      string
-	Queue       string
-	Exchange    string
-	RoutingKeys []string
-	Time        time.Time
+	Count              uint64
+	Reason             string
+	Queue              string
+	Exchange           string
+	RoutingKeys        []string
+	Time               time.Time
+	OriginalExpiration *time.Duration
 }
 
 // Delivery is an owned, bounded AMQP delivery snapshot. Delivery tags and the
@@ -360,8 +361,12 @@ func deliveryDeath(fields amqp.Table, limits Limits) (Death, int, error) {
 	if !ok || len(routingValues) > MaxDeathRoutingKeys {
 		return Death{}, 0, ErrInvalidDelivery
 	}
+	originalExpiration, expirationBytes, err := deathOriginalExpiration(fields)
+	if err != nil {
+		return Death{}, 0, err
+	}
 	routingKeys := make([]string, 0, len(routingValues))
-	metadataBytes := 16 + len(reason) + len(queue) + len(exchange)
+	metadataBytes := 16 + len(reason) + len(queue) + len(exchange) + expirationBytes
 	for _, value := range routingValues {
 		routingKey, ok := value.(string)
 		if !ok || len(routingKey) > limits.MaxRoutingKeyBytes || containsControl(routingKey) {
@@ -370,7 +375,26 @@ func deliveryDeath(fields amqp.Table, limits Limits) (Death, int, error) {
 		metadataBytes += len(routingKey)
 		routingKeys = append(routingKeys, routingKey)
 	}
-	return Death{Count: count, Reason: reason, Queue: queue, Exchange: exchange, RoutingKeys: routingKeys, Time: deathTime}, metadataBytes, nil
+	return Death{
+		Count: count, Reason: reason, Queue: queue, Exchange: exchange,
+		RoutingKeys: routingKeys, Time: deathTime, OriginalExpiration: originalExpiration,
+	}, metadataBytes, nil
+}
+
+func deathOriginalExpiration(fields amqp.Table) (*time.Duration, int, error) {
+	value, exists := fields["original-expiration"]
+	if !exists {
+		return nil, 0, nil
+	}
+	encoded, ok := value.(string)
+	if !ok || encoded == "" {
+		return nil, 0, ErrInvalidDelivery
+	}
+	expiration, err := parseDeliveryExpiration(encoded)
+	if err != nil {
+		return nil, 0, err
+	}
+	return &expiration, len(encoded), nil
 }
 
 func unsignedAMQPInteger(value any) (uint64, bool) {

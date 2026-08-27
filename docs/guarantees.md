@@ -37,8 +37,10 @@ internal transfer.
   representing RabbitMQ's predeclared default exchange. Queue targeting uses
   the queue name as its routing key; an omitted exchange is not inferred.
 - Deliveries and their bounded `x-death` history preserve empty routing keys
-  because every built-in exchange can carry one; the broker exchange and
-  binding remain the authoritative routing evidence.
+  because every built-in exchange can carry one. An optional bounded
+  `original-expiration` preserves the per-message TTL RabbitMQ removes during
+  dead lettering; the broker exchange and binding remain the authoritative
+  routing evidence.
 - Asynchronous publishing owns the admitted publication and emits exactly one
   terminal outcome; a full admission window rejects new work without spawning
   another worker.

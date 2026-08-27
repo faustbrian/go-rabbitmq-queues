@@ -193,6 +193,7 @@ func TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory(t *testing.T)
 			"x-death": []any{amqp.Table{
 				"count": int64(2), "reason": "rejected", "queue": "orders",
 				"exchange": "events", "routing-keys": []any{"orders.created"}, "time": deathTime,
+				"original-expiration": "30000",
 			}},
 		},
 		ContentType: "application/json", ContentEncoding: "identity",
@@ -227,7 +228,8 @@ func TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory(t *testing.T)
 	if len(delivery.Deaths) != 1 || delivery.Deaths[0].Count != 2 ||
 		delivery.Deaths[0].Reason != "rejected" || delivery.Deaths[0].Queue != "orders" ||
 		delivery.Deaths[0].Exchange != "events" || len(delivery.Deaths[0].RoutingKeys) != 1 ||
-		delivery.Deaths[0].RoutingKeys[0] != "orders.created" || !delivery.Deaths[0].Time.Equal(deathTime) {
+		delivery.Deaths[0].RoutingKeys[0] != "orders.created" || !delivery.Deaths[0].Time.Equal(deathTime) ||
+		delivery.Deaths[0].OriginalExpiration == nil || *delivery.Deaths[0].OriginalExpiration != 30*time.Second {
 		t.Fatalf("dead-letter history = %#v", delivery.Deaths)
 	}
 	if len(delivery.Headers) != 3 || delivery.Headers[2].Key == "x-death" {
@@ -329,6 +331,69 @@ func TestDeliveryConversionBoundsCombinedApplicationAndDeathMetadata(t *testing.
 	}
 	if _, err := deliveryFromAMQP(source, config); !errors.Is(err, ErrInvalidDelivery) {
 		t.Fatalf("deliveryFromAMQP() error = %v, want invalid delivery", err)
+	}
+}
+
+func TestDeliveryConversionRejectsMalformedDeathOriginalExpiration(t *testing.T) {
+	t.Parallel()
+
+	for name, expiration := range map[string]any{
+		"wrong type":  int64(30_000),
+		"empty":       "",
+		"not numeric": "30s",
+		"overflow":    strings.Repeat("9", 32),
+	} {
+		expiration := expiration
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			source := testAMQPDelivery(46)
+			source.Headers = amqp.Table{deathHeader: []any{amqp.Table{
+				"count": int64(1), "reason": "expired", "queue": "orders",
+				"exchange": "events", "routing-keys": []any{"orders.created"},
+				"time": time.Unix(100, 0), "original-expiration": expiration,
+			}}}
+			if _, err := deliveryFromAMQP(source, testConsumerConfig()); !errors.Is(err, ErrInvalidDelivery) {
+				t.Fatalf("deliveryFromAMQP() error = %v, want %v", err, ErrInvalidDelivery)
+			}
+		})
+	}
+}
+
+func TestDeliveryConversionDistinguishesOmittedAndZeroDeathOriginalExpiration(t *testing.T) {
+	t.Parallel()
+
+	zero := "0"
+	for name, expiration := range map[string]*string{
+		"omitted":       nil,
+		"explicit zero": &zero,
+	} {
+		expiration := expiration
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			fields := amqp.Table{
+				"count": int64(1), "reason": "expired", "queue": "orders",
+				"exchange": "events", "routing-keys": []any{"orders.created"},
+				"time": time.Unix(100, 0),
+			}
+			if expiration != nil {
+				fields["original-expiration"] = *expiration
+			}
+			source := testAMQPDelivery(47)
+			source.Headers = amqp.Table{deathHeader: []any{fields}}
+			delivery, err := deliveryFromAMQP(source, testConsumerConfig())
+			if err != nil {
+				t.Fatalf("deliveryFromAMQP() error = %v", err)
+			}
+			got := delivery.Deaths[0].OriginalExpiration
+			if expiration == nil && got != nil {
+				t.Fatalf("original expiration = %v, want omitted", *got)
+			}
+			if expiration != nil && (got == nil || *got != 0) {
+				t.Fatalf("original expiration = %v, want explicit zero", got)
+			}
+		})
 	}
 }
 

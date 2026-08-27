@@ -48,6 +48,9 @@ Important RabbitMQ 4.3 distinctions:
 - `Delivery.AcquiredCount` preserves RabbitMQ 4.3's `x-acquired-count`, which
   tracks assignments to a consumer, while `Delivery.DeliveryCount` preserves
   the distinct failed-delivery counter used by the broker delivery limit;
+- each bounded `Death` preserves AMQP 0-9-1 `x-death.original-expiration` when
+  RabbitMQ removes a per-message TTL during dead lettering, including explicit
+  zero while distinguishing omission;
 - quorum `reject-publish-dlx` overflow is unsupported and `reject-publish` may
   overshoot a length limit by in-flight messages;
 - requeue loops remain an application/client-policy risk even where a quorum
