@@ -52,7 +52,7 @@ func BenchmarkPublishTrackerRegisterConfirm(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		sequence := uint64(index + 1)
-		attempt, err := tracker.register(sequence, values[index])
+		attempt, err := tracker.register(sequence, values[index], "events", "route")
 		if err != nil {
 			b.Fatal(err)
 		}

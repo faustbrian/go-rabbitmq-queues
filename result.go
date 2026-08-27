@@ -22,7 +22,9 @@ func (state PublishState) Valid() bool {
 	}
 }
 
-// Return describes a mandatory unroutable outcome without carrying payloads or headers.
+// Return describes a mandatory unroutable outcome without carrying payloads or
+// headers. Exchange and RoutingKey come from the exact registered publication,
+// not untrusted broker return metadata.
 type Return struct {
 	Code       uint16
 	Reason     string

@@ -11,16 +11,16 @@ func TestPublishTrackerReconcilesExactConfirmAndMandatoryReturn(t *testing.T) {
 	t.Parallel()
 
 	tracker := newPublishTracker(2)
-	first, err := tracker.register(41, "session-a/41")
+	first, err := tracker.register(41, "session-a/41", "events", "first")
 	if err != nil {
 		t.Fatalf("register first publish: %v", err)
 	}
-	second, err := tracker.register(42, "session-a/42")
+	second, err := tracker.register(42, "session-a/42", "events", "missing")
 	if err != nil {
 		t.Fatalf("register second publish: %v", err)
 	}
 
-	returned := Return{Code: 312, Reason: "NO_ROUTE", Exchange: "events", RoutingKey: "missing"}
+	returned := Return{Code: 312, Reason: "NO_ROUTE", Exchange: "untrusted", RoutingKey: "untrusted"}
 	if !tracker.returned("session-a/42", returned) {
 		t.Fatal("return did not correlate to the second publish")
 	}
@@ -34,8 +34,9 @@ func TestPublishTrackerReconcilesExactConfirmAndMandatoryReturn(t *testing.T) {
 	if result := <-first.outcome; result.State != PublishConfirmed || result.Return != nil {
 		t.Fatalf("first outcome = %#v, want confirmed", result)
 	}
-	if result := <-second.outcome; result.State != PublishReturned || result.Return == nil || *result.Return != returned {
-		t.Fatalf("second outcome = %#v, want returned %#v", result, returned)
+	wantReturn := Return{Code: 312, Reason: "NO_ROUTE", Exchange: "events", RoutingKey: "missing"}
+	if result := <-second.outcome; result.State != PublishReturned || result.Return == nil || *result.Return != wantReturn {
+		t.Fatalf("second outcome = %#v, want returned %#v", result, wantReturn)
 	}
 }
 
@@ -43,7 +44,7 @@ func TestPublishTrackerNeverAppliesLateEventsToLaterPublishes(t *testing.T) {
 	t.Parallel()
 
 	tracker := newPublishTracker(1)
-	first, err := tracker.register(7, "old-session/7")
+	first, err := tracker.register(7, "old-session/7", "events", "old")
 	if err != nil {
 		t.Fatalf("register first publish: %v", err)
 	}
@@ -54,7 +55,7 @@ func TestPublishTrackerNeverAppliesLateEventsToLaterPublishes(t *testing.T) {
 		t.Fatalf("abandoned outcome = %#v, want ambiguous", result)
 	}
 
-	second, err := tracker.register(8, "new-session/8")
+	second, err := tracker.register(8, "new-session/8", "events", "new")
 	if err != nil {
 		t.Fatalf("register second publish: %v", err)
 	}
@@ -81,11 +82,11 @@ func TestPublishTrackerBoundsOutstandingAndFailsGeneration(t *testing.T) {
 	t.Parallel()
 
 	tracker := newPublishTracker(1)
-	first, err := tracker.register(1, "session/1")
+	first, err := tracker.register(1, "session/1", "events", "route")
 	if err != nil {
 		t.Fatalf("register first publish: %v", err)
 	}
-	if _, err := tracker.register(2, "session/2"); !errors.Is(err, ErrOutstandingConfirmLimit) {
+	if _, err := tracker.register(2, "session/2", "events", "route"); !errors.Is(err, ErrOutstandingConfirmLimit) {
 		t.Fatalf("register over limit error = %v, want %v", err, ErrOutstandingConfirmLimit)
 	}
 	if count := tracker.failAll(PublishAmbiguous); count != 1 {
@@ -107,7 +108,7 @@ func TestPublishTrackerCorrelatesConcurrentCompletions(t *testing.T) {
 	attempts := make([]*publishAttempt, count)
 	for index := range count {
 		sequence := uint64(index + 1)
-		attempt, err := tracker.register(sequence, fmt.Sprintf("session/%d", sequence))
+		attempt, err := tracker.register(sequence, fmt.Sprintf("session/%d", sequence), "events", "route")
 		if err != nil {
 			t.Fatalf("register publish %d: %v", sequence, err)
 		}
@@ -143,23 +144,23 @@ func TestPublishTrackerCorrelatesConcurrentCompletions(t *testing.T) {
 func TestPublishTrackerRejectsInvalidRegistrationAndCompletion(t *testing.T) {
 	t.Parallel()
 
-	if _, err := newPublishTracker(0).register(1, "session/1"); !errors.Is(err, ErrInvalidBounds) {
+	if _, err := newPublishTracker(0).register(1, "session/1", "events", "route"); !errors.Is(err, ErrInvalidBounds) {
 		t.Fatalf("unbounded tracker error = %v, want %v", err, ErrInvalidBounds)
 	}
 	tracker := newPublishTracker(2)
-	if _, err := tracker.register(0, "session/0"); !errors.Is(err, ErrInvalidPublishCorrelation) {
+	if _, err := tracker.register(0, "session/0", "events", "route"); !errors.Is(err, ErrInvalidPublishCorrelation) {
 		t.Fatalf("zero sequence error = %v, want %v", err, ErrInvalidPublishCorrelation)
 	}
-	if _, err := tracker.register(1, ""); !errors.Is(err, ErrInvalidPublishCorrelation) {
+	if _, err := tracker.register(1, "", "events", "route"); !errors.Is(err, ErrInvalidPublishCorrelation) {
 		t.Fatalf("empty token error = %v, want %v", err, ErrInvalidPublishCorrelation)
 	}
-	if _, err := tracker.register(1, "session/1"); err != nil {
+	if _, err := tracker.register(1, "session/1", "events", "route"); err != nil {
 		t.Fatalf("register publish: %v", err)
 	}
-	if _, err := tracker.register(1, "session/other"); !errors.Is(err, ErrInvalidPublishCorrelation) {
+	if _, err := tracker.register(1, "session/other", "events", "route"); !errors.Is(err, ErrInvalidPublishCorrelation) {
 		t.Fatalf("duplicate sequence error = %v, want %v", err, ErrInvalidPublishCorrelation)
 	}
-	if _, err := tracker.register(2, "session/1"); !errors.Is(err, ErrInvalidPublishCorrelation) {
+	if _, err := tracker.register(2, "session/1", "events", "route"); !errors.Is(err, ErrInvalidPublishCorrelation) {
 		t.Fatalf("duplicate token error = %v, want %v", err, ErrInvalidPublishCorrelation)
 	}
 	if tracker.abandon(99, PublishAmbiguous) {

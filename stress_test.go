@@ -16,7 +16,9 @@ func TestPublishTrackerConcurrentCorrelationStress(t *testing.T) {
 	tracker := newPublishTracker(attempts)
 	registered := make([]*publishAttempt, attempts)
 	for index := range attempts {
-		attempt, err := tracker.register(uint64(index+1), fmt.Sprintf("token-%d", index+1))
+		attempt, err := tracker.register(
+			uint64(index+1), fmt.Sprintf("token-%d", index+1), "events", "route",
+		)
 		if err != nil {
 			t.Fatalf("register attempt %d: %v", index, err)
 		}

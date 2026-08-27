@@ -269,7 +269,7 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 	failure := producer.failure
 	sequence := channel.GetNextPublishSeqNo()
 	token := producer.session + "/" + strconv.FormatUint(sequence, 10)
-	attempt, err := tracker.register(sequence, token)
+	attempt, err := tracker.register(sequence, token, publication.Exchange, publication.RoutingKey)
 	if err != nil {
 		producer.publishMu.Unlock()
 		return PublishResult{State: PublishNotSent}, err
@@ -523,12 +523,16 @@ func (producer *Producer) runGeneration(
 				returns = nil
 				continue
 			}
-			producer.applyReturn(tracker, returned)
+			if !producer.applyReturn(tracker, returned) {
+				return true
+			}
 		case confirmation, open := <-confirms:
 			if !open {
 				return true
 			}
-			producer.drainReturns(tracker, returns)
+			if !producer.drainReturns(tracker, returns) {
+				return true
+			}
 			outcome := ObservationRejected
 			if confirmation.Ack {
 				outcome = ObservationConfirmed
@@ -594,35 +598,36 @@ func (producer *Producer) setBlocked(active bool) {
 	}
 }
 
-func (producer *Producer) drainReturns(tracker *publishTracker, returns <-chan amqp.Return) {
+func (producer *Producer) drainReturns(tracker *publishTracker, returns <-chan amqp.Return) bool {
 	for returns != nil {
 		select {
 		case returned, open := <-returns:
 			if !open {
-				return
+				return true
 			}
-			producer.applyReturn(tracker, returned)
+			if !producer.applyReturn(tracker, returned) {
+				return false
+			}
 		default:
-			return
+			return true
 		}
 	}
+	return true
 }
 
-func (producer *Producer) applyReturn(tracker *publishTracker, returned amqp.Return) {
+func (producer *Producer) applyReturn(tracker *publishTracker, returned amqp.Return) bool {
 	producer.observe(Observation{Kind: ObservationReturn, Outcome: ObservationReturned})
 	token, ok := returned.Headers[publishTokenHeader].(string)
 	if !ok {
-		return
+		return false
 	}
 	reason := returned.ReplyText
 	if len(reason) > 255 || containsControl(reason) {
 		reason = ""
 	}
-	tracker.returned(token, Return{
-		Code:       returned.ReplyCode,
-		Reason:     reason,
-		Exchange:   returned.Exchange,
-		RoutingKey: returned.RoutingKey,
+	return tracker.returned(token, Return{
+		Code:   returned.ReplyCode,
+		Reason: reason,
 	})
 }
 

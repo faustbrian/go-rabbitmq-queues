@@ -21,6 +21,12 @@ internal transfer.
 - Publisher confirmation and consumer acknowledgement are separate effects.
 - Cancellation or connection loss after transmission can be ambiguous.
 - Mandatory returns must be reconciled with confirms before acceptance.
+- Mandatory-return route details come from the exact bounded publication
+  registered for the correlated token. Broker-supplied route fields never
+  cross the public result boundary; reply text is sanitized before exposure.
+  A return without an active exact token makes outstanding work ambiguous and
+  forces generation recovery instead of allowing a positive confirm to report
+  acceptance.
 - Publications can name the expected direct, topic, fanout, or headers exchange
   kind so routing-key validation matches the exchange semantic. The kind is a
   local policy assertion; passive topology verification proves the broker's

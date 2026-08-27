@@ -86,7 +86,7 @@ func FuzzPublishTrackerCorrelation(f *testing.F) {
 		}
 		token := fmt.Sprintf("token-%016x", tokenSeed)
 		tracker := newPublishTracker(1)
-		attempt, err := tracker.register(sequence, token)
+		attempt, err := tracker.register(sequence, token, "events", "route")
 		if err != nil {
 			t.Fatalf("register(): %v", err)
 		}

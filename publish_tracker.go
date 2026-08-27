@@ -6,6 +6,8 @@ import "sync"
 type publishAttempt struct {
 	sequence uint64
 	token    string
+	exchange string
+	route    string
 	returned *Return
 	outcome  chan PublishResult
 }
@@ -27,7 +29,12 @@ func newPublishTracker(maximum int) *publishTracker {
 	}
 }
 
-func (tracker *publishTracker) register(sequence uint64, token string) (*publishAttempt, error) {
+func (tracker *publishTracker) register(
+	sequence uint64,
+	token string,
+	exchange string,
+	route string,
+) (*publishAttempt, error) {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
@@ -50,6 +57,8 @@ func (tracker *publishTracker) register(sequence uint64, token string) (*publish
 	attempt := &publishAttempt{
 		sequence: sequence,
 		token:    token,
+		exchange: exchange,
+		route:    route,
 		outcome:  make(chan PublishResult, 1),
 	}
 	tracker.sequence[sequence] = attempt
@@ -66,6 +75,8 @@ func (tracker *publishTracker) returned(token string, returned Return) bool {
 	if !exists {
 		return false
 	}
+	returned.Exchange = attempt.exchange
+	returned.RoutingKey = attempt.route
 	attempt.returned = &returned
 	return true
 }

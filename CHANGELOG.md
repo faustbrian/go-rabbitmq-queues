@@ -42,6 +42,10 @@
   request/reply flows.
 - Add bounded exact correlation for confirmations, mandatory returns, late
   events, and ambiguous channel-generation failure.
+- Bind mandatory-return route details to the exact validated publication rather
+  than exposing broker-supplied exchange or routing-key metadata.
+- Treat mandatory returns without an active exact token as generation failures
+  so a following positive confirm cannot report an unroutable publish accepted.
 - Add an independent synchronous producer with mandatory routing, publisher
   confirms, endpoint rotation, credential refresh, verified TLS, bounded
   startup retry, graceful close, and explicit ambiguous outcomes.

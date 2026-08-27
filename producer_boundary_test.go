@@ -330,25 +330,41 @@ func TestProducerChannelClosureMakesOutstandingPublishAmbiguous(t *testing.T) {
 	}
 }
 
-func TestProducerIgnoresUncorrelatedReturn(t *testing.T) {
+func TestProducerMakesUncorrelatedReturnAmbiguous(t *testing.T) {
 	t.Parallel()
 
-	channel := newFakeProducerChannel()
-	channel.publish = func(_ context.Context, _ string, _ string, _ bool, _ bool, _ amqp.Publishing) error {
-		sequence := channel.nextSequence()
-		channel.returns <- amqp.Return{ReplyCode: 312, Headers: amqp.Table{"other": "value"}}
-		channel.confirms <- amqp.Confirmation{DeliveryTag: sequence, Ack: true}
-		return nil
-	}
-	producer, err := newProducerFromChannel(testProducerConfig(), "session-return", channel, io.NopCloser(nilReader{}))
-	if err != nil {
-		t.Fatalf("construct producer: %v", err)
-	}
-	t.Cleanup(func() { closeProducerForTest(t, producer) })
+	for name, headers := range map[string]amqp.Table{
+		"missing token": {"other": "value"},
+		"wrong type":    {publishTokenHeader: int64(1)},
+		"unknown token": {publishTokenHeader: "other-session/1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	result, err := producer.Publish(t.Context(), testPublication())
-	if err != nil || result.State != PublishConfirmed {
-		t.Fatalf("Publish() = (%#v, %v), want confirmed", result, err)
+			channel := newFakeProducerChannel()
+			channel.publish = func(_ context.Context, _ string, _ string, _ bool, _ bool, _ amqp.Publishing) error {
+				sequence := channel.nextSequence()
+				channel.returns <- amqp.Return{ReplyCode: 312, Headers: headers}
+				channel.confirms <- amqp.Confirmation{DeliveryTag: sequence, Ack: true}
+				return nil
+			}
+			producer, err := newProducerFromChannel(
+				testProducerConfig(), "session-return", channel, io.NopCloser(nilReader{}),
+			)
+			if err != nil {
+				t.Fatalf("construct producer: %v", err)
+			}
+			t.Cleanup(func() { closeProducerForTest(t, producer) })
+
+			result, err := producer.Publish(t.Context(), testPublication())
+			if !errors.Is(err, ErrPublishAmbiguous) || result.State != PublishAmbiguous {
+				t.Fatal("uncorrelated mandatory return was not made ambiguous")
+			}
+			result, err = producer.Publish(t.Context(), testPublication())
+			if !errors.Is(err, ErrProducerUnavailable) || result.State != PublishNotSent {
+				t.Fatal("producer remained available after losing return correlation")
+			}
+		})
 	}
 }
 
@@ -379,6 +395,38 @@ func TestProducerSanitizesReturnedReason(t *testing.T) {
 				t.Fatalf("Publish() = (%#v, %v), want returned with sanitized reason", result, err)
 			}
 		})
+	}
+}
+
+func TestProducerReturnsRegisteredRouteInsteadOfBrokerMetadata(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	channel.publish = func(_ context.Context, _ string, _ string, _ bool, _ bool, message amqp.Publishing) error {
+		sequence := channel.nextSequence()
+		channel.returns <- amqp.Return{
+			ReplyCode: 312, ReplyText: "NO_ROUTE",
+			Exchange: "broker\nmetadata", RoutingKey: strings.Repeat("r", DefaultLimits().MaxRoutingKeyBytes+1),
+			Headers: message.Headers,
+		}
+		channel.confirms <- amqp.Confirmation{DeliveryTag: sequence, Ack: true}
+		return nil
+	}
+	producer, err := newProducerFromChannel(
+		testProducerConfig(), "session-return-route", channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	t.Cleanup(func() { closeProducerForTest(t, producer) })
+
+	publication := testPublication()
+	result, err := producer.Publish(t.Context(), publication)
+	if !errors.Is(err, ErrPublishReturned) || result.State != PublishReturned || result.Return == nil {
+		t.Fatal("publication did not retain its mandatory-return outcome")
+	}
+	if result.Return.Exchange != publication.Exchange || result.Return.RoutingKey != publication.RoutingKey {
+		t.Fatal("mandatory return exposed broker route metadata instead of the registered route")
 	}
 }
 
