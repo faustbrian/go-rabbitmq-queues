@@ -290,11 +290,11 @@ func topologyOperationError(err error) error {
 	var broker *amqp.Error
 	if errors.As(err, &broker) {
 		switch broker.Code {
-		case 403:
+		case amqp.AccessRefused:
 			return ErrTopologyUnauthorized
-		case 406:
+		case amqp.ResourceLocked, amqp.PreconditionFailed:
 			return ErrTopologyInequivalent
-		case 404:
+		case amqp.NotFound:
 			return ErrTopologyUnavailable
 		}
 	}

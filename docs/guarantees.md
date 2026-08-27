@@ -7,7 +7,9 @@ so passive application checks verify exchange and queue equivalence while the
 infrastructure control plane verifies bindings. Mandatory publishing still
 reports routing drift as a returned publication. Development declarations are
 ordered, non-transactional AMQP operations and can leave a partial test topology
-when a later declaration fails.
+when a later declaration fails. A passive `RESOURCE_LOCKED` response means a
+queue with that name is exclusive to another connection and is reported as
+inequivalent topology rather than retried as an outage.
 
 Queue TTL, expiry, length, overflow, consumer timeout, and dead-letter fields
 describe AMQP declaration arguments, not mutable operator policies. RabbitMQ

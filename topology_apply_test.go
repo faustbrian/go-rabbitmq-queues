@@ -653,9 +653,10 @@ func TestApplyTopologyMapsBrokerDriftAndAuthorizationWithoutLeakingDetails(t *te
 		code uint16
 		want error
 	}{
-		"missing":      {code: 404, want: ErrTopologyUnavailable},
-		"inequivalent": {code: 406, want: ErrTopologyInequivalent},
-		"unauthorized": {code: 403, want: ErrTopologyUnauthorized},
+		"missing":              {code: 404, want: ErrTopologyUnavailable},
+		"exclusive name drift": {code: 405, want: ErrTopologyInequivalent},
+		"property drift":       {code: 406, want: ErrTopologyInequivalent},
+		"unauthorized":         {code: 403, want: ErrTopologyUnauthorized},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
