@@ -37,7 +37,9 @@
       ],
       "build_tags": [],
       "test_tags": [],
-      "interoperability_tools": [],
+      "interoperability_tools": [
+        "PHP 8.5.8 and php-amqplib v3.7.4 livebroker harness"
+      ],
       "specifications": [],
       "conformance_corpora": [
         "Language-neutral AMQP fixture and Go boundary contract at testdata/interoperability/message-v1.json"

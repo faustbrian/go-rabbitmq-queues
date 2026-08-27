@@ -72,6 +72,7 @@ type liveBrokerFixture struct {
 	FaultWindowMessages   int                     `json:"fault_window_messages"`
 	FaultQueueType        rabbitmqqueue.QueueType `json:"fault_queue_type"`
 	Performance           livePerformanceFixture  `json:"performance"`
+	PHPInteroperability   livePHPInteropFixture   `json:"php_interoperability"`
 }
 
 func TestLiveBrokerSingleNode(t *testing.T) {

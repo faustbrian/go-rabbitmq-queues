@@ -73,6 +73,49 @@ the exact repository, RabbitMQ, container or operating-system, Go, client, TLS,
 CPU architecture, and topology pins. A passing single-node run is not cluster,
 failover, operator, performance, PHP, Laravel, or production evidence.
 
+## PHP interoperability harness
+
+`TestLiveBrokerPHPInteroperability` uses the same single TLS endpoint and
+direct exchange with two additional dedicated, durable queues. Bind the
+Go-to-PHP and PHP-to-Go queues to their distinct configured routing keys. The
+queue names and all three PHP routing keys must also be distinct from the base
+classic, quorum, and unroutable fixture identities. The PHP-only unroutable key
+must have no binding. Both queues must be empty and must not have other
+publishers or consumers. Add this object to the live configuration:
+
+```json
+{
+  "php_interoperability": {
+    "binary": "/absolute/path/to/php-8.5.8",
+    "queue_type": "classic",
+    "go_to_php_queue": "go-rabbitmq-queues.go-to-php",
+    "go_to_php_routing_key": "interop.go-to-php",
+    "php_to_go_queue": "go-rabbitmq-queues.php-to-go",
+    "php_to_go_routing_key": "interop.php-to-go",
+    "unroutable_routing_key": "interop.intentionally-unbound"
+  }
+}
+```
+
+The binary path must be absolute. `queue_type` may be `classic` or `quorum`;
+the externally owned topology must match it. Install the locked dependencies
+into a task-owned vendor path, pass its absolute autoload path through
+`PHP_AMQPLIB_AUTOLOAD`, and run the evidence test with task-owned Composer and
+Go caches:
+
+```sh
+task_interop_root=$(mktemp -d /tmp/go-rabbitmq-queues-php-interop.XXXXXX) && trap 'chmod -R u+w "$task_interop_root"; find "$task_interop_root" -depth -delete' EXIT HUP INT TERM && mkdir "$task_interop_root/composer-home" "$task_interop_root/php-vendor" "$task_interop_root/go-build" "$task_interop_root/go-modules" && composer --version --no-ansi | rg '^Composer version 2\.10\.1 ' && COMPOSER_HOME="$task_interop_root/composer-home" COMPOSER_VENDOR_DIR="$task_interop_root/php-vendor" composer install --working-dir=testdata/interoperability/php --no-dev --no-interaction --no-ansi --no-progress --classmap-authoritative && PHP_AMQPLIB_AUTOLOAD="$task_interop_root/php-vendor/autoload.php" RABBITMQ_QUEUE_LIVE_CONFIG=/secure/path/live-broker.json GOCACHE="$task_interop_root/go-build" GOMODCACHE="$task_interop_root/go-modules" go test -v -tags=livebroker -run '^TestLiveBrokerPHPInteroperability$' -count=1 .
+```
+
+The harness first checks the exact PHP runtime, required extensions, package
+version, and source reference. It then proves Go-to-PHP consumption,
+PHP-to-Go publication,
+publisher confirms, mandatory returns, exact body and property values, manual
+acknowledgement, and the directional header-type guarantees documented under
+[AMQP interoperability](interoperability.md). It never provisions, purges, or
+deletes the queues. Without a retained passing broker run, PHP and Laravel
+compatibility remain unproved.
+
 ## Three-node interruption harness
 
 `TestLiveBrokerThreeNodeInterruption` reuses the same dedicated topology with

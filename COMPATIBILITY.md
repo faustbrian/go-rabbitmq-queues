@@ -8,6 +8,8 @@ Research and initial local policy tests use these immutable inputs as of
 | RabbitMQ server | `v4.3.5`, Git `0dde27bfdd1984ff7e157226fd97656854a7f359` |
 | RabbitMQ container | `rabbitmq:4.3.5-management-alpine`, Linux arm64 digest `sha256:aa626c7c8b7d41c708796b336ff721897b176ab29c94d944a26eb2b1b2e3a455` |
 | `amqp091-go` | `v1.14.0`, Git `387d77a50ea8b8c38705bb18cc80f5d6599a8477` |
+| PHP interoperability runtime | PHP `8.5.8`, Composer `2.10.1` |
+| `php-amqplib/php-amqplib` | `v3.7.4`, Git `381b6f7c600e0e0c7463cdd7f7a1a3bc6268e5fd` |
 | RabbitMQ Cluster Operator | `v2.22.5`, Git `17dd297f71de40a722baf69167b8af511072175e` |
 | Messaging Topology Operator | `v1.20.2`, Git `58cdfa3610a8bbac51a0fc8a7fd90f2fa448b960` |
 | RabbitMQ documentation | Git `1c99c9687f012ad700385c1e9a6990f6520720d3` |
@@ -24,7 +26,8 @@ synchronous/asynchronous/batch outcome handling, bounded producer and consumer
 recovery seams, sanitized connection-blocked transitions, bounded health and
 observation seams, broker consumer-cancellation dispatch, passive topology
 equivalence mapping, connection-scoped transient-consumer setup, bounded
-delivery conversion, and lifecycle behavior
+delivery conversion, lifecycle behavior, and the pinned PHP runner's local
+corpus construction and validation
 without contacting a broker. The harness is not retained broker evidence until
 it is run against the pinned fixture. No container, live TLS handshake, broker
 settlement, cluster, operator, runtime failure, or PHP interoperability claim is
