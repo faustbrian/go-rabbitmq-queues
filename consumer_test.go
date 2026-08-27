@@ -385,6 +385,43 @@ deliveryBuffered:
 	}
 }
 
+func TestConsumerDrainClosesGenerationWhenAdmittedSettlementFails(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	channel.ackErr = errors.New("lost settlement")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	resource := &countingCloser{}
+	consumer, err := newConsumerFromChannel(
+		t.Context(),
+		testConsumerConfig(),
+		func(context.Context, Delivery) (Settlement, error) {
+			close(started)
+			<-release
+			return Acknowledge(), nil
+		},
+		channel,
+		resource,
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { _ = consumer.Close(t.Context()) })
+	channel.deliveries <- testAMQPDelivery(53)
+	<-started
+	drained := make(chan error, 1)
+	go func() { drained <- consumer.Drain(t.Context()) }()
+	waitForConsumerCondition(t, func() bool { return channel.cancelCount() == 1 })
+	close(release)
+	if err := <-drained; !errors.Is(err, ErrConsumerUnavailable) {
+		t.Fatalf("Drain() error = %v, want %v", err, ErrConsumerUnavailable)
+	}
+	if resource.calls != 1 || channel.closeCount() != 1 {
+		t.Fatalf("failed drain cleanup = resource %d channel %d, want one each", resource.calls, channel.closeCount())
+	}
+}
+
 func TestConsumerPauseAndResumeTemporarilyStopsHandlerAdmission(t *testing.T) {
 	t.Parallel()
 

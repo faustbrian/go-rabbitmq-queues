@@ -75,6 +75,7 @@ type Consumer struct {
 	stopped     bool
 	terminalErr error
 	generation  *consumerGeneration
+	drainErr    error
 	resourceErr error
 }
 
@@ -311,6 +312,11 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 	}
 	close(consumer.jobs)
 	workers.Wait()
+	if consumer.drainError() != nil {
+		consumer.setResourceError(consumer.closeGeneration(
+			consumer.currentGeneration(), time.Now().Add(consumer.config.HandlerTimeout),
+		))
+	}
 	consumer.stateMu.Lock()
 	consumer.recovering = false
 	consumer.stopped = true
@@ -498,12 +504,16 @@ func applySettlement(channel consumerChannel, tag uint64, settlement Settlement)
 func (consumer *Consumer) failGeneration(generation *consumerGeneration) {
 	consumer.stateMu.Lock()
 	current := consumer.generation == generation
-	changed := current && !consumer.stopping && consumer.terminalErr == nil && !consumer.recovering
+	stopping := consumer.stopping
+	if current && stopping && consumer.drainErr == nil {
+		consumer.drainErr = ErrConsumerUnavailable
+	}
+	changed := current && !stopping && consumer.terminalErr == nil && !consumer.recovering
 	if changed {
 		consumer.recovering = true
 	}
 	consumer.stateMu.Unlock()
-	if !current {
+	if !current || stopping {
 		return
 	}
 	if changed {
@@ -559,6 +569,12 @@ func (consumer *Consumer) setResourceError(err error) {
 	consumer.stateMu.Lock()
 	consumer.resourceErr = ErrConsumerUnavailable
 	consumer.stateMu.Unlock()
+}
+
+func (consumer *Consumer) drainError() error {
+	consumer.stateMu.Lock()
+	defer consumer.stateMu.Unlock()
+	return consumer.drainErr
 }
 
 func (consumer *Consumer) currentGeneration() *consumerGeneration {
@@ -648,7 +664,7 @@ func (consumer *Consumer) Drain(ctx context.Context) error {
 	}
 	select {
 	case <-consumer.done:
-		return nil
+		return consumer.drainError()
 	case <-drainContext.Done():
 		consumer.stopLifetime()
 		_ = consumer.closeGeneration(generation, deadlineFor(drainContext, consumer.config.HandlerTimeout))
