@@ -41,6 +41,22 @@ type liveQueue struct {
 	RoutingKey string `json:"routing_key"`
 }
 
+type livePerformanceFixture struct {
+	QueueType            rabbitmqqueue.QueueType `json:"queue_type"`
+	Queues               []liveQueue             `json:"queues"`
+	DailyMessages        uint64                  `json:"daily_messages"`
+	WarmupSeconds        int                     `json:"warmup_seconds"`
+	SampleSeconds        int                     `json:"sample_seconds"`
+	Samples              int                     `json:"samples"`
+	BurstMultiplier      int                     `json:"burst_multiplier"`
+	BurstSeconds         int                     `json:"burst_seconds"`
+	PublisherConcurrency int                     `json:"publisher_concurrency"`
+	ConsumerConcurrency  int                     `json:"consumer_concurrency"`
+	PayloadBytes         []int                   `json:"payload_bytes"`
+	HeaderBytes          []int                   `json:"header_bytes"`
+	HandlerDelayMillis   int                     `json:"handler_delay_ms"`
+}
+
 type liveBrokerFixture struct {
 	Endpoints             []liveEndpoint          `json:"endpoints"`
 	VirtualHost           string                  `json:"virtual_host"`
@@ -55,6 +71,7 @@ type liveBrokerFixture struct {
 	FaultCompleteGateFile string                  `json:"fault_complete_gate_file"`
 	FaultWindowMessages   int                     `json:"fault_window_messages"`
 	FaultQueueType        rabbitmqqueue.QueueType `json:"fault_queue_type"`
+	Performance           livePerformanceFixture  `json:"performance"`
 }
 
 func TestLiveBrokerSingleNode(t *testing.T) {
@@ -87,6 +104,19 @@ func readLiveBrokerFixture(t *testing.T) liveBrokerFixture {
 
 func readLiveBrokerFixtureForEnvironment(t *testing.T, environment string) liveBrokerFixture {
 	t.Helper()
+	fixture := decodeLiveBrokerFixture(t, environment)
+	if fixture.Classic.Name == "" || fixture.Classic.RoutingKey == "" ||
+		fixture.Quorum.Name == "" || fixture.Quorum.RoutingKey == "" ||
+		fixture.UnroutableRoutingKey == "" ||
+		fixture.UnroutableRoutingKey == fixture.Classic.RoutingKey ||
+		fixture.UnroutableRoutingKey == fixture.Quorum.RoutingKey {
+		t.Fatal("live-broker topology configuration is incomplete")
+	}
+	return fixture
+}
+
+func decodeLiveBrokerFixture(t *testing.T, environment string) liveBrokerFixture {
+	t.Helper()
 	configPath := os.Getenv(environment)
 	if configPath == "" {
 		t.Fatalf("%s must point to the live-broker fixture configuration", environment)
@@ -113,13 +143,8 @@ func readLiveBrokerFixtureForEnvironment(t *testing.T, environment string) liveB
 		t.Fatal("live-broker configuration must contain exactly one JSON object")
 	}
 	if len(fixture.Endpoints) == 0 || fixture.Username == "" || fixture.Password == "" ||
-		fixture.TLS.ServerName == "" || fixture.Exchange == "" ||
-		fixture.Classic.Name == "" || fixture.Classic.RoutingKey == "" ||
-		fixture.Quorum.Name == "" || fixture.Quorum.RoutingKey == "" ||
-		fixture.UnroutableRoutingKey == "" ||
-		fixture.UnroutableRoutingKey == fixture.Classic.RoutingKey ||
-		fixture.UnroutableRoutingKey == fixture.Quorum.RoutingKey {
-		t.Fatal("live-broker configuration is incomplete")
+		fixture.TLS.ServerName == "" || fixture.Exchange == "" {
+		t.Fatal("live-broker connection configuration is incomplete")
 	}
 	return fixture
 }
@@ -377,11 +402,21 @@ func openLiveProducer(
 	connection rabbitmqqueue.ConnectionConfig,
 ) *rabbitmqqueue.Producer {
 	t.Helper()
+	return openLiveProducerWithBounds(t, connection, 8, liveOperationTimeout)
+}
+
+func openLiveProducerWithBounds(
+	t *testing.T,
+	connection rabbitmqqueue.ConnectionConfig,
+	maxOutstanding int,
+	publishTimeout time.Duration,
+) *rabbitmqqueue.Producer {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
 	defer cancel()
 	producer, err := rabbitmqqueue.OpenProducer(ctx, connection, rabbitmqqueue.ProducerConfig{
-		Limits: rabbitmqqueue.DefaultLimits(), MaxOutstanding: 8,
-		PublishTimeout: liveOperationTimeout,
+		Limits: rabbitmqqueue.DefaultLimits(), MaxOutstanding: maxOutstanding,
+		PublishTimeout: publishTimeout,
 	})
 	if err != nil {
 		t.Fatalf("open live producer: %v", err)
@@ -398,13 +433,30 @@ func openLiveConsumer(
 	handler rabbitmqqueue.DeliveryHandler,
 ) *rabbitmqqueue.Consumer {
 	t.Helper()
+	return openLiveConsumerWithBounds(
+		t, connection, queue, queueType, maxRequeues, 1, 1, liveOperationTimeout, handler,
+	)
+}
+
+func openLiveConsumerWithBounds(
+	t *testing.T,
+	connection rabbitmqqueue.ConnectionConfig,
+	queue liveQueue,
+	queueType rabbitmqqueue.QueueType,
+	maxRequeues uint32,
+	prefetch int,
+	concurrency int,
+	handlerTimeout time.Duration,
+	handler rabbitmqqueue.DeliveryHandler,
+) *rabbitmqqueue.Consumer {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), liveOperationTimeout)
 	defer cancel()
 	consumer, err := rabbitmqqueue.OpenConsumer(ctx, connection, rabbitmqqueue.ConsumerConfig{
 		Limits: rabbitmqqueue.DefaultLimits(),
 		Queue:  rabbitmqqueue.QueueReference{Name: queue.Name, Type: queueType},
-		Name:   "live-consumer-" + randomLiveToken(t), Prefetch: 1, Concurrency: 1,
-		HandlerTimeout: liveOperationTimeout, MaxRequeues: maxRequeues,
+		Name:   "live-consumer-" + randomLiveToken(t), Prefetch: prefetch, Concurrency: concurrency,
+		HandlerTimeout: handlerTimeout, MaxRequeues: maxRequeues,
 		Failure: rabbitmqqueue.Reject(false),
 	}, handler)
 	if err != nil {

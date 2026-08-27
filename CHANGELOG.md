@@ -17,6 +17,8 @@
   classic/quorum routing, confirms, mandatory returns, and bounded settlement.
 - Add an externally coordinated three-node interruption harness with countable
   confirmation, ambiguity, delivery, and duplicate outcomes.
+- Add an externally provisioned four-queue performance harness for the 1M,
+  10M, and 100M messages-per-day steady and burst profiles.
 - Reject sub-second publication timestamps that AMQP would silently truncate.
 - Add bounded connection, credential, verified TLS, and recovery policy types.
 - Make configurable message limits reducible only, preserving package-wide

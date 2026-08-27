@@ -108,3 +108,6 @@ ambiguous, not-sent, delivered, and duplicate totals. A passing client run must
 be retained with the external fault timeline and broker evidence; the gate file
 alone does not prove that any fault occurred. The external operator owns gate
 removal and broker restoration.
+
+The four-queue steady and burst runner is documented under
+[performance evidence](performance.md).
