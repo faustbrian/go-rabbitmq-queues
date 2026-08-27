@@ -429,6 +429,43 @@ func TestApplyTopologyDeclaresDevelopmentTopologyWithExplicitArgumentsAndBinding
 	}
 }
 
+func TestApplyTopologyPreservesNativeEmptyDirectAndTopicBindingKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []ExchangeKind{ExchangeDirect, ExchangeTopic} {
+		kind := kind
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			channel := &fakeTopologyChannel{}
+			channel.bind = func(queue, routingKey, exchange string, arguments amqp.Table) error {
+				if queue != "orders" || routingKey != "" || exchange != "events" || len(arguments) != 0 {
+					t.Fatalf("binding = %q %q %q %#v, want native empty %s key", queue, routingKey, exchange, arguments, kind)
+				}
+				return nil
+			}
+			_, err := applyTopologyWith(
+				t.Context(), testConnectionConfig(),
+				TopologyPolicy{Mode: TopologyDeclare, Development: PermitDevelopmentTopology()},
+				Topology{
+					Exchanges: []Exchange{{Name: "events", Kind: kind, Durable: true}},
+					Queues:    []Queue{{Name: "orders", Type: QueueClassic, Durable: true}},
+					Bindings:  []Binding{{Exchange: "events", Queue: "orders"}},
+				},
+				func(context.Context, Endpoint, ConnectionConfig, Credentials) (topologyChannel, io.Closer, error) {
+					return channel, &concurrentCountingCloser{}, nil
+				},
+			)
+			if err != nil {
+				t.Fatalf("applyTopologyWith() error = %v", err)
+			}
+			if channel.bindCalls != 1 {
+				t.Fatalf("binding calls = %d, want 1", channel.bindCalls)
+			}
+		})
+	}
+}
+
 func TestApplyTopologyRejectsServerNamedQueueItCannotKeepAlive(t *testing.T) {
 	t.Parallel()
 

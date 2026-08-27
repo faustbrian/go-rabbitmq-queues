@@ -110,6 +110,39 @@ func TestProducerPublishesNativeFanoutRoutingWithoutInventingAKey(t *testing.T) 
 	}
 }
 
+func TestProducerPreservesNativeEmptyDirectAndTopicRoutingKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []ExchangeKind{ExchangeDirect, ExchangeTopic} {
+		kind := kind
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			channel := newFakeProducerChannel()
+			channel.publish = func(_ context.Context, exchange, key string, _ bool, _ bool, _ amqp.Publishing) error {
+				if exchange != "events" || key != "" {
+					t.Fatalf("publish route = (%q, %q), want native empty %s route", exchange, key, kind)
+				}
+				channel.confirms <- amqp.Confirmation{DeliveryTag: channel.nextSequence(), Ack: true}
+				return nil
+			}
+			producer, err := newProducerFromChannel(testProducerConfig(), "session-a", channel, io.NopCloser(nilReader{}))
+			if err != nil {
+				t.Fatalf("construct producer: %v", err)
+			}
+			t.Cleanup(func() { closeProducerForTest(t, producer) })
+
+			publication := testPublication()
+			publication.ExchangeKind = kind
+			publication.RoutingKey = ""
+			result, err := producer.Publish(t.Context(), publication)
+			if err != nil || result.State != PublishConfirmed {
+				t.Fatalf("Publish() = (%#v, %v), want confirmed empty %s publication", result, err, kind)
+			}
+		})
+	}
+}
+
 func TestProducerPublishesToTheExplicitDefaultExchange(t *testing.T) {
 	t.Parallel()
 

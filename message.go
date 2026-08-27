@@ -110,7 +110,8 @@ type Publication struct {
 	// identity when ExchangeKind is explicitly ExchangeDirect.
 	Exchange string
 	// ExchangeKind records the expected routing semantic for local validation.
-	// Omit it only for non-empty direct/topic-compatible routing keys; fanout
+	// Omit it only for non-empty direct/topic-compatible routing keys. An
+	// explicit direct or topic kind may use RabbitMQ's native empty key; fanout
 	// and headers publications must name their kind and use an empty key.
 	ExchangeKind ExchangeKind
 	RoutingKey   string
@@ -214,8 +215,10 @@ func validPublicationRouting(kind ExchangeKind, routingKey string, limits Limits
 		return false
 	}
 	switch kind {
-	case "", ExchangeDirect, ExchangeTopic:
+	case "":
 		return routingKey != ""
+	case ExchangeDirect, ExchangeTopic:
+		return true
 	case ExchangeFanout, ExchangeHeaders:
 		return routingKey == ""
 	default:

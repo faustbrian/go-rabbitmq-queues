@@ -370,7 +370,7 @@ func validExchangeBindingWithLimits(
 	}
 	switch kind {
 	case ExchangeDirect, ExchangeTopic:
-		return routingKey != "" && len(arguments) == 0
+		return len(arguments) == 0
 	case ExchangeFanout:
 		return routingKey == "" && len(arguments) == 0
 	case ExchangeHeaders:

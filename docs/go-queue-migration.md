@@ -43,7 +43,7 @@ explicit dispositions:
 
 | Legacy surface | Current default | Disposition and native boundary |
 |---|---|---|
-| `ExchangeDirect`, `ExchangeTopic` | Not applicable; `WithExchangeType` defaults to `ExchangeDirect` | Conditional direct mapping to the corresponding native `ExchangeKind` when the binding has a non-empty routing key and no arguments |
+| `ExchangeDirect`, `ExchangeTopic` | Not applicable; `WithExchangeType` defaults to `ExchangeDirect` | Conditional direct mapping to the corresponding native `ExchangeKind` when the binding has no arguments; bounded routing keys, including empty keys, are preserved |
 | `ExchangeFanout` | Not applicable | Requires characterization and normalization: the legacy worker binds with the configured routing key, while native fanout topology requires an empty routing key; reject configurations whose behavior cannot be proven equivalent |
 | `ExchangeHeaders` | Not applicable | Incompatible without an explicit migration: the legacy worker supplies a routing key and no binding arguments, while native headers topology requires an empty routing key and non-empty bounded match arguments |
 | `WithAddr` | `amqp://guest:guest@localhost:5672/` | Deprecated and rejected for production adoption; bridge only into explicitly supplied structured endpoint, virtual-host, credential-provider, and verified-TLS configuration without retaining or logging the URI |

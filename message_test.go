@@ -139,7 +139,7 @@ func TestPublicationRejectsLimitsAbovePolicyMaximum(t *testing.T) {
 	}
 }
 
-func TestPublicationSupportsNativeFanoutAndHeadersRouting(t *testing.T) {
+func TestPublicationSupportsBuiltInExchangeRoutingSemantics(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -150,11 +150,11 @@ func TestPublicationSupportsNativeFanoutAndHeadersRouting(t *testing.T) {
 		"unspecified kind preserves non-empty routing": {routingKey: "orders.created"},
 		"direct uses a routing key":                    {kind: ExchangeDirect, routingKey: "orders.created"},
 		"topic uses a routing key":                     {kind: ExchangeTopic, routingKey: "orders.*"},
+		"direct accepts an empty routing key":          {kind: ExchangeDirect},
+		"topic accepts an empty routing key":           {kind: ExchangeTopic},
 		"fanout uses an empty routing key":             {kind: ExchangeFanout},
 		"headers uses an empty routing key":            {kind: ExchangeHeaders},
 		"unspecified kind cannot omit routing":         {want: ErrInvalidPublication},
-		"direct cannot omit routing":                   {kind: ExchangeDirect, want: ErrInvalidPublication},
-		"topic cannot omit routing":                    {kind: ExchangeTopic, want: ErrInvalidPublication},
 		"fanout cannot carry routing": {
 			kind: ExchangeFanout, routingKey: "ignored", want: ErrInvalidPublication,
 		},

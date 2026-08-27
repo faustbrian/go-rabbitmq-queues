@@ -136,6 +136,15 @@ func TestConsumerConfigModelsClientOwnedTransientQueue(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid transient consumer: %v", err)
 	}
+	for _, kind := range []ExchangeKind{ExchangeDirect, ExchangeTopic} {
+		config := valid
+		transient := *valid.Queue.Transient
+		transient.Exchange.Kind = kind
+		config.Queue.Transient = &transient
+		if err := config.Validate(); err != nil {
+			t.Fatalf("valid empty %s transient binding: %v", kind, err)
+		}
+	}
 
 	tests := map[string]func(*ConsumerConfig){
 		"named transient queue":  func(config *ConsumerConfig) { config.Queue.Name = "orders" },
@@ -147,9 +156,6 @@ func TestConsumerConfigModelsClientOwnedTransientQueue(t *testing.T) {
 		"fanout routing key": func(config *ConsumerConfig) { config.Queue.Transient.RoutingKey = "events.created" },
 		"headers without arguments": func(config *ConsumerConfig) {
 			config.Queue.Transient.Exchange.Kind = ExchangeHeaders
-		},
-		"direct without routing key": func(config *ConsumerConfig) {
-			config.Queue.Transient.Exchange.Kind = ExchangeDirect
 		},
 		"arguments exceed consumer limit": func(config *ConsumerConfig) {
 			config.Queue.Transient.Exchange.Kind = ExchangeHeaders

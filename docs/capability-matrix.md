@@ -31,9 +31,10 @@ Important RabbitMQ 4.3 distinctions:
   acknowledgements for data-safety claims;
 - quorum confirms are emitted after replication to a member quorum;
 - `Publication.ExchangeKind` records the locally expected exchange semantic.
-  Direct and topic publications use a non-empty routing key; fanout and headers
-  publications use the native empty key. Passive topology verification remains
-  the broker evidence for the exchange's actual kind;
+  Direct and topic publications preserve any bounded routing key, including
+  RabbitMQ's native empty key; fanout and headers publications require the
+  empty key. Passive topology verification remains the broker evidence for the
+  exchange's actual kind;
 - RabbitMQ's predeclared default direct exchange is represented only by an
   empty `Publication.Exchange` paired with an explicit `ExchangeDirect` kind.
   Its routing key is the destination queue identity;

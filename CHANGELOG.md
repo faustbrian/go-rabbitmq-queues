@@ -41,10 +41,10 @@
 - Reject malformed or oversized reserved publish-correlation metadata on
   delivery instead of silently bypassing header bounds.
 - Add bounded AMQP publication metadata and distinct publisher outcome states.
-- Add exchange-kind-aware publication routing so fanout and headers exchanges
-  preserve their native empty routing key without weakening direct/topic policy.
+- Add exchange-kind-aware publication routing so every built-in exchange
+  preserves its native bounded routing-key semantics, including empty keys.
 - Preserve native empty routing keys, including bounded `x-death` history, when
-  consuming fanout and headers deliveries.
+  consuming from any built-in exchange.
 - Represent RabbitMQ's predeclared default direct exchange through an explicit
   direct kind and empty exchange identity for queue and reply routing.
 - Add bounded AMQP reply-to publication metadata for application-owned
