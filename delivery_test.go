@@ -328,6 +328,51 @@ func TestDeliveryConversionHidesProducerCorrelationWithinApplicationHeaderLimit(
 	}
 }
 
+func TestDeliveryConversionHidesBrokerDeathSummaryMetadata(t *testing.T) {
+	t.Parallel()
+
+	source := testAMQPDelivery(44)
+	source.Headers = amqp.Table{
+		firstDeathQueueHeader:    "orders",
+		firstDeathReasonHeader:   "rejected",
+		firstDeathExchangeHeader: "events",
+		lastDeathQueueHeader:     "orders.retry",
+		lastDeathReasonHeader:    "expired",
+		lastDeathExchangeHeader:  "retries",
+		"application":            "value",
+	}
+	delivery, err := deliveryFromAMQP(source, testConsumerConfig())
+	if err != nil {
+		t.Fatalf("deliveryFromAMQP(): %v", err)
+	}
+	if len(delivery.Headers) != 1 || delivery.Headers[0].Key != "application" ||
+		delivery.Headers[0].Kind != HeaderString || delivery.Headers[0].String != "value" {
+		t.Fatalf("application headers = %#v, want broker summaries hidden", delivery.Headers)
+	}
+}
+
+func TestDeliveryConversionRejectsMalformedBrokerDeathSummaryMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]amqp.Table{
+		"wrong type":      {firstDeathQueueHeader: int64(1)},
+		"empty queue":     {firstDeathQueueHeader: ""},
+		"control reason":  {lastDeathReasonHeader: "rejected\nspoofed"},
+		"oversized queue": {lastDeathQueueHeader: strings.Repeat("q", DefaultLimits().MaxNameBytes+1)},
+	}
+	for name, headers := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			source := testAMQPDelivery(46)
+			source.Headers = headers
+			if _, err := deliveryFromAMQP(source, testConsumerConfig()); !errors.Is(err, ErrInvalidDelivery) {
+				t.Fatalf("deliveryFromAMQP() error = %v, want %v", err, ErrInvalidDelivery)
+			}
+		})
+	}
+}
+
 func TestDeliveryConversionRejectsMalformedProducerCorrelation(t *testing.T) {
 	t.Parallel()
 

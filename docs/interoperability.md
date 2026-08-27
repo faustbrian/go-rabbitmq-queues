@@ -31,7 +31,7 @@ or establish PHP, Laravel, TLS, routing, confirmation, or settlement behavior.
 | `properties.app_id` | `app-id` | Publishing application identity |
 | `properties.expiration_ms` | `expiration` | Optional non-negative decimal milliseconds; zero means immediate expiry |
 | `properties.priority` | `priority` | Unsigned AMQP octet; queue support remains topology-specific |
-| `headers` | application headers | Unique string, bool, signed int64, or byte entries; order has no AMQP meaning |
+| `headers` | application headers | Unique non-reserved string, bool, signed int64, or byte entries; order has no AMQP meaning |
 | `body_base64` | body | Base64 fixture representation decoded to exact opaque bytes |
 
 `traceparent` and `tracestate` are ordinary string application headers. Their
@@ -40,6 +40,9 @@ W3C semantics and trust policy remain application responsibilities.
 package-mandated schema mechanism. The package-owned publish-correlation header
 is deliberately absent from public deliveries and must never become part of an
 interoperability contract.
+RabbitMQ-owned `x-death`, first/last-death summary, acquired-count, and
+delivery-count headers are also excluded from application publication headers;
+typed delivery metadata owns those broker values.
 
 String application-header values are bounded message metadata rather than
 identities. Their bytes, including control characters, are preserved across

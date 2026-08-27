@@ -199,7 +199,7 @@ func fuzzHeader(size uint16, flags, kind uint8) Header {
 }
 
 func fuzzAMQPHeaders(kind uint8, size uint16) amqp.Table {
-	switch kind % 8 {
+	switch kind % 10 {
 	case 0:
 		return amqp.Table{"metadata": fuzzText(size, false)}
 	case 1:
@@ -214,12 +214,16 @@ func fuzzAMQPHeaders(kind uint8, size uint16) amqp.Table {
 		return amqp.Table{deliveryCountHeader: int64(size)}
 	case 6:
 		return amqp.Table{deliveryCountHeader: int64(-1)}
-	default:
+	case 7:
 		return amqp.Table{deathHeader: []any{amqp.Table{
 			"count": int64(size), "reason": "rejected", "queue": "orders",
 			"exchange": "events", "routing-keys": []any{"orders.created"},
 			"time": time.Unix(100, 0),
 		}}}
+	case 8:
+		return amqp.Table{firstDeathQueueHeader: fuzzText(size, kind&1 != 0)}
+	default:
+		return amqp.Table{lastDeathReasonHeader: int64(size)}
 	}
 }
 

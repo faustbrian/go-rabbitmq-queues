@@ -17,10 +17,27 @@ const (
 )
 
 const (
-	acquiredCountHeader = "x-acquired-count"
-	deliveryCountHeader = "x-delivery-count"
-	deathHeader         = "x-death"
+	acquiredCountHeader      = "x-acquired-count"
+	deliveryCountHeader      = "x-delivery-count"
+	deathHeader              = "x-death"
+	firstDeathQueueHeader    = "x-first-death-queue"
+	firstDeathReasonHeader   = "x-first-death-reason"
+	firstDeathExchangeHeader = "x-first-death-exchange"
+	lastDeathQueueHeader     = "x-last-death-queue"
+	lastDeathReasonHeader    = "x-last-death-reason"
+	lastDeathExchangeHeader  = "x-last-death-exchange"
 )
+
+func reservedDeliveryMetadataHeader(key string) bool {
+	switch key {
+	case publishTokenHeader, acquiredCountHeader, deliveryCountHeader, deathHeader,
+		firstDeathQueueHeader, firstDeathReasonHeader, firstDeathExchangeHeader,
+		lastDeathQueueHeader, lastDeathReasonHeader, lastDeathExchangeHeader:
+		return true
+	default:
+		return false
+	}
+}
 
 // TransientQueue describes an explicitly client-owned, connection-scoped,
 // server-named classic queue bound to an existing exchange. The consumer
@@ -191,6 +208,11 @@ func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, er
 	if err != nil {
 		return Delivery{}, err
 	}
+	deathSummaryBytes, err := deliveryDeathSummaryBytes(source.Headers, config.Limits)
+	if err != nil || deathSummaryBytes > config.Limits.MaxHeaderBytes-metadataBytes {
+		return Delivery{}, ErrInvalidDelivery
+	}
+	metadataBytes += deathSummaryBytes
 	acquiredCount, err := deliveryCounter(source.Headers, acquiredCountHeader)
 	if err != nil {
 		return Delivery{}, err
@@ -251,8 +273,7 @@ func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
 	}
 	keys := make([]string, 0, len(table))
 	for key := range table {
-		if key != acquiredCountHeader && key != deathHeader &&
-			key != deliveryCountHeader && key != publishTokenHeader {
+		if !reservedDeliveryMetadataHeader(key) {
 			keys = append(keys, key)
 		}
 	}
@@ -278,6 +299,38 @@ func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
 		headers = append(headers, header)
 	}
 	return headers, bytes, nil
+}
+
+func deliveryDeathSummaryBytes(table amqp.Table, limits Limits) (int, error) {
+	type summaryField struct {
+		key        string
+		allowEmpty bool
+	}
+	fields := [...]summaryField{
+		{key: firstDeathQueueHeader},
+		{key: firstDeathReasonHeader},
+		{key: firstDeathExchangeHeader, allowEmpty: true},
+		{key: lastDeathQueueHeader},
+		{key: lastDeathReasonHeader},
+		{key: lastDeathExchangeHeader, allowEmpty: true},
+	}
+	bytes := 0
+	for _, field := range fields {
+		value, exists := table[field.key]
+		if !exists {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok || len(text) > limits.MaxNameBytes || containsControl(text) ||
+			(!field.allowEmpty && invalidIdentity(text, limits.MaxNameBytes)) {
+			return 0, ErrInvalidDelivery
+		}
+		bytes += len(text)
+		if bytes > limits.MaxHeaderBytes {
+			return 0, ErrInvalidDelivery
+		}
+	}
+	return bytes, nil
 }
 
 func stableDeliveryHeader(key string, value any) (Header, int, bool) {

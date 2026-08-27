@@ -166,7 +166,7 @@ func (publication Publication) Validate(limits Limits) error {
 		if invalidIdentity(header.Key, limits.MaxNameBytes) {
 			return ErrInvalidHeader
 		}
-		if header.Key == publishTokenHeader {
+		if reservedDeliveryMetadataHeader(header.Key) {
 			return ErrReservedHeader
 		}
 		if _, exists := seen[header.Key]; exists {

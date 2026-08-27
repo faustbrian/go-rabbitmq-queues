@@ -44,6 +44,10 @@ internal transfer.
   `original-expiration` preserves the per-message TTL RabbitMQ removes during
   dead lettering; the broker exchange and binding remain the authoritative
   routing evidence.
+- Publications reject the package correlation key and RabbitMQ-owned death and
+  delivery-count headers. Delivery conversion bounds those reserved fields,
+  exposes counters and `x-death` through typed fields, and keeps RabbitMQ's
+  redundant first/last-death summaries out of application headers.
 - Asynchronous publishing owns the admitted publication and emits exactly one
   terminal outcome; a full admission window rejects new work without spawning
   another worker.

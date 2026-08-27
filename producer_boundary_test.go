@@ -621,13 +621,31 @@ func TestAMQPPublishingDistinguishesOmittedAndImmediateExpiration(t *testing.T) 
 	}
 }
 
-func TestPublicationRejectsPackageCorrelationHeader(t *testing.T) {
+func TestPublicationRejectsReservedDeliveryMetadata(t *testing.T) {
 	t.Parallel()
 
-	publication := testPublication()
-	publication.Message.Headers = append(publication.Message.Headers, StringHeader(publishTokenHeader, "collision"))
-	if err := publication.Validate(DefaultLimits()); !errors.Is(err, ErrReservedHeader) {
-		t.Fatalf("Validate() error = %v, want %v", err, ErrReservedHeader)
+	for _, header := range []Header{
+		StringHeader(publishTokenHeader, "collision"),
+		Int64Header(acquiredCountHeader, 1),
+		Int64Header(deliveryCountHeader, 1),
+		StringHeader(deathHeader, "spoofed"),
+		StringHeader(firstDeathQueueHeader, "spoofed"),
+		StringHeader(firstDeathReasonHeader, "spoofed"),
+		StringHeader(firstDeathExchangeHeader, "spoofed"),
+		StringHeader(lastDeathQueueHeader, "spoofed"),
+		StringHeader(lastDeathReasonHeader, "spoofed"),
+		StringHeader(lastDeathExchangeHeader, "spoofed"),
+	} {
+		header := header
+		t.Run(header.Key, func(t *testing.T) {
+			t.Parallel()
+
+			publication := testPublication()
+			publication.Message.Headers = append(publication.Message.Headers, header)
+			if err := publication.Validate(DefaultLimits()); !errors.Is(err, ErrReservedHeader) {
+				t.Fatalf("Validate() error = %v, want %v", err, ErrReservedHeader)
+			}
+		})
 	}
 }
 

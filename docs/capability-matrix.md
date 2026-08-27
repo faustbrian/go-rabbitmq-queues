@@ -51,6 +51,9 @@ Important RabbitMQ 4.3 distinctions:
 - each bounded `Death` preserves AMQP 0-9-1 `x-death.original-expiration` when
   RabbitMQ removes a per-message TTL during dead lettering, including explicit
   zero while distinguishing omission;
+- package correlation and RabbitMQ-owned death, acquired-count, and
+  delivery-count headers are reserved from application publication. Broker
+  first/last-death summaries are bounded but remain outside application headers;
 - per-message expiration distinguishes omission from explicit zero across
   publication and delivery; zero requests immediate expiry when RabbitMQ cannot
   deliver directly to a ready consumer;

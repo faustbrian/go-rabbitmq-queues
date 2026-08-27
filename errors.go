@@ -63,7 +63,7 @@ var (
 	ErrPublishRejected = errors.New("rabbitmqqueue: publication was rejected")
 	// ErrPublishAmbiguous means transmission began but no definitive broker result was observed.
 	ErrPublishAmbiguous = errors.New("rabbitmqqueue: publication outcome is ambiguous")
-	// ErrReservedHeader means application metadata collides with package-owned correlation state.
+	// ErrReservedHeader means application metadata collides with package- or broker-owned delivery state.
 	ErrReservedHeader = errors.New("rabbitmqqueue: reserved header")
 	// ErrInvalidConsumer means consumer identity, bounds, or failure policy is invalid.
 	ErrInvalidConsumer = errors.New("rabbitmqqueue: invalid consumer")
