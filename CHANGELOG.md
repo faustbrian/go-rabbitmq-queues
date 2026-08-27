@@ -13,6 +13,7 @@
 
 ### Added
 
+- Reject sub-second publication timestamps that AMQP would silently truncate.
 - Add bounded connection, credential, verified TLS, and recovery policy types.
 - Add explicit classic/quorum queue and passive/development topology policy.
 - Add bounded declaration-equivalent queue TTL, expiry, length, overflow, and

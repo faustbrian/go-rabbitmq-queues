@@ -81,10 +81,11 @@ type Message struct {
 	ContentEncoding string
 	Type            string
 	AppID           string
-	Timestamp       time.Time
-	Expiration      time.Duration
-	Priority        *uint16
-	Headers         []Header
+	// Timestamp is either zero or a non-negative whole-second AMQP timestamp.
+	Timestamp  time.Time
+	Expiration time.Duration
+	Priority   *uint16
+	Headers    []Header
 }
 
 // DeliveryMode selects broker persistence intent.
@@ -136,7 +137,8 @@ func (publication Publication) Validate(limits Limits) error {
 	if message.Priority != nil && *message.Priority > 255 {
 		return ErrInvalidPriority
 	}
-	if !message.Timestamp.IsZero() && message.Timestamp.Before(time.Unix(0, 0)) {
+	if !message.Timestamp.IsZero() &&
+		(message.Timestamp.Before(time.Unix(0, 0)) || message.Timestamp.Nanosecond() != 0) {
 		return ErrInvalidPublication
 	}
 	if message.Expiration < 0 ||

@@ -84,6 +84,10 @@ func TestPublicationValidation(t *testing.T) {
 			mutate: func(publication *Publication) { publication.Message.Expiration = 1500 * time.Microsecond },
 			want:   ErrInvalidExpiration,
 		},
+		"timestamp preserves AMQP seconds": {
+			mutate: func(publication *Publication) { publication.Message.Timestamp = time.Unix(1, 1) },
+			want:   ErrInvalidPublication,
+		},
 		"reply to rejects control characters": {
 			mutate: func(publication *Publication) { publication.Message.ReplyTo = "rpc\nresponses" },
 			want:   ErrInvalidPublication,
