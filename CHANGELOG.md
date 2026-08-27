@@ -29,6 +29,8 @@
   development-only binding declaration without mutating production bindings.
 - Add a language-neutral AMQP message corpus for byte-preserving interoperability
   checks without claiming broker or PHP evidence.
+- Preserve bounded string application-header contents across publication and
+  delivery without treating control characters as identity data.
 - Add bounded AMQP publication metadata and distinct publisher outcome states.
 - Add exchange-kind-aware publication routing so fanout and headers exchanges
   preserve their native empty routing key without weakening direct/topic policy.

@@ -272,7 +272,7 @@ func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
 func stableDeliveryHeader(key string, value any) (Header, int, bool) {
 	switch value := value.(type) {
 	case string:
-		return StringHeader(key, value), len(value), !containsControl(value)
+		return StringHeader(key, value), len(value), true
 	case bool:
 		return BoolHeader(key, value), 1, true
 	case []byte:

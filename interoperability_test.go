@@ -81,6 +81,30 @@ func TestLanguageNeutralInteroperabilityFixturePreservesAMQPMetadataAndBytes(t *
 	assertFixtureHeaders(t, delivery.Headers, message.Headers)
 }
 
+func TestStringHeaderRoundTripPreservesBoundedControlBytes(t *testing.T) {
+	t.Parallel()
+
+	publication := fixturePublication(t, readInteroperabilityFixture(t))
+	publication.Message.Headers = []Header{StringHeader("multiline", "line one\nline two\t")}
+	if err := publication.Validate(DefaultLimits()); err != nil {
+		t.Fatalf("publication validation: %v", err)
+	}
+
+	published := amqpPublishing(publication.Message, publication.DeliveryMode, "header-token")
+	delivery, err := deliveryFromAMQP(amqp.Delivery{
+		Headers: published.Headers, DeliveryMode: published.DeliveryMode,
+		ConsumerTag: "interop-consumer", DeliveryTag: 2,
+		Exchange: publication.Exchange, RoutingKey: publication.RoutingKey,
+	}, testConsumerConfig())
+	if err != nil {
+		t.Fatalf("delivery conversion: %v", err)
+	}
+	if len(delivery.Headers) != 1 || delivery.Headers[0].Key != "multiline" ||
+		delivery.Headers[0].String != "line one\nline two\t" {
+		t.Fatal("bounded string header content was not preserved")
+	}
+}
+
 func readInteroperabilityFixture(t *testing.T) interoperabilityFixture {
 	t.Helper()
 	file, err := os.Open("testdata/interoperability/message-v1.json")

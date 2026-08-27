@@ -41,6 +41,10 @@ package-mandated schema mechanism. The package-owned publish-correlation header
 is deliberately absent from public deliveries and must never become part of an
 interoperability contract.
 
+String application-header values are bounded message metadata rather than
+identities. Their bytes, including control characters, are preserved across
+publication and delivery and are never copied into package observations.
+
 `reply-to` and `correlation-id` expose the AMQP metadata needed for an
 application-owned request/reply flow. The package does not create reply queues,
 dispatch responses, enforce RPC timeouts, or claim exactly-once RPC behavior.
