@@ -16,7 +16,10 @@ func TestProducerConfigRejectsUnboundedPolicy(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]func(*ProducerConfig){
-		"limits":           func(config *ProducerConfig) { config.Limits = Limits{} },
+		"limits": func(config *ProducerConfig) { config.Limits = Limits{} },
+		"limits above safety cap": func(config *ProducerConfig) {
+			config.Limits.MaxPayloadBytes++
+		},
 		"zero outstanding": func(config *ProducerConfig) { config.MaxOutstanding = 0 },
 		"too many":         func(config *ProducerConfig) { config.MaxOutstanding = MaxOutstandingConfirms + 1 },
 		"zero timeout":     func(config *ProducerConfig) { config.PublishTimeout = 0 },

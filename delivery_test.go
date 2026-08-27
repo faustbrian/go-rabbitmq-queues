@@ -15,7 +15,10 @@ func TestConsumerConfigRequiresBoundedQueueAndFailurePolicy(t *testing.T) {
 
 	valid := testConsumerConfig()
 	tests := map[string]func(*ConsumerConfig){
-		"limits":           func(config *ConsumerConfig) { config.Limits = Limits{} },
+		"limits": func(config *ConsumerConfig) { config.Limits = Limits{} },
+		"limits above safety cap": func(config *ConsumerConfig) {
+			config.Limits.MaxPayloadBytes++
+		},
 		"queue name":       func(config *ConsumerConfig) { config.Queue.Name = "" },
 		"queue type":       func(config *ConsumerConfig) { config.Queue.Type = QueueType("stream") },
 		"consumer name":    func(config *ConsumerConfig) { config.Name = "bad\nname" },

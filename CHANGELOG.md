@@ -15,6 +15,8 @@
 
 - Reject sub-second publication timestamps that AMQP would silently truncate.
 - Add bounded connection, credential, verified TLS, and recovery policy types.
+- Make configurable message limits reducible only, preserving package-wide
+  allocation caps and AMQP short-string bounds.
 - Add explicit classic/quorum queue and passive/development topology policy.
 - Add bounded declaration-equivalent queue TTL, expiry, length, overflow, and
   dead-letter policy with explicit RabbitMQ 4.3 queue-type restrictions.

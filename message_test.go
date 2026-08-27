@@ -116,6 +116,29 @@ func TestPublicationValidation(t *testing.T) {
 	}
 }
 
+func TestPublicationRejectsLimitsAbovePolicyMaximum(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(*Limits){
+		"payload bytes":     func(limits *Limits) { limits.MaxPayloadBytes++ },
+		"header entries":    func(limits *Limits) { limits.MaxHeaderEntries++ },
+		"header bytes":      func(limits *Limits) { limits.MaxHeaderBytes++ },
+		"name bytes":        func(limits *Limits) { limits.MaxNameBytes++ },
+		"routing key bytes": func(limits *Limits) { limits.MaxRoutingKeyBytes++ },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			limits := DefaultLimits()
+			mutate(&limits)
+			if err := testPublication().Validate(limits); !errors.Is(err, ErrInvalidBounds) {
+				t.Fatalf("Validate() error = %v, want %v", err, ErrInvalidBounds)
+			}
+		})
+	}
+}
+
 func TestPublicationSupportsNativeFanoutAndHeadersRouting(t *testing.T) {
 	t.Parallel()
 

@@ -8,7 +8,8 @@ const (
 	maxPublishTokenBytes    = maxProducerSessionBytes + 1 + 20
 )
 
-// Limits bounds untrusted message and topology-controlled allocation.
+// Limits bounds untrusted message and topology-controlled allocation. Values
+// may be lowered from DefaultLimits but cannot raise the package safety caps.
 type Limits struct {
 	MaxPayloadBytes    int
 	MaxHeaderEntries   int
@@ -29,9 +30,12 @@ func DefaultLimits() Limits {
 }
 
 func (limits Limits) valid() bool {
-	return limits.MaxPayloadBytes > 0 && limits.MaxHeaderEntries > 0 &&
-		limits.MaxHeaderBytes > 0 && limits.MaxNameBytes > 0 &&
-		limits.MaxRoutingKeyBytes > 0
+	maximum := DefaultLimits()
+	return limits.MaxPayloadBytes > 0 && limits.MaxPayloadBytes <= maximum.MaxPayloadBytes &&
+		limits.MaxHeaderEntries > 0 && limits.MaxHeaderEntries <= maximum.MaxHeaderEntries &&
+		limits.MaxHeaderBytes > 0 && limits.MaxHeaderBytes <= maximum.MaxHeaderBytes &&
+		limits.MaxNameBytes > 0 && limits.MaxNameBytes <= maximum.MaxNameBytes &&
+		limits.MaxRoutingKeyBytes > 0 && limits.MaxRoutingKeyBytes <= maximum.MaxRoutingKeyBytes
 }
 
 // HeaderKind identifies a bounded, language-neutral AMQP field-table value.
