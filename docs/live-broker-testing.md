@@ -196,9 +196,21 @@ at commit `57467ae61533d21c16dae019a45ddea2342d9a5e` recorded:
   `rabbit@rabbit3` as leader after recovery: 88 attempts, 24 confirmed, 64
   not-sent, zero rejected or ambiguous, 24 delivered, and zero duplicates.
 
-This is CI-hosted node-loss, quorum-partition, and complete-cluster-restart
-evidence. It is not reconnect-storm, rolling-upgrade, installed-Operator
-reconciliation, application rollout, or production-capacity evidence.
+Retained
+[run 33049501240](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33049501240)
+at commit `a9b0be10a291c92bc179e8073530e3f53c4a131c` recorded three
+complete quorum-cluster outages across four producer and consumer pairs. Each
+outage held all three nodes down for five seconds. All eight resources became
+unavailable and recovered after every cycle, RabbitMQ reported exactly four
+active consumers after each recovery, and the public observation streams
+recorded 108 producer and 108 consumer reconnect attempts. The message ledger
+recorded 14 attempts, 11 confirmed, three not-sent, zero rejected or ambiguous,
+11 delivered, and zero duplicates.
+
+This is CI-hosted node-loss, quorum-partition, complete-cluster-restart, and
+bounded reconnect-storm evidence. It is not rolling-upgrade,
+installed-Operator reconciliation, application rollout, or
+production-capacity evidence.
 
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).

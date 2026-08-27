@@ -45,8 +45,11 @@ retained three-node matrix proves bounded client behavior while the classic
 queue's hosting node is stopped and restarted, and while a quorum leader is
 stopped and replaced. It also proves delivery reconciliation while one quorum
 node is partitioned and healed, and recovery after a complete three-node
-cluster restart with a 20-second outage. It does not establish reconnect-storm
-or rolling-upgrade behavior, installed-operator reconciliation,
+cluster restart with a 20-second outage. A separate retained scenario proves
+three complete five-second cluster outages across four producer and consumer
+pairs, fresh recovery after every cycle, exactly four active consumers after
+each recovery, and duplicate-free delivery reconciliation. It does not
+establish rolling-upgrade behavior, installed-operator reconciliation,
 Laravel-framework integration, application rollout, or production performance
 capacity.
 The operator manifests pass strict validation against the exact
@@ -70,7 +73,10 @@ Retained CI evidence:
   at commit `d28812cb7d510319d5d0ac57ce145c5566dd8849`;
 - three-node quorum partition and complete cluster restart:
   [run 33047281659](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33047281659)
-  at commit `57467ae61533d21c16dae019a45ddea2342d9a5e`.
+  at commit `57467ae61533d21c16dae019a45ddea2342d9a5e`;
+- three-cycle, four-resource-pair reconnect storm:
+  [run 33049501240](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33049501240)
+  at commit `a9b0be10a291c92bc179e8073530e3f53c4a131c`.
 
 ## Authoritative sources
 
