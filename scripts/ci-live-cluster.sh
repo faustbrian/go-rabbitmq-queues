@@ -417,9 +417,11 @@ chmod 0600 "${task_root}/live-cluster.json"
 test_log="${task_root}/cluster-test.log"
 test_name='TestLiveBrokerThreeNodeInterruption'
 ready_marker='FAULT_WINDOW_READY'
+ready_wait_seconds=120
 if [[ "${fault_scenario}" == quorum-performance-leader-loss ]]; then
     test_name='TestLiveBrokerThreeNodePerformanceLeaderLoss'
     ready_marker='PERFORMANCE_FAULT_READY'
+    ready_wait_seconds=180
 fi
 (
     cd "${project_root}"
@@ -434,7 +436,7 @@ fi
 test_pid=$!
 
 ready=false
-for _ in $(seq 1 120); do
+for _ in $(seq 1 "${ready_wait_seconds}"); do
     if grep -q "${ready_marker}" "${test_log}"; then
         ready=true
         break
