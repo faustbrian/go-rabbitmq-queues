@@ -51,6 +51,96 @@ func TestConsumerConfiguresManualQOSAndAcknowledgesAfterHandler(t *testing.T) {
 	}
 }
 
+func TestDeliveryAwaitSettlementReportsBrokerResult(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	deliveries := make(chan Delivery, 1)
+	release := make(chan struct{})
+	consumer, err := newConsumerFromChannel(
+		t.Context(), testConsumerConfig(),
+		func(_ context.Context, delivery Delivery) (Settlement, error) {
+			deliveries <- delivery
+			<-release
+			return Acknowledge(), nil
+		},
+		channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+
+	channel.deliveries <- testAMQPDelivery(91)
+	delivery := <-deliveries
+	awaited := make(chan error, 1)
+	go func() { awaited <- delivery.AwaitSettlement(t.Context()) }()
+	select {
+	case err := <-awaited:
+		t.Fatalf("AwaitSettlement() returned before broker settlement: %v", err)
+	case <-time.After(time.Millisecond):
+	}
+
+	close(release)
+	if settled := <-channel.settled; settled.method != SettlementAcknowledge || settled.tag != 91 {
+		t.Fatalf("settlement = %#v, want ACK", settled)
+	}
+	if err := <-awaited; err != nil {
+		t.Fatalf("AwaitSettlement(): %v", err)
+	}
+}
+
+func TestDeliveryAwaitSettlementSanitizesBrokerFailure(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	brokerErr := errors.New("sensitive broker settlement detail")
+	channel.ackErr = brokerErr
+	deliveries := make(chan Delivery, 1)
+	consumer, err := newConsumerFromChannel(
+		t.Context(), testConsumerConfig(),
+		func(_ context.Context, delivery Delivery) (Settlement, error) {
+			deliveries <- delivery
+			return Acknowledge(), nil
+		},
+		channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+
+	channel.deliveries <- testAMQPDelivery(92)
+	err = (<-deliveries).AwaitSettlement(t.Context())
+	if !errors.Is(err, ErrConsumerUnavailable) || errors.Is(err, brokerErr) {
+		t.Fatalf("AwaitSettlement() error = %v, want sanitized unavailable", err)
+	}
+}
+
+func TestDeliveryAwaitSettlementRejectsDelegatedSettlement(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeConsumerChannel()
+	deliveries := make(chan Delivery, 1)
+	consumer, err := newConsumerFromChannel(
+		t.Context(), testConsumerConfig(),
+		func(_ context.Context, delivery Delivery) (Settlement, error) {
+			deliveries <- delivery
+			return Delegate(), nil
+		},
+		channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct consumer: %v", err)
+	}
+	t.Cleanup(func() { closeConsumerForTest(t, consumer) })
+
+	channel.deliveries <- testAMQPDelivery(93)
+	if err := (<-deliveries).AwaitSettlement(t.Context()); !errors.Is(err, ErrSettlementResultUnavailable) {
+		t.Fatalf("AwaitSettlement() error = %v, want unavailable", err)
+	}
+}
+
 func TestConsumerAcknowledgesFanoutDeliveryWithEmptyRoutingKey(t *testing.T) {
 	t.Parallel()
 

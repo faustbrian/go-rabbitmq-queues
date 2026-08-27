@@ -1,6 +1,7 @@
 package rabbitmqqueue
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,38 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+func TestDeliveryAwaitSettlementRequiresTrackedDeliveryAndContext(t *testing.T) {
+	t.Parallel()
+
+	if err := (Delivery{}).AwaitSettlement(nil); !errors.Is(err, ErrContextRequired) {
+		t.Fatalf("AwaitSettlement(nil) error = %v, want context required", err)
+	}
+	if err := (Delivery{}).AwaitSettlement(t.Context()); !errors.Is(err, ErrSettlementResultUnavailable) {
+		t.Fatalf("untracked AwaitSettlement() error = %v, want unavailable", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	delivery := Delivery{settlement: newDeliverySettlement()}
+	if err := delivery.AwaitSettlement(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled AwaitSettlement() error = %v, want cancellation", err)
+	}
+}
+
+func TestDeliveryAwaitSettlementPrefersBrokerResultOverCancellation(t *testing.T) {
+	t.Parallel()
+
+	delivery := Delivery{settlement: newDeliverySettlement()}
+	delivery.completeSettlement(nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for range 100 {
+		if err := delivery.AwaitSettlement(ctx); err != nil {
+			t.Fatalf("AwaitSettlement() error = %v, want completed broker result", err)
+		}
+	}
+}
 
 func TestConsumerConfigRequiresBoundedQueueAndFailurePolicy(t *testing.T) {
 	t.Parallel()

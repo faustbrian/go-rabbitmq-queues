@@ -17,6 +17,8 @@
 
 ### Added
 
+- Expose bounded delivery settlement results so compatibility adapters can
+  report broker acknowledgement failures synchronously.
 - Add a CI-only RabbitMQ 4.3.5 TLS fixture that provisions least-scope
   credentials and exercises the public single-node live-broker contract.
 - Add broker-backed authorization-denial and classic/quorum dead-letter

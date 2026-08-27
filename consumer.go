@@ -456,10 +456,17 @@ func (consumer *Consumer) handle(envelope consumerEnvelope) {
 	}
 	if requested.Method == SettlementDelegate {
 		envelope.generation.delegated.Store(true)
+		envelope.delivery.completeSettlement(ErrSettlementResultUnavailable)
 		return
 	}
 	requested = boundedSettlement(envelope.delivery, requested, consumer.config)
-	if err := consumer.settle(envelope.generation, envelope.tag, requested); err != nil {
+	settlementErr := consumer.settle(envelope.generation, envelope.tag, requested)
+	settlementResult := settlementErr
+	if settlementResult != nil {
+		settlementResult = ErrConsumerUnavailable
+	}
+	envelope.delivery.completeSettlement(settlementResult)
+	if settlementErr != nil {
 		consumer.failGeneration(envelope.generation)
 	}
 }

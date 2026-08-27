@@ -180,6 +180,7 @@ type Delivery struct {
 	AcquiredCount *uint64
 	DeliveryCount *uint64
 	Deaths        []Death
+	settlement    *deliverySettlement
 }
 
 func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, error) {
@@ -248,7 +249,7 @@ func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, er
 		Timestamp: source.Timestamp, Expiration: expiration, Priority: source.Priority, DeliveryMode: mode,
 		Consumer: source.ConsumerTag, Exchange: source.Exchange, RoutingKey: source.RoutingKey,
 		Redelivered: source.Redelivered, AcquiredCount: acquiredCount,
-		DeliveryCount: deliveryCount, Deaths: deaths,
+		DeliveryCount: deliveryCount, Deaths: deaths, settlement: newDeliverySettlement(),
 	}, nil
 }
 
