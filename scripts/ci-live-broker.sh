@@ -10,12 +10,23 @@ fi
 project_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 task_root="$(mktemp -d "${RUNNER_TEMP}/go-rabbitmq-queues-live.XXXXXX")"
 container_name="go-rabbitmq-queues-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+bootstrap_password="$(openssl rand -hex 24)"
+client_password="$(openssl rand -hex 24)"
 cleanup() {
+    result=$?
+    trap - EXIT HUP INT TERM
+    if (( result != 0 )) && docker inspect "${container_name}" >/dev/null 2>&1; then
+        docker logs "${container_name}" 2>&1 |
+            sed \
+                -e "s/${bootstrap_password}/[REDACTED]/g" \
+                -e "s/${client_password}/[REDACTED]/g" >&2 || true
+    fi
     docker rm --force "${container_name}" >/dev/null 2>&1 || true
     if [[ -d "${task_root}" ]]; then
         chmod -R u+w "${task_root}"
         find "${task_root}" -depth -delete
     fi
+    exit "${result}"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -62,9 +73,7 @@ ssl_options.versions.2 = tlsv1.2
 EOF
 
 bootstrap_user='ci-bootstrap'
-bootstrap_password="$(openssl rand -hex 24)"
 client_user='ci-client'
-client_password="$(openssl rand -hex 24)"
 vhost='/go-rabbitmq-queues-ci'
 encoded_vhost='%2Fgo-rabbitmq-queues-ci'
 image='rabbitmq:4.3.5-management-alpine@sha256:7224161872a48060e980a611f4778ad18168f00cfa974cab30604dbd855511dc'
