@@ -212,5 +212,19 @@ bounded reconnect-storm evidence. It is not rolling-upgrade,
 installed-Operator reconciliation, application rollout, or
 production-capacity evidence.
 
+The CI matrix also defines a three-node `rolling-upgrade` gate. It starts the
+cluster on the pinned RabbitMQ 4.3.4 Linux amd64 image, enables stable feature
+flags, and then replaces nodes from highest to lowest index with the pinned
+RabbitMQ 4.3.5 image. Before every stop it requires
+`rabbitmq-upgrade await_online_quorum_plus_one` to pass. During each
+node-replacement interval the public client publishes 64 uniquely identified
+messages through the three configured endpoints; after each replacement the
+gate requires all three nodes and quorum members, a running leader, no local
+alarms on the upgraded node, client readiness, exactly one active consumer, and
+a confirmed post-upgrade round trip before continuing. The final ledger reports
+confirmed, rejected, ambiguous, not-sent, delivered, and duplicate totals. This
+is a defined gate, not retained rolling-upgrade evidence until an exact-head CI
+execution passes.
+
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).

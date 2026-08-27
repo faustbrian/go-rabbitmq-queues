@@ -12,12 +12,12 @@ case "${fault_scenario}" in
     classic-node-loss)
         fault_queue_type='classic'
         ;;
-    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm)
+    quorum-leader-loss | quorum-network-partition | cluster-restart | reconnect-storm | rolling-upgrade)
         fault_queue_type='quorum'
         ;;
     *)
         printf '%s\n' \
-            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, or reconnect-storm' >&2
+            'ci-live-cluster.sh requires classic-node-loss, quorum-leader-loss, quorum-network-partition, cluster-restart, reconnect-storm, or rolling-upgrade' >&2
         exit 1
         ;;
 esac
@@ -26,6 +26,15 @@ project_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 task_root="$(mktemp -d "${RUNNER_TEMP}/go-rabbitmq-queues-cluster.XXXXXX")"
 network_name="go-rabbitmq-queues-cluster-${fault_scenario}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 image='rabbitmq:4.3.5-management-alpine@sha256:7224161872a48060e980a611f4778ad18168f00cfa974cab30604dbd855511dc'
+image_version='4.3.5'
+rolling_upgrade_source_image='rabbitmq:4.3.4-management-alpine@sha256:39f934e10a7b95179171a70f15f02636201a153a2c689e961fc0f445bac275f2'
+rolling_upgrade_source_version='4.3.4'
+initial_image="${image}"
+initial_image_version="${image_version}"
+if [[ "${fault_scenario}" == rolling-upgrade ]]; then
+    initial_image="${rolling_upgrade_source_image}"
+    initial_image_version="${rolling_upgrade_source_version}"
+fi
 bootstrap_user='ci-bootstrap'
 client_user='ci-client'
 vhost='/go-rabbitmq-queues-ci'
@@ -38,6 +47,7 @@ container_names=()
 reconnect_storm_cycles=3
 reconnect_storm_outage_seconds=5
 reconnect_storm_resource_pairs=4
+rolling_upgrade_cycles=3
 declare -A amqp_ports
 declare -A management_ports
 test_pid=''
@@ -129,6 +139,13 @@ for index in "${!node_names[@]}"; do
     container_names+=("${container_name}")
     mkdir "${task_root}/${node_name}-data"
     chmod 0700 "${task_root}/${node_name}-data"
+done
+
+run_node_container() {
+    local index="$1"
+    local node_image="$2"
+    local node_name="${node_names[${index}]}"
+    local container_name="${container_names[${index}]}"
     docker run --detach \
         --name "${container_name}" \
         --hostname "${node_name}" \
@@ -146,7 +163,11 @@ for index in "${!node_names[@]}"; do
         --mount "type=bind,source=${task_root}/${node_name}-data,target=/var/lib/rabbitmq" \
         --publish "127.0.0.1:${amqp_ports[${node_name}]}:5671" \
         --publish "127.0.0.1:${management_ports[${node_name}]}:15672" \
-        "${image}" >/dev/null
+        "${node_image}" >/dev/null
+}
+
+for index in "${!node_names[@]}"; do
+    run_node_container "${index}" "${initial_image}"
 done
 
 for index in "${!node_names[@]}"; do
@@ -159,7 +180,7 @@ for index in "${!node_names[@]}"; do
         sleep 1
     done
     docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null
-    test "$(docker exec "${container_name}" rabbitmqctl version)" = '4.3.5'
+    test "$(docker exec "${container_name}" rabbitmqctl version)" = "${initial_image_version}"
     [[ "${amqp_ports[${node_name}]}" =~ ^[0-9]+$ ]]
     [[ "${management_ports[${node_name}]}" =~ ^[0-9]+$ ]]
 done
@@ -171,6 +192,9 @@ for index in 1 2; do
     docker exec "${container_name}" rabbitmqctl join_cluster rabbit@rabbit1 >/dev/null
     docker exec "${container_name}" rabbitmqctl start_app >/dev/null
 done
+if [[ "${fault_scenario}" == rolling-upgrade ]]; then
+    docker exec "${container_names[0]}" rabbitmqctl enable_feature_flag all >/dev/null
+fi
 
 management_url() {
     local node_name="$1"
@@ -271,12 +295,18 @@ fault_cycle_gate_files=()
 fault_cycle_complete_gate_files=()
 fault_cycle_gate_files_json='[]'
 fault_cycle_complete_gate_files_json='[]'
-if [[ "${fault_scenario}" == reconnect-storm ]]; then
+if [[ "${fault_scenario}" == reconnect-storm || "${fault_scenario}" == rolling-upgrade ]]; then
     fault_start_gate=''
     fault_complete_gate=''
-    for cycle in $(seq 1 "${reconnect_storm_cycles}"); do
-        fault_cycle_gate_files+=("${task_root}/gates/reconnect-cycle-${cycle}")
-        fault_cycle_complete_gate_files+=("${task_root}/gates/reconnect-cycle-${cycle}-verified")
+    cycle_count="${reconnect_storm_cycles}"
+    cycle_prefix='reconnect'
+    if [[ "${fault_scenario}" == rolling-upgrade ]]; then
+        cycle_count="${rolling_upgrade_cycles}"
+        cycle_prefix='upgrade'
+    fi
+    for cycle in $(seq 1 "${cycle_count}"); do
+        fault_cycle_gate_files+=("${task_root}/gates/${cycle_prefix}-cycle-${cycle}")
+        fault_cycle_complete_gate_files+=("${task_root}/gates/${cycle_prefix}-cycle-${cycle}-verified")
     done
     fault_cycle_gate_files_json="$(printf '%s\n' "${fault_cycle_gate_files[@]}" | jq -R . | jq -s .)"
     fault_cycle_complete_gate_files_json="$(
@@ -478,6 +508,167 @@ if [[ "${fault_scenario}" == reconnect-storm ]]; then
         : >"${fault_cycle_complete_gate_files[${index}]}"
     done
 
+    if wait "${test_pid}"; then
+        test_status=0
+    else
+        test_status=$?
+    fi
+    test_pid=''
+    cat "${test_log}"
+    test "${test_status}" -eq 0
+    exit
+fi
+
+if [[ "${fault_scenario}" == rolling-upgrade ]]; then
+    cycle=0
+    for node_index in 2 1 0; do
+        cycle="$((cycle + 1))"
+        gate_index="$((cycle - 1))"
+        node_name="${node_names[${node_index}]}"
+        container_name="${container_names[${node_index}]}"
+
+        cycle_waiting=false
+        for _ in $(seq 1 30); do
+            if grep -q "UPGRADE_CYCLE_WAITING cycle=${cycle}" "${test_log}"; then
+                cycle_waiting=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${cycle_waiting}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+
+        test "$(docker exec "${container_name}" rabbitmqctl version)" = "${rolling_upgrade_source_version}"
+        docker exec "${container_name}" rabbitmq-upgrade await_online_quorum_plus_one >/dev/null
+        docker stop --time 10 "${container_name}" >/dev/null
+        cycle_started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        : >"${fault_cycle_gate_files[${gate_index}]}"
+        printf 'FAULT_TIMELINE scenario=%s queue_type=%s cycle=%d event=node-stopped node=rabbit@%s from_version=%s at=%s\n' \
+            "${fault_scenario}" "${fault_queue_type}" "${cycle}" "${node_name}" \
+            "${rolling_upgrade_source_version}" "${cycle_started_at}"
+
+        fault_observed=false
+        for _ in $(seq 1 30); do
+            if grep -q "UPGRADE_CYCLE_FAULT_OBSERVED cycle=${cycle}" "${test_log}"; then
+                fault_observed=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${fault_observed}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+
+        docker rm "${container_name}" >/dev/null
+        run_node_container "${node_index}" "${image}"
+        for _ in $(seq 1 120); do
+            if docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        docker exec "${container_name}" rabbitmq-diagnostics -q ping >/dev/null
+        test "$(docker exec "${container_name}" rabbitmqctl version)" = "${image_version}"
+        docker exec "${container_name}" rabbitmq-diagnostics -q check_local_alarms >/dev/null
+        for _ in $(seq 1 120); do
+            if get_json "${node_name}" nodes |
+                jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        get_json "${node_name}" nodes |
+            jq -e '[.[] | select(.running == true)] | length == 3' >/dev/null
+        for _ in $(seq 1 120); do
+            if queue_json="$(get_json "${node_name}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)" &&
+                jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+                    <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json "${node_name}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
+        jq -e '.state == "running" and (.members | length) == 3 and (.leader | length) > 0' \
+            <<<"${queue_json}" >/dev/null
+
+        messages_ready=false
+        for _ in $(seq 1 120); do
+            if grep -q "UPGRADE_CYCLE_MESSAGES_READY cycle=${cycle}" "${test_log}"; then
+                messages_ready=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${messages_ready}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+        client_ready=false
+        for _ in $(seq 1 120); do
+            if grep -q "UPGRADE_CYCLE_CLIENT_READY cycle=${cycle}" "${test_log}"; then
+                client_ready=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${client_ready}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+        for _ in $(seq 1 60); do
+            if queue_json="$(get_json "${node_name}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum" 2>/dev/null)" &&
+                jq -e '.state == "running" and .consumers == 1' <<<"${queue_json}" >/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        queue_json="$(get_json "${node_name}" "queues/${encoded_vhost}/go-rabbitmq-queues.quorum")"
+        jq -e '.state == "running" and .consumers == 1' <<<"${queue_json}" >/dev/null
+        printf 'CONSUMER_OUTCOMES scenario=%s cycle=%d expected=1 observed=%s\n' \
+            "${fault_scenario}" "${cycle}" "$(jq -er '.consumers' <<<"${queue_json}")"
+        cycle_completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        recovered_leader="$(jq -er '.leader' <<<"${queue_json}")"
+        printf 'FAULT_TIMELINE scenario=%s queue_type=%s cycle=%d event=node-upgraded node=rabbit@%s to_version=%s leader=%s at=%s\n' \
+            "${fault_scenario}" "${fault_queue_type}" "${cycle}" "${node_name}" \
+            "${image_version}" "${recovered_leader}" "${cycle_completed_at}"
+        : >"${fault_cycle_complete_gate_files[${gate_index}]}"
+
+        cycle_verified=false
+        for _ in $(seq 1 60); do
+            if grep -q "UPGRADE_CYCLE_VERIFIED cycle=${cycle}" "${test_log}"; then
+                cycle_verified=true
+                break
+            fi
+            if ! kill -0 "${test_pid}" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        if [[ "${cycle_verified}" != true ]]; then
+            cat "${test_log}"
+            exit 1
+        fi
+    done
+
+    for container_name in "${container_names[@]}"; do
+        test "$(docker exec "${container_name}" rabbitmqctl version)" = "${image_version}"
+    done
+    docker exec "${container_names[0]}" rabbitmqctl enable_feature_flag all >/dev/null
     if wait "${test_pid}"; then
         test_status=0
     else

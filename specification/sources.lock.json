@@ -9,6 +9,12 @@
       "url": "https://github.com/rabbitmq/rabbitmq-server"
     },
     {
+      "name": "RabbitMQ rolling-upgrade source server",
+      "version": "4.3.4",
+      "revision": "d5186e66e056960f58e2d0fbee2fcc66e1ed6fb9",
+      "url": "https://github.com/rabbitmq/rabbitmq-server"
+    },
+    {
       "name": "RabbitMQ documentation",
       "version": "4.3",
       "revision": "1c99c9687f012ad700385c1e9a6990f6520720d3",
@@ -42,6 +48,12 @@
       "name": "RabbitMQ container linux amd64",
       "version": "4.3.5-management-alpine",
       "revision": "sha256:7224161872a48060e980a611f4778ad18168f00cfa974cab30604dbd855511dc",
+      "url": "https://hub.docker.com/_/rabbitmq"
+    },
+    {
+      "name": "RabbitMQ rolling-upgrade source container linux amd64",
+      "version": "4.3.4-management-alpine",
+      "revision": "sha256:39f934e10a7b95179171a70f15f02636201a153a2c689e961fc0f445bac275f2",
       "url": "https://hub.docker.com/_/rabbitmq"
     },
     {

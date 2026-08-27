@@ -1,12 +1,13 @@
 # Compatibility pins
 
 Research and initial local policy tests use these immutable inputs as of
-2026-08-26:
+2026-08-27:
 
 | Input | Pin |
 |---|---|
 | RabbitMQ server | `v4.3.5`, Git `0dde27bfdd1984ff7e157226fd97656854a7f359` |
 | RabbitMQ container | `rabbitmq:4.3.5-management-alpine`, Linux arm64 digest `sha256:aa626c7c8b7d41c708796b336ff721897b176ab29c94d944a26eb2b1b2e3a455`; Linux amd64 digest `sha256:7224161872a48060e980a611f4778ad18168f00cfa974cab30604dbd855511dc` |
+| RabbitMQ rolling-upgrade source | Server `v4.3.4`, Git `d5186e66e056960f58e2d0fbee2fcc66e1ed6fb9`; Linux amd64 container `rabbitmq:4.3.4-management-alpine`, digest `sha256:39f934e10a7b95179171a70f15f02636201a153a2c689e961fc0f445bac275f2` |
 | `amqp091-go` | `v1.14.0`, Git `387d77a50ea8b8c38705bb18cc80f5d6599a8477` |
 | PHP interoperability runtime | PHP `8.5.9`, Composer `2.10.1` |
 | `php-amqplib/php-amqplib` | `v3.7.4`, Git `381b6f7c600e0e0c7463cdd7f7a1a3bc6268e5fd` |
@@ -49,9 +50,14 @@ cluster restart with a 20-second outage. A separate retained scenario proves
 three complete five-second cluster outages across four producer and consumer
 pairs, fresh recovery after every cycle, exactly four active consumers after
 each recovery, and duplicate-free delivery reconciliation. It does not
-establish rolling-upgrade behavior, installed-operator reconciliation,
-Laravel-framework integration, application rollout, or production performance
-capacity.
+establish installed-operator reconciliation, Laravel-framework integration,
+application rollout, or production performance capacity. The rolling-upgrade
+harness starts a three-node quorum cluster on RabbitMQ 4.3.4, checks the
+quorum-safety precondition, replaces one node at a time with RabbitMQ 4.3.5,
+verifies each node rejoins before the next replacement, and accounts for
+publications and deliveries across every replacement and mixed-version
+checkpoint. It is not retained compatibility evidence until its exact-head CI
+job passes.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,

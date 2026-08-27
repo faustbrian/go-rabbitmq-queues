@@ -39,6 +39,7 @@ const (
 	liveFaultQuorumNetworkPartition liveFaultScenario = "quorum-network-partition"
 	liveFaultClusterRestart         liveFaultScenario = "cluster-restart"
 	liveFaultReconnectStorm         liveFaultScenario = "reconnect-storm"
+	liveFaultRollingUpgrade         liveFaultScenario = "rolling-upgrade"
 )
 
 type liveClusterLedger struct {
@@ -106,6 +107,49 @@ func TestLiveClusterFixtureValidation(t *testing.T) {
 		if err := validateLiveClusterFixture(fixture); err != nil {
 			t.Fatalf("valid %s fixture: %v", scenario, err)
 		}
+	}
+
+	rollingUpgrade := valid
+	rollingUpgrade.FaultStartGateFile = ""
+	rollingUpgrade.FaultCompleteGateFile = ""
+	rollingUpgrade.FaultQueueType = rabbitmqqueue.QueueQuorum
+	rollingUpgrade.FaultScenario = liveFaultRollingUpgrade
+	rollingUpgrade.FaultCycleGateFiles = []string{"upgrade-1", "upgrade-2", "upgrade-3"}
+	rollingUpgrade.FaultCycleCompleteGateFiles = []string{"complete-1", "complete-2", "complete-3"}
+	if err := validateLiveClusterFixture(rollingUpgrade); err != nil {
+		t.Fatalf("valid rolling-upgrade fixture: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*liveBrokerFixture)
+	}{
+		{name: "wrong cycle count", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleGateFiles = value.FaultCycleGateFiles[:2]
+		}},
+		{name: "duplicate completion gate", mutate: func(value *liveBrokerFixture) {
+			value.FaultCycleCompleteGateFiles[2] = value.FaultCycleCompleteGateFiles[1]
+		}},
+		{name: "mixed gate protocols", mutate: func(value *liveBrokerFixture) {
+			value.FaultStartGateFile = "fault-started"
+		}},
+		{name: "classic queue", mutate: func(value *liveBrokerFixture) {
+			value.FaultQueueType = rabbitmqqueue.QueueClassic
+		}},
+		{name: "resource pairs", mutate: func(value *liveBrokerFixture) {
+			value.FaultResourcePairs = 1
+		}},
+	} {
+		t.Run("invalid rolling upgrade/"+test.name, func(t *testing.T) {
+			fixture := rollingUpgrade
+			fixture.FaultCycleGateFiles = append([]string(nil), rollingUpgrade.FaultCycleGateFiles...)
+			fixture.FaultCycleCompleteGateFiles = append(
+				[]string(nil), rollingUpgrade.FaultCycleCompleteGateFiles...,
+			)
+			test.mutate(&fixture)
+			if err := validateLiveClusterFixture(fixture); err == nil {
+				t.Fatal("invalid rolling-upgrade fixture was accepted")
+			}
+		})
 	}
 
 	reconnectStorm := valid
@@ -242,6 +286,12 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 			fixture.FaultResourcePairs > maximumReconnectResourcePairs {
 			return errInvalidLiveCluster
 		}
+	} else if fixture.FaultScenario == liveFaultRollingUpgrade {
+		if fixture.FaultStartGateFile != "" || fixture.FaultCompleteGateFile != "" ||
+			!validRollingUpgradeGates(fixture.FaultCycleGateFiles, fixture.FaultCycleCompleteGateFiles) ||
+			fixture.FaultResourcePairs != 0 {
+			return errInvalidLiveCluster
+		}
 	} else if fixture.FaultStartGateFile == "" || fixture.FaultCompleteGateFile == "" ||
 		fixture.FaultStartGateFile == fixture.FaultCompleteGateFile || len(fixture.FaultCycleGateFiles) != 0 ||
 		len(fixture.FaultCycleCompleteGateFiles) != 0 ||
@@ -254,7 +304,7 @@ func validateLiveClusterFixture(fixture liveBrokerFixture) error {
 			return errInvalidLiveCluster
 		}
 	case liveFaultQuorumLeaderLoss, liveFaultQuorumNetworkPartition, liveFaultClusterRestart,
-		liveFaultReconnectStorm:
+		liveFaultReconnectStorm, liveFaultRollingUpgrade:
 		if fixture.FaultQueueType != rabbitmqqueue.QueueQuorum {
 			return errInvalidLiveCluster
 		}
@@ -269,6 +319,14 @@ func validReconnectStormGates(start []string, complete []string) bool {
 		len(start) != len(complete) {
 		return false
 	}
+	return uniqueFaultGates(start, complete)
+}
+
+func validRollingUpgradeGates(start []string, complete []string) bool {
+	return len(start) == 3 && len(complete) == 3 && uniqueFaultGates(start, complete)
+}
+
+func uniqueFaultGates(start []string, complete []string) bool {
 	seen := make(map[string]struct{}, len(start)+len(complete))
 	for _, gate := range append(append([]string(nil), start...), complete...) {
 		if gate == "" {
@@ -288,7 +346,7 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 		t.Fatalf("validate three-node configuration: %v", err)
 	}
 	gates := []string{fixture.FaultStartGateFile, fixture.FaultCompleteGateFile}
-	if fixture.FaultScenario == liveFaultReconnectStorm {
+	if fixture.FaultScenario == liveFaultReconnectStorm || fixture.FaultScenario == liveFaultRollingUpgrade {
 		gates = append(append([]string(nil), fixture.FaultCycleGateFiles...), fixture.FaultCycleCompleteGateFiles...)
 	}
 	for _, gate := range gates {
@@ -352,6 +410,10 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 		)
 		return
 	}
+	if fixture.FaultScenario == liveFaultRollingUpgrade {
+		runLiveRollingUpgrade(t, producer, consumer, ledger, fixture, faultQueue, runToken, baselineIDs)
+		return
+	}
 	waitForFaultGate(t, fixture.FaultStartGateFile)
 	t.Log("FAULT_WINDOW_STARTED")
 
@@ -382,6 +444,55 @@ func TestLiveBrokerThreeNodeInterruption(t *testing.T) {
 		t, producer, ledger, fixture, faultQueue, runToken, "post", 0, postFaultMessages, false,
 	)
 	allAttempts := append(append(baselineIDs, faultAttempts...), postFaultIDs...)
+	waitForConfirmedDeliveries(t, ledger, allAttempts)
+	waitForDeliveryQuiet(t, ledger)
+	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
+	t.Logf(
+		"MESSAGE_OUTCOMES scenario=%s queue_type=%s attempted=%d confirmed=%d rejected=%d ambiguous=%d not_sent=%d delivered=%d duplicates=%d",
+		fixture.FaultScenario, fixture.FaultQueueType, len(allAttempts), confirmed, rejected, ambiguous,
+		notSent, delivered, duplicates,
+	)
+}
+
+func runLiveRollingUpgrade(
+	t *testing.T,
+	producer *rabbitmqqueue.Producer,
+	consumer *rabbitmqqueue.Consumer,
+	ledger *liveClusterLedger,
+	fixture liveBrokerFixture,
+	faultQueue liveQueue,
+	runToken string,
+	baselineIDs []string,
+) {
+	t.Helper()
+	allAttempts := append([]string(nil), baselineIDs...)
+	for index, gate := range fixture.FaultCycleGateFiles {
+		cycle := index + 1
+		t.Logf("UPGRADE_CYCLE_WAITING cycle=%d", cycle)
+		waitForFaultGate(t, gate)
+		t.Logf("UPGRADE_CYCLE_STARTED cycle=%d", cycle)
+		faultIDs := publishLiveRange(
+			t, producer, ledger, fixture, faultQueue, runToken, "upgrade-fault", index*fixture.FaultWindowMessages,
+			1, true,
+		)
+		allAttempts = append(allAttempts, faultIDs...)
+		t.Logf("UPGRADE_CYCLE_FAULT_OBSERVED cycle=%d", cycle)
+		faultIDs = publishLiveRange(
+			t, producer, ledger, fixture, faultQueue, runToken, "upgrade-fault",
+			index*fixture.FaultWindowMessages+1, fixture.FaultWindowMessages-1, true,
+		)
+		allAttempts = append(allAttempts, faultIDs...)
+		t.Logf("UPGRADE_CYCLE_MESSAGES_READY cycle=%d", cycle)
+		waitForLiveClusterRecovery(t, producer, consumer)
+		t.Logf("UPGRADE_CYCLE_CLIENT_READY cycle=%d", cycle)
+		waitForFaultGate(t, fixture.FaultCycleCompleteGateFiles[index])
+		postCycleIDs := publishLiveRange(
+			t, producer, ledger, fixture, faultQueue, runToken, "upgrade-post", index, 1, false,
+		)
+		allAttempts = append(allAttempts, postCycleIDs...)
+		waitForConfirmedDeliveries(t, ledger, postCycleIDs)
+		t.Logf("UPGRADE_CYCLE_VERIFIED cycle=%d", cycle)
+	}
 	waitForConfirmedDeliveries(t, ledger, allAttempts)
 	waitForDeliveryQuiet(t, ledger)
 	confirmed, rejected, ambiguous, notSent, delivered, duplicates := ledger.summary(t)
