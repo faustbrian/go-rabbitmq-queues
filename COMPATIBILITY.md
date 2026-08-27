@@ -19,7 +19,8 @@ Research and initial local policy tests use these immutable inputs as of
 | Retained broker-evidence runner | GitHub Actions `ubuntu-24.04`, Linux amd64 |
 
 The arm64 container pin is the intended Kubernetes Operator fixture. The amd64
-pin is the CI-hosted single-node broker fixture. The opt-in
+pin is used by the CI-hosted single-node and three-node broker fixtures. The
+opt-in
 [`livebroker` evidence harness](docs/live-broker-testing.md) exercises an
 externally provisioned TLS broker through the public API without controlling
 broker resources. The retained GitHub Actions broker gate provisions the pinned
@@ -39,10 +40,12 @@ equivalence mapping, connection-scoped transient-consumer setup, bounded
 delivery conversion, lifecycle behavior, and the pinned PHP runner's local
 corpus construction and validation without contacting a broker. The retained
 single-node performance matrix proves CI-runner throughput for classic and
-single-member quorum queues at the 1M, 10M, and 100M daily-volume profiles. No
-three-node cluster, node or leader failover, rolling-upgrade,
-installed-operator reconciliation, Laravel-framework integration, or
-production performance-capacity claim is currently established.
+single-member quorum queues at the 1M, 10M, and 100M daily-volume profiles. The
+retained three-node matrix proves bounded client behavior while the classic
+queue's hosting node is stopped and restarted, and while a quorum leader is
+stopped and replaced. It does not establish network-partition behavior,
+rolling upgrades, installed-operator reconciliation, Laravel-framework
+integration, or production performance capacity.
 The operator manifests pass strict validation against the exact
 pinned Cluster and Messaging Topology Operator CRD schemas. That structural
 result is not installed-controller reconciliation, effective broker topology,
@@ -58,7 +61,10 @@ Retained CI evidence:
   at commit `cb48c8cd7e5cda6feebdeea76e7ab92b8f0e5d76`;
 - single-node classic and quorum performance matrix:
   [run 33043064904](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33043064904)
-  at commit `a233bb315a72f878c8412d9c6d3ea3529b1507a2`.
+  at commit `a233bb315a72f878c8412d9c6d3ea3529b1507a2`;
+- three-node classic host loss and quorum leader loss:
+  [run 33044777633](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33044777633)
+  at commit `d28812cb7d510319d5d0ac57ce145c5566dd8849`.
 
 ## Authoritative sources
 

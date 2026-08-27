@@ -171,5 +171,23 @@ external fault timeline and broker evidence; the gate file alone does not prove
 that any fault occurred. The external operator owns gate removal and broker
 restoration.
 
+The GitHub Actions matrix runs the same test through
+[`ci-live-cluster.sh`](../scripts/ci-live-cluster.sh) against three pinned
+RabbitMQ 4.3.5 Linux amd64 containers. It provisions the topology before the
+client starts, verifies three quorum members, and targets the actual classic
+queue host or quorum leader reported by RabbitMQ. Retained
+[run 33044777633](https://github.com/faustbrian/go-rabbitmq-queues/actions/runs/33044777633)
+at commit `d28812cb7d510319d5d0ac57ce145c5566dd8849` recorded:
+
+- classic host loss and restart: 88 attempts, 24 confirmed, 62 rejected, two
+  ambiguous, zero not-sent, 24 delivered, and zero duplicates; and
+- quorum leader loss from `rabbit@rabbit1` with `rabbit@rabbit3` elected: 88
+  attempts, confirmations, and deliveries, with zero rejected, ambiguous,
+  not-sent, or duplicate outcomes.
+
+This is CI-hosted node-loss evidence. It is not network-partition,
+rolling-upgrade, installed-Operator reconciliation, application rollout, or
+production-capacity evidence.
+
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).
