@@ -7,9 +7,15 @@ if [[ "${CI:-}" != true || "${GITHUB_ACTIONS:-}" != true ]]; then
     exit 1
 fi
 
+suite="${1:-single}"
+if [[ "${suite}" != single && "${suite}" != php ]]; then
+    printf '%s\n' 'ci-live-broker.sh suite must be single or php' >&2
+    exit 1
+fi
+
 project_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 task_root="$(mktemp -d "${RUNNER_TEMP}/go-rabbitmq-queues-live.XXXXXX")"
-container_name="go-rabbitmq-queues-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+container_name="go-rabbitmq-queues-live-${suite}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 bootstrap_password="$(openssl rand -hex 24)"
 client_password="$(openssl rand -hex 24)"
 erlang_cookie="$(openssl rand -hex 24)"
@@ -37,7 +43,9 @@ mkdir -p \
     "${task_root}/rabbitmq-data" \
     "${task_root}/go-build" \
     "${task_root}/go-modules" \
-    "${task_root}/go-tmp"
+    "${task_root}/go-tmp" \
+    "${task_root}/composer-home" \
+    "${task_root}/php-vendor"
 chmod 0700 "${task_root}/rabbitmq-data"
 
 openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
@@ -145,9 +153,14 @@ post_json() {
         "${management_url}/${endpoint}" >/dev/null
 }
 
+read_permission='^go-rabbitmq-queues\.(classic|quorum)$'
+if [[ "${suite}" == php ]]; then
+    read_permission='^go-rabbitmq-queues\.(classic|quorum|go-to-php|php-to-go)$'
+fi
 put_json "users/${client_user}" "$(jq -cn --arg password "${client_password}" '{password: $password, tags: ""}')"
 put_json "permissions/${encoded_vhost}/${client_user}" \
-    '{"configure":"^$","write":"^go-rabbitmq-queues\\.events$","read":"^go-rabbitmq-queues\\.(classic|quorum)$"}'
+    "$(jq -cn --arg read "${read_permission}" \
+        '{configure: "^$", write: "^go-rabbitmq-queues\\.events$", read: $read}')"
 put_json "exchanges/${encoded_vhost}/go-rabbitmq-queues.events" \
     '{"type":"direct","auto_delete":false,"durable":true,"internal":false,"arguments":{}}'
 put_json "queues/${encoded_vhost}/go-rabbitmq-queues.classic" \
@@ -158,6 +171,16 @@ post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-q
     '{"routing_key":"classic","arguments":{}}'
 post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-queues.quorum" \
     '{"routing_key":"quorum","arguments":{}}'
+if [[ "${suite}" == php ]]; then
+    put_json "queues/${encoded_vhost}/go-rabbitmq-queues.go-to-php" \
+        '{"auto_delete":false,"durable":true,"arguments":{"x-queue-type":"classic"}}'
+    put_json "queues/${encoded_vhost}/go-rabbitmq-queues.php-to-go" \
+        '{"auto_delete":false,"durable":true,"arguments":{"x-queue-type":"classic"}}'
+    post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-queues.go-to-php" \
+        '{"routing_key":"interop.go-to-php","arguments":{}}'
+    post_json "bindings/${encoded_vhost}/e/go-rabbitmq-queues.events/q/go-rabbitmq-queues.php-to-go" \
+        '{"routing_key":"interop.php-to-go","arguments":{}}'
+fi
 
 openssl s_client \
     -connect "127.0.0.1:${amqp_port}" \
@@ -176,6 +199,7 @@ jq -n \
     --arg username "${client_user}" \
     --arg password "${client_password}" \
     --arg root_ca_file "${task_root}/tls/ca.pem" \
+    --arg php_binary "$(command -v php || true)" \
     '{
         endpoints: [{host: "127.0.0.1", port: $port}],
         virtual_host: $vhost,
@@ -190,17 +214,48 @@ jq -n \
         exchange: "go-rabbitmq-queues.events",
         classic: {name: "go-rabbitmq-queues.classic", routing_key: "classic"},
         quorum: {name: "go-rabbitmq-queues.quorum", routing_key: "quorum"},
-        unroutable_routing_key: "intentionally-unbound"
+        unroutable_routing_key: "intentionally-unbound",
+        php_interoperability: {
+            binary: $php_binary,
+            queue_type: "classic",
+            go_to_php_queue: "go-rabbitmq-queues.go-to-php",
+            go_to_php_routing_key: "interop.go-to-php",
+            php_to_go_queue: "go-rabbitmq-queues.php-to-go",
+            php_to_go_routing_key: "interop.php-to-go",
+            unroutable_routing_key: "interop.intentionally-unbound"
+        }
     }' >"${task_root}/live-broker.json"
 chmod 0600 "${task_root}/live-broker.json"
 
 (
     cd "${project_root}"
-    GOTOOLCHAIN=local \
-        GOWORK=off \
-        GOCACHE="${task_root}/go-build" \
-        GOMODCACHE="${task_root}/go-modules" \
-        GOTMPDIR="${task_root}/go-tmp" \
-        RABBITMQ_QUEUE_LIVE_CONFIG="${task_root}/live-broker.json" \
-        go test -v -count=1 -tags=livebroker -run '^TestLiveBrokerSingleNode$' .
+    if [[ "${suite}" == php ]]; then
+        test "$(php -r 'echo PHP_VERSION;')" = '8.5.8'
+        composer --version --no-ansi | grep -Eq '^Composer version 2\.10\.1 '
+        COMPOSER_HOME="${task_root}/composer-home" \
+            COMPOSER_VENDOR_DIR="${task_root}/php-vendor" \
+            composer install \
+                --working-dir=testdata/interoperability/php \
+                --no-dev \
+                --no-interaction \
+                --no-ansi \
+                --no-progress \
+                --classmap-authoritative
+        PHP_AMQPLIB_AUTOLOAD="${task_root}/php-vendor/autoload.php" \
+            GOTOOLCHAIN=local \
+            GOWORK=off \
+            GOCACHE="${task_root}/go-build" \
+            GOMODCACHE="${task_root}/go-modules" \
+            GOTMPDIR="${task_root}/go-tmp" \
+            RABBITMQ_QUEUE_LIVE_CONFIG="${task_root}/live-broker.json" \
+            go test -v -count=1 -tags=livebroker -run '^TestLiveBrokerPHPInteroperability$' .
+    else
+        GOTOOLCHAIN=local \
+            GOWORK=off \
+            GOCACHE="${task_root}/go-build" \
+            GOMODCACHE="${task_root}/go-modules" \
+            GOTMPDIR="${task_root}/go-tmp" \
+            RABBITMQ_QUEUE_LIVE_CONFIG="${task_root}/live-broker.json" \
+            go test -v -count=1 -tags=livebroker -run '^TestLiveBrokerSingleNode$' .
+    fi
 )
