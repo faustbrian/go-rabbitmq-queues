@@ -22,10 +22,10 @@
         }
       ],
       "purpose": "RabbitMQ-native AMQP 0-9-1 classic and quorum queue policy for bounded publishing, consumption, settlement, recovery, topology verification, health, and observations.",
-      "lifecycle": "experimental",
+      "lifecycle": "stable",
       "kind": "public library",
       "releasable": true,
-      "version": "0.1.0",
+      "version": "1.0.0",
       "tag_prefix": "v",
       "owned_dependencies": [],
       "reverse_owned_dependencies": [],

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+## [1.0.0] - 2026-08-28
 
 ### Documentation
 
@@ -133,3 +135,6 @@
 - Add leak, fuzz, deterministic concurrency stress, clean-consumer, and local
   wrapper benchmark harnesses with explicit live-broker evidence boundaries.
 - Pin RabbitMQ 4.3 compatibility research and queue capability distinctions.
+
+[Unreleased]: https://github.com/faustbrian/go-rabbitmq-queues/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/faustbrian/go-rabbitmq-queues/releases/tag/v1.0.0
