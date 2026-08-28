@@ -119,7 +119,7 @@ publishers or consumers. Add this object to the live configuration:
 ```json
 {
   "php_interoperability": {
-    "binary": "/absolute/path/to/php-8.5.9",
+    "binary": "/absolute/path/to/php-8.5.10",
     "queue_type": "classic",
     "go_to_php_queue": "go-rabbitmq-queues.go-to-php",
     "go_to_php_routing_key": "interop.go-to-php",

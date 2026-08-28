@@ -63,7 +63,7 @@ dispatch responses, enforce RPC timeouts, or claim exactly-once RPC behavior.
 
 ## PHP proof gate
 
-The opt-in live harness pins PHP 8.5.9, Composer 2.10.1, and
+The opt-in live harness pins PHP 8.5.10, Composer 2.10.1, and
 `php-amqplib/php-amqplib` v3.7.4 at Git
 `381b6f7c600e0e0c7463cdd7f7a1a3bc6268e5fd`. Its lock file and runner live in
 [`testdata/interoperability/php`](../testdata/interoperability/php). The runner

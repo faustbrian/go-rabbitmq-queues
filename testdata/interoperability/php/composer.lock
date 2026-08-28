@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "86c6e96104c3bfa9a7a4de2587ada99e",
+    "content-hash": "d5b9f70cf2ac834b5e257b62f09c6881",
     "packages": [
         {
             "name": "paragonie/constant_time_encoding",
@@ -324,14 +324,14 @@
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
-        "php": "8.5.9",
+        "php": "8.5.10",
         "ext-mbstring": "*",
         "ext-openssl": "*",
         "ext-sockets": "*"
     },
     "platform-dev": {},
     "platform-overrides": {
-        "php": "8.5.9"
+        "php": "8.5.10"
     },
     "plugin-api-version": "2.9.0"
 }

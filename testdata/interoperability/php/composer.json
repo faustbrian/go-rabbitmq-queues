@@ -4,7 +4,7 @@
   "type": "project",
   "license": "MIT",
   "require": {
-    "php": "8.5.9",
+    "php": "8.5.10",
     "ext-mbstring": "*",
     "ext-openssl": "*",
     "ext-sockets": "*",
@@ -13,7 +13,7 @@
   "config": {
     "allow-plugins": false,
     "platform": {
-      "php": "8.5.9"
+      "php": "8.5.10"
     },
     "sort-packages": true
   }
