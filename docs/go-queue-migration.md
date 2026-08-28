@@ -1,22 +1,26 @@
 # `go-queue/rabbitmq` migration and rollback gate
 
 This document records the compatibility boundary between
-`github.com/faustbrian/go-queue/rabbitmq` and `rabbitmqqueue`. It is a migration
-plan, not evidence that an adapter or an application cutover is complete.
+`github.com/faustbrian/go-queue/rabbitmq` and `rabbitmqqueue`. The compatibility
+adapter is implemented and broker-verified; this document remains a migration
+and rollback gate rather than evidence that an application cutover is complete.
 Cross-library ownership and application requirements are recorded in the
 [adoption audit](adoption-audit.md).
 
-The comparison was refreshed on 2026-08-27 against:
+The comparison was refreshed on 2026-08-28 against:
 
-- the `go-rabbitmq-queues` source at this document's revision;
-- `go-queue` commit `0c78f7f`;
-- `go-queue/rabbitmq` using `amqp091-go` `v1.11.0` and a RabbitMQ `3.13.7`
-  integration fixture; and
-- this package targeting the pins in [`COMPATIBILITY.md`](../COMPATIBILITY.md),
-  including `amqp091-go` `v1.14.0` and RabbitMQ `4.3.5`.
+- `go-rabbitmq-queues` commit `1a27b9ba6a35` on `main`;
+- `go-queue` pull request
+  [#13](https://github.com/faustbrian/go-queue/pull/13) at head commit
+  `be82484b2ab3`;
+- the adapter's pinned `go-rabbitmq-queues` pseudo-version at commit
+  `1a27b9ba6a35`; and
+- the pins in [`COMPATIBILITY.md`](../COMPATIBILITY.md), including
+  `amqp091-go` `v1.14.0` and RabbitMQ `4.3.5`.
 
-The native module has no published version tag. `go-queue` must not add a local
-filesystem `replace` or an unretrievable pseudo-version to ship an adapter.
+The native module has no semantic version tag. The adapter consumes its
+retrievable immutable pseudo-version without a local filesystem `replace`.
+Creating release tags remains a separate authorized release action.
 
 ## Contract comparison
 
@@ -58,23 +62,21 @@ explicit dispositions:
 | `WithLogger` | `queue.NewLogger()` | Bridge-owned compatibility input; the native package has no logger dependency, and applications consume its bounded observations externally |
 | `WithRequestTimeout` | 6 s | Bridge-owned idle pull timeout; it must not map to `ConsumerConfig.HandlerTimeout` |
 | `WithPublishTimeout` | 5 s | Direct mapping to `ProducerConfig.PublishTimeout` after validating the native bound |
-| `WithDeadLetter` | `<exchange>-dead`, `<queue>-dead`, `<routing-key>.dead`, 5 attempts | Exchange and routing key map to `QueueDeadLetter`, with the classic broker default left implicit; dead-letter queue/binding evidence remains operator-owned, while replacement publications, attempt metadata, and duplicate/loss windows remain a blocking adapter retry-strategy gap |
+| `WithDeadLetter` | `<exchange>-dead`, `<queue>-dead`, `<routing-key>.dead`, 5 attempts | Exchange and routing key map to confirmed mandatory replacement publications; dead-letter queue and binding evidence remains operator-owned, while bounded attempt metadata and duplicate/loss windows are explicit |
 
 `TaskMessage` does not guarantee an identifier, and `job.Metadata.OriginalID` is
-optional. Production adapter configuration must therefore provide a stable ID
-source. It should use an application-owned original ID when available and must
-reject a publication when no stable source exists; generating a new random ID
-inside a publish or recovery attempt is not acceptable. The adapter must capture
-the ID once for a `Queue` admission, reuse it for replacement publications and
-native retries, and return an ambiguity error with a non-logging reconciliation
-accessor when transmission may have occurred. Automatic retry after ambiguity
-requires application reconciliation against that same ID.
+optional. Production adapter configuration therefore requires a stable
+`MessageID` function and rejects an empty result. The native producer owns the
+validated publication across transmission and recovery, while retry and
+terminal replacements preserve the source delivery's message ID. An ambiguous
+publish remains an error and requires application reconciliation against that
+same stable ID before retry.
 
-## Adapter prerequisites
+## Adapter implementation evidence
 
-The adapter may be implemented only after all of these gates are satisfied:
+The adapter was implemented only after these gates were satisfied:
 
-1. Publish an immutable `go-rabbitmq-queues` version and consume it from
+1. Consume a retrievable immutable `go-rabbitmq-queues` revision from
    `go-queue` without a local `replace` directive.
 2. Characterize every legacy constructor, option default, queue operation,
    acknowledgement callback, retry classification, dead-letter header, error,
@@ -106,14 +108,18 @@ The adapter may be implemented only after all of these gates are satisfied:
    delivery-limit, dead-letter strategy, leader-failover, and redelivery
    evidence.
 
-The deterministic legacy surface is covered by the current `go-queue/rabbitmq`
-unit characterization, including constructor and option defaults, declaration
-requests, queue and publication routing, confirmation outcomes, deferred
-settlement callbacks, classified retry and dead-letter headers, errors, and
-repeated shutdown. The focused package suite passes under the race detector
-with 100% statement coverage. A mutation check also demonstrates that changing
-legacy publication from non-mandatory to mandatory is detected. This local
-evidence does not satisfy the live RabbitMQ 4.3 parity gate in item 7.
+The deterministic legacy surface is covered by `go-queue/rabbitmq`
+characterization and adapter contract tests, including constructor and option
+defaults, queue and publication routing, confirmation outcomes, deferred
+settlement callbacks, classified retry and terminal metadata, errors, and
+repeated shutdown. GitHub Actions
+[run 33132729077](https://github.com/faustbrian/go-queue/actions/runs/33132729077)
+passed the root, `queueservice`, and RabbitMQ module contracts, race, leak,
+fuzz, mutation, CodeQL, and Docker-backed RabbitMQ 4.3.5 TLS adapter evidence
+at `be82484b2ab3`. The broker gate proves confirmed queueing, mandatory-return
+failure, manual settlement, retry-before-ACK, terminal replacement, lazy
+consumer startup, runtime loss, and shutdown behavior. Application adoption
+and production topology remain separate gates.
 
 A bounded application inventory must search for both the current module path
 `github.com/faustbrian/go-queue/rabbitmq` and the historical path

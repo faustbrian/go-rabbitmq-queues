@@ -8,6 +8,8 @@
   documentation index.
 - Document the verified `go-queue/rabbitmq` parity gaps, adapter prerequisites,
   staged adoption, and rollback gate.
+- Refresh the migration and adoption audit with the implemented, broker-verified
+  `go-queue/rabbitmq` compatibility adapter and its remaining application gates.
 - Record adjacent-library ownership, API-to-Bill and Track migration
   requirements, evidence limitations, and application adoption gates.
 - Record retained CI evidence for a 91-second complete three-node RabbitMQ

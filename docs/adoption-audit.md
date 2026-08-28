@@ -2,9 +2,9 @@
 
 This audit records the source contracts that must remain intact when
 `rabbitmqqueue` is connected to adjacent Go libraries or adopted by Shipit
-applications. It is design input and a migration gate, not evidence that an
-adapter, broker deployment, application cutover, or production inventory is
-complete.
+applications. The `go-queue/rabbitmq` adapter is implemented and verified; the
+application sections remain design input and migration gates, not evidence that
+a broker deployment, application cutover, or production inventory is complete.
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
 "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
@@ -22,6 +22,7 @@ The audit was refreshed on 2026-08-27 against these local source snapshots:
 | Repository | Commit | Branch |
 |---|---|---|
 | `go-queue` | `0c78f7f23c0f` | `main` |
+| `go-queue` adapter verification | `be82484b2ab3` | `feature/rabbitmq-native-adapter` |
 | `go-rabbitmq-streams` | `0b11f5b3449b` | `main` |
 | `go-transactional-outbox` | `51507d3af020` | `main` |
 | `go-event-sourcing` | `3b0ffaf50fa9` | `main` |
@@ -52,7 +53,7 @@ deferred inventory.
 
 | Surface | Verified contract | Adoption consequence |
 |---|---|---|
-| `go-queue/rabbitmq` | One `Worker` couples production and consumption, actively declares topology, accepts a credential-bearing URI, confirms non-mandatory publications, and republishes failures. Its fixture uses RabbitMQ 3.13.7 and `amqp091-go` 1.11.0. | Compatibility requires the separate characterization, migration, and rollback gates in [`go-queue` migration](go-queue-migration.md). Native queue policy MUST keep producer and consumer lifecycles separate. It MUST NOT mutate production topology. |
+| `go-queue/rabbitmq` | The compatibility module preserves one `Worker` surface over independent native producer and consumer resources. It requires explicit structured connection, TLS, queue type, bounds, stable message identity, and operator-owned topology. Publications are mandatory and confirmed; retry and terminal replacements are confirmed before source acknowledgement. | Applications MUST satisfy the characterization, migration, canary, and rollback gates in [`go-queue` migration](go-queue-migration.md). Adapter verification does not establish any application cutover or production topology. |
 | `go-rabbitmq-streams` | Provides retained histories, offsets, replay, and Super Streams through the RabbitMQ Streams protocol with AMQP 1.0 messages. | It MUST remain separate from process-and-remove classic and quorum queues. Queue adoption MUST NOT replace stream retention or replay contracts. |
 | `go-transactional-outbox` | The relay owns leases and durable state transitions behind an error-only `Publisher`. It has a generic `go-queue` adapter and a confirmed RabbitMQ Streams adapter, but no `rabbitmqqueue` adapter. | A future adapter MUST map native outcomes into the relay error/classification contract without claiming exactly-once delivery or taking ownership of the outbox store. |
 | `go-event-sourcing/adapters/outbox` | Stages event rows followed by outbox rows inside a caller-owned PostgreSQL transaction. The caller commits or rolls back the outer transaction. | A queue publisher MUST remain downstream of the relay. It MUST NOT publish inside event staging or absorb transaction ownership. |
