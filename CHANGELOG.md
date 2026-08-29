@@ -6,6 +6,8 @@
 
 - Adopt the checksum-verified `go-library-tools` v1.0.7 contract while
   retaining the package-owned RabbitMQ evidence workflows and fixtures.
+- Consolidate all shared and package-specific checks into the single canonical
+  CI workflow without changing the RabbitMQ evidence matrices or scripts.
 
 ## [1.0.0] - 2026-08-28
 

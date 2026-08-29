@@ -15,6 +15,7 @@ on:
         type: boolean
 
 permissions:
+  actions: read
   contents: read
   security-events: write
 
@@ -25,14 +26,132 @@ jobs:
       tooling_sha: b776e8f56e50b74ce9d2369de17ccdf366a27c37
       release_dry_run: ${{ inputs.release_dry_run || false }}
 
+  live-broker:
+    name: RabbitMQ 4.3 TLS
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: ./scripts/ci-live-broker.sh single
+
+  php-interop:
+    name: PHP 8.5 interoperability
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: 8.5.10
+          extensions: mbstring, openssl, sockets
+          tools: composer:2.10.1
+          coverage: none
+      - run: ./scripts/ci-live-broker.sh php
+
+  performance:
+    name: Performance ${{ matrix.queue_type }} ${{ matrix.daily_messages }}/day
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        queue_type: [classic, quorum]
+        daily_messages: [1000000, 10000000, 100000000]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: ./scripts/ci-live-broker.sh performance
+        env:
+          QUEUE_TYPE: ${{ matrix.queue_type }}
+          DAILY_MESSAGES: ${{ matrix.daily_messages }}
+
+  cluster:
+    name: Three-node ${{ matrix.scenario }}
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - classic-node-loss
+          - quorum-leader-loss
+          - quorum-network-partition
+          - cluster-restart
+          - reconnect-storm
+          - rolling-upgrade
+          - application-rolling-deployment
+          - prolonged-outage
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: ./scripts/ci-live-cluster.sh "${FAULT_SCENARIO}"
+        env:
+          FAULT_SCENARIO: ${{ matrix.scenario }}
+
+  cluster-performance:
+    name: Three-node performance leader-loss ${{ matrix.daily_messages }}/day
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        daily_messages: [1000000, 10000000, 100000000]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: ./scripts/ci-live-cluster.sh quorum-performance-leader-loss
+        env:
+          DAILY_MESSAGES: ${{ matrix.daily_messages }}
+
   required:
     name: Required
     if: always()
-    needs: ci
+    needs: [ci, live-broker, php-interop, performance, cluster, cluster-performance]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require shared workflow
+      - name: Require every result
         env:
+          EVENT_NAME: ${{ github.event_name }}
           CI_RESULT: ${{ needs.ci.result }}
-        run: test "${CI_RESULT}" = success
+          LIVE_BROKER_RESULT: ${{ needs.live-broker.result }}
+          PHP_INTEROP_RESULT: ${{ needs.php-interop.result }}
+          PERFORMANCE_RESULT: ${{ needs.performance.result }}
+          CLUSTER_RESULT: ${{ needs.cluster.result }}
+          CLUSTER_PERFORMANCE_RESULT: ${{ needs.cluster-performance.result }}
+        run: |
+          set -euo pipefail
+          test "${CI_RESULT}" = success
+          if [[ "${EVENT_NAME}" == schedule ]]; then
+            exit 0
+          fi
+          for result in \
+            "${LIVE_BROKER_RESULT}" \
+            "${PHP_INTEROP_RESULT}" \
+            "${PERFORMANCE_RESULT}" \
+            "${CLUSTER_RESULT}" \
+            "${CLUSTER_PERFORMANCE_RESULT}"; do
+            test "${result}" = success
+          done
