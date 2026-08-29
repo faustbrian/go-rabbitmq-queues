@@ -17,7 +17,7 @@ trap 'exit 143' TERM
 
 mkdir "$task_root/cluster-operator" "$task_root/topology-operator" \
     "$task_root/kubeconform" "$task_root/schemas" "$task_root/go-build" \
-    "$task_root/go-modules" "$task_root/bin"
+    "$task_root/go-modules" "$task_root/go-tmp" "$task_root/bin"
 
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch v2.22.5 \
     https://github.com/rabbitmq/cluster-operator.git "$task_root/cluster-operator"
@@ -41,7 +41,8 @@ python_bin="$task_root/python/bin/python"
 (
     cd "$task_root/kubeconform"
     GOTOOLCHAIN=local GOWORK=off GOCACHE="$task_root/go-build" \
-        GOMODCACHE="$task_root/go-modules" GOBIN="$task_root/bin" \
+        GOMODCACHE="$task_root/go-modules" GOTMPDIR="$task_root/go-tmp" \
+        GOBIN="$task_root/bin" \
         go install ./cmd/kubeconform
 )
 

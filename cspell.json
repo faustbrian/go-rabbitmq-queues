@@ -1,0 +1,39 @@
+{
+  "allowCompoundWords": false,
+  "caseSensitive": false,
+  "files": [
+    "README.md",
+    "docs/**/*.md"
+  ],
+  "flagWords": [
+    "hte",
+    "recieve",
+    "seperate"
+  ],
+  "ignoreRegExpList": [
+    "/`[^`\\n]+`/g",
+    "/```[\\s\\S]*?```/g",
+    "/https?:\\/\\/[^\\s)]+/g"
+  ],
+  "language": "en,en-GB",
+  "useGitignore": true,
+  "version": "0.2",
+  "words": [
+    "amqplib",
+    "backpressure",
+    "deadletter",
+    "goleak",
+    "interop",
+    "kubeconform",
+    "Laravel",
+    "OpenTelemetry",
+    "RabbitMQ",
+    "redeliveries",
+    "redelivery",
+    "Shipit",
+    "unroutable",
+    "venv",
+    "vhost",
+    "worktrees"
+  ]
+}
