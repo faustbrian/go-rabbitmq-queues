@@ -19,7 +19,8 @@ func TestConsumerConstructorRejectsInvalidAndFailedSetup(t *testing.T) {
 	handler := DeliveryHandler(func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil })
 	channel := newFakeConsumerChannel()
 	resource := &concurrentCountingCloser{}
-	if consumer, err := newConsumerFromChannel(nil, testConsumerConfig(), handler, channel, resource); consumer != nil || !errors.Is(err, ErrContextRequired) {
+	var missingContext context.Context
+	if consumer, err := newConsumerFromChannel(missingContext, testConsumerConfig(), handler, channel, resource); consumer != nil || !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("nil context = (%#v, %v)", consumer, err)
 	}
 	if consumer, err := newConsumerFromChannel(t.Context(), ConsumerConfig{}, handler, channel, resource); consumer != nil || !errors.Is(err, ErrInvalidConsumer) {

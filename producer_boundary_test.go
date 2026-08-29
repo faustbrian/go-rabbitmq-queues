@@ -81,7 +81,8 @@ func TestProducerRejectsNilAndPreCancelledContexts(t *testing.T) {
 	}
 	t.Cleanup(func() { closeProducerForTest(t, producer) })
 
-	if result, err := producer.Publish(nil, testPublication()); result.State != PublishNotSent || !errors.Is(err, ErrContextRequired) {
+	var missingContext context.Context
+	if result, err := producer.Publish(missingContext, testPublication()); result.State != PublishNotSent || !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("Publish(nil) = (%#v, %v), want not sent context error", result, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -295,7 +296,8 @@ func TestProducerCloseDeadlineForcesActivePublishAndClosesOnce(t *testing.T) {
 	if result.State != PublishNotSent || !errors.Is(err, ErrProducerClosed) {
 		t.Fatalf("publish after close = (%#v, %v), want closed not sent", result, err)
 	}
-	if err := producer.Close(nil); !errors.Is(err, ErrContextRequired) {
+	var missingContext context.Context
+	if err := producer.Close(missingContext); !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("Close(nil) error = %v, want %v", err, ErrContextRequired)
 	}
 }

@@ -176,7 +176,8 @@ func TestProducerBatchRejectsInvalidBoundsBeforePublishing(t *testing.T) {
 	}
 	t.Cleanup(func() { closeProducerForTest(t, producer) })
 
-	if outcomes, err := producer.PublishBatch(nil, []Publication{testPublication()}); outcomes != nil || !errors.Is(err, ErrContextRequired) {
+	var missingContext context.Context
+	if outcomes, err := producer.PublishBatch(missingContext, []Publication{testPublication()}); outcomes != nil || !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("nil-context batch = (%#v, %v)", outcomes, err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -211,7 +212,8 @@ func TestProducerAsyncRejectsInvalidInputBeforeAdmission(t *testing.T) {
 	}
 	t.Cleanup(func() { closeProducerForTest(t, producer) })
 
-	if future, err := producer.PublishAsync(nil, testPublication()); future != nil || !errors.Is(err, ErrContextRequired) {
+	var missingContext context.Context
+	if future, err := producer.PublishAsync(missingContext, testPublication()); future != nil || !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("nil-context async = (%#v, %v)", future, err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())

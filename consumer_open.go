@@ -69,18 +69,18 @@ func openConsumerWith(
 		attemptContext, cancel := context.WithTimeout(ctx, connection.DialTimeout)
 		attemptDeadline, _ := attemptContext.Deadline()
 		credentials, credentialErr := connection.Credentials.Credentials(attemptContext)
-		if credentialErr != nil || !validCredentials(credentials) {
+		if !usableCredentials(credentials, credentialErr) {
 			cancel()
 			wipe(credentials.Password)
 		} else {
 			channel, resource, dialErr := dial(
 				attemptContext,
-				connection.Endpoints[attempt%len(connection.Endpoints)],
+				connection.Endpoints[recoveryEndpointIndex(0, attempt, len(connection.Endpoints))],
 				connection,
 				credentials,
 			)
 			wipe(credentials.Password)
-			if dialErr == nil && channel != nil && resource != nil {
+			if usableConsumerResources(channel, resource, dialErr) {
 				recovery := &consumerRecovery{
 					connection: connection, dial: dial, nextEndpoint: attempt + 1,
 				}
@@ -93,7 +93,7 @@ func openConsumerWith(
 					recovery,
 				)
 				cancel()
-				if consumerErr == nil {
+				if consumerOpenSucceeded(consumer, consumerErr) {
 					return consumer, nil
 				}
 			} else {
@@ -101,19 +101,18 @@ func openConsumerWith(
 				_ = boundedCloseConsumerResources(resource, channel, attemptDeadline)
 			}
 		}
-		if attempt == connection.Recovery.MaxAttempts-1 {
-			break
-		}
-		if err := waitForRecovery(ctx, delay); err != nil {
-			return nil, errors.Join(ErrConsumerUnavailable, err)
-		}
-		if delay > connection.Recovery.MaxDelay/2 {
-			delay = connection.Recovery.MaxDelay
-		} else {
-			delay *= 2
+		if !finalRecoveryAttempt(attempt, connection.Recovery.MaxAttempts) {
+			if err := waitForRecovery(ctx, delay); err != nil {
+				return nil, errors.Join(ErrConsumerUnavailable, err)
+			}
+			delay = nextRecoveryDelay(delay, connection.Recovery.MaxDelay)
 		}
 	}
 	return nil, ErrConsumerUnavailable
+}
+
+func consumerOpenSucceeded(consumer *Consumer, err error) bool {
+	return consumer != nil && err == nil
 }
 
 func (consumer *Consumer) recoverRuntime() (*consumerGeneration, bool) {
@@ -127,15 +126,11 @@ func (consumer *Consumer) recoverRuntime() (*consumerGeneration, bool) {
 			return nil, false
 		default:
 		}
-		if attempt > 0 {
+		if shouldWaitForRecovery(attempt) {
 			if err := waitForRecovery(consumer.recoveryContext, delay); err != nil {
 				return nil, false
 			}
-			if delay > consumer.recovery.connection.Recovery.MaxDelay/2 {
-				delay = consumer.recovery.connection.Recovery.MaxDelay
-			} else {
-				delay *= 2
-			}
+			delay = nextRecoveryDelay(delay, consumer.recovery.connection.Recovery.MaxDelay)
 		}
 		consumer.observe(Observation{Kind: ObservationReconnect, Outcome: ObservationAttempted})
 		attemptContext, cancel := context.WithTimeout(
@@ -144,12 +139,16 @@ func (consumer *Consumer) recoverRuntime() (*consumerGeneration, bool) {
 		)
 		deadline, _ := attemptContext.Deadline()
 		credentials, credentialErr := consumer.recovery.connection.Credentials.Credentials(attemptContext)
-		if credentialErr != nil || !validCredentials(credentials) {
+		if !usableCredentials(credentials, credentialErr) {
 			cancel()
 			wipe(credentials.Password)
 			continue
 		}
-		endpointIndex := (consumer.recovery.nextEndpoint + attempt) % len(consumer.recovery.connection.Endpoints)
+		endpointIndex := recoveryEndpointIndex(
+			consumer.recovery.nextEndpoint,
+			attempt,
+			len(consumer.recovery.connection.Endpoints),
+		)
 		channel, resource, dialErr := consumer.recovery.dial(
 			attemptContext,
 			consumer.recovery.connection.Endpoints[endpointIndex],
@@ -157,7 +156,7 @@ func (consumer *Consumer) recoverRuntime() (*consumerGeneration, bool) {
 			credentials,
 		)
 		wipe(credentials.Password)
-		if dialErr != nil || channel == nil || resource == nil {
+		if !usableConsumerResources(channel, resource, dialErr) {
 			cancel()
 			_ = boundedCloseConsumerResources(resource, channel, deadline)
 			continue
@@ -187,11 +186,21 @@ func dialAMQPConsumer(
 	connection ConnectionConfig,
 	credentials Credentials,
 ) (consumerChannel, io.Closer, error) {
+	return dialAMQPConsumerWith(ctx, endpoint, connection, credentials, openAMQPConsumerConnection)
+}
+
+func dialAMQPConsumerWith(
+	ctx context.Context,
+	endpoint Endpoint,
+	connection ConnectionConfig,
+	credentials Credentials,
+	open consumerAMQPOpenFunc,
+) (consumerChannel, io.Closer, error) {
 	address, config, deadline, err := buildAMQPClientConfig(ctx, endpoint, connection, credentials)
 	if err != nil {
 		return nil, nil, ErrConsumerUnavailable
 	}
-	return openAMQPConsumerConnection(address, config, deadline)
+	return open(address, config, deadline)
 }
 
 func openAMQPConsumerConnection(
@@ -209,7 +218,7 @@ func openAMQPConsumerConnectionWith(
 	dial amqpConnectionDialFunc,
 ) (consumerChannel, io.Closer, error) {
 	client, err := dial(address, config)
-	if err != nil || client == nil {
+	if !usableAMQPConnection(client, err) {
 		if client != nil {
 			_ = boundedCloseConsumerResources(client, nil, deadline)
 		}
@@ -230,4 +239,8 @@ func openAMQPConsumerConnectionWith(
 		return nil, nil, ErrConsumerUnavailable
 	}
 	return consumer, client, nil
+}
+
+func usableConsumerResources(channel consumerChannel, resource io.Closer, err error) bool {
+	return err == nil && channel != nil && resource != nil
 }

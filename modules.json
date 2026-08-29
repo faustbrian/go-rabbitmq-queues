@@ -32,9 +32,7 @@
       "external_runtime_dependencies": [
         "github.com/rabbitmq/amqp091-go"
       ],
-      "required_services": [
-        "rabbitmq"
-      ],
+      "required_services": [],
       "build_tags": [],
       "test_tags": [],
       "interoperability_tools": [
