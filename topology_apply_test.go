@@ -357,8 +357,9 @@ func TestApplyTopologyOwnsOptionalQueuePolicyBeforeDial(t *testing.T) {
 func TestApplyTopologyPublicBoundaryRejectsNilContext(t *testing.T) {
 	t.Parallel()
 
+	var missingContext context.Context
 	result, err := ApplyTopology(
-		nil, testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
+		missingContext, testConnectionConfig(), TopologyPolicy{Mode: TopologyPassive},
 		Topology{Queues: []Queue{{Name: "orders", Type: QueueClassic, Durable: true}}},
 	)
 	if !errors.Is(err, ErrContextRequired) || len(result.QueueNames) != 0 {

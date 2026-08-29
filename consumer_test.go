@@ -747,7 +747,8 @@ func TestOpenConsumerValidatesInputsBeforeDial(t *testing.T) {
 		return nil, nil, errors.New("unexpected")
 	})
 	handler := DeliveryHandler(func(context.Context, Delivery) (Settlement, error) { return Acknowledge(), nil })
-	if consumer, err := openConsumerWith(nil, testConnectionConfig(), testConsumerConfig(), handler, dial); consumer != nil || !errors.Is(err, ErrContextRequired) {
+	var missingContext context.Context
+	if consumer, err := openConsumerWith(missingContext, testConnectionConfig(), testConsumerConfig(), handler, dial); consumer != nil || !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("nil context = (%#v, %v)", consumer, err)
 	}
 	if consumer, err := openConsumerWith(t.Context(), ConnectionConfig{}, testConsumerConfig(), handler, dial); consumer != nil || !errors.Is(err, ErrInvalidEndpoint) {

@@ -98,19 +98,21 @@ func newConsumerFromChannelWithRecovery(
 	resource io.Closer,
 	recovery *consumerRecovery,
 ) (*Consumer, error) {
-	if ctx == nil {
+	if !contextProvided(ctx) {
 		return nil, ErrContextRequired
 	}
 	config = ownConsumerConfig(config)
-	if err := config.Validate(); err != nil {
-		return nil, err
+	configAccepted, configErr := acceptedConsumerConfig(config.Validate())
+	if !configAccepted {
+		return nil, configErr
 	}
-	if handler == nil || channel == nil || resource == nil {
+	if !consumerInputsPresent(handler, channel, resource) {
 		return nil, ErrInvalidConsumer
 	}
-	generation, err := setupConsumerGeneration(ctx, config, channel, resource)
-	if err != nil {
-		return nil, err
+	generation, setupErr := setupConsumerGeneration(ctx, config, channel, resource)
+	setupAccepted, setupErr := acceptedConsumerGeneration(generation, setupErr)
+	if !setupAccepted {
+		return nil, setupErr
 	}
 	lifetimeContext, stopLifetime := context.WithCancel(context.Background())
 	recoveryContext, stopRecovery := context.WithCancel(context.Background())
@@ -126,6 +128,24 @@ func newConsumerFromChannelWithRecovery(
 	consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationConnected})
 	go consumer.run(generation)
 	return consumer, nil
+}
+
+func acceptedConsumerConfig(err error) (bool, error) {
+	return err == nil, err
+}
+
+func consumerInputsPresent(handler DeliveryHandler, channel consumerChannel, resource io.Closer) bool {
+	return handler != nil && channel != nil && resource != nil
+}
+
+func acceptedConsumerGeneration(generation *consumerGeneration, err error) (bool, error) {
+	if err != nil {
+		return false, err
+	}
+	if generation == nil {
+		return false, ErrConsumerUnavailable
+	}
+	return true, nil
 }
 
 func setupConsumerGeneration(
@@ -266,7 +286,7 @@ func boundedConsumerSetup(ctx context.Context, fallback time.Duration, resource 
 
 func consumerCleanupDeadline(ctx context.Context, fallback time.Duration) time.Time {
 	deadline := deadlineFor(ctx, fallback)
-	if time.Until(deadline) > 0 {
+	if positiveDuration(time.Until(deadline)) {
 		return deadline
 	}
 	return time.Now().Add(fallback)
@@ -288,10 +308,11 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 	generation := initial
 	for {
 		if !consumer.consumeGeneration(generation) {
-			break
+			consumer.finishRun(&workers)
+			return
 		}
 		consumer.beginRecovery()
-		if err := consumer.closeGeneration(generation, time.Now().Add(consumer.config.HandlerTimeout)); err != nil {
+		if err := consumer.closeGeneration(generation, time.Now().Add(consumer.config.HandlerTimeout)); consumerOperationFailed(err) {
 			consumer.setResourceError(err)
 			consumer.setTerminalError(ErrConsumerUnavailable)
 			break
@@ -306,6 +327,10 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 		generation = next
 		consumer.finishRecovery()
 	}
+	consumer.finishRun(&workers)
+}
+
+func (consumer *Consumer) finishRun(workers *sync.WaitGroup) {
 	consumer.stopRecovery()
 	if consumer.Err() != nil {
 		consumer.stopLifetime()
@@ -313,7 +338,7 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 	}
 	close(consumer.jobs)
 	workers.Wait()
-	generation = consumer.currentGeneration()
+	generation := consumer.currentGeneration()
 	if consumer.drainError() != nil || generation.delegated.Load() {
 		consumer.setResourceError(consumer.closeGeneration(
 			generation, time.Now().Add(consumer.config.HandlerTimeout),
@@ -331,7 +356,7 @@ func (consumer *Consumer) run(initial *consumerGeneration) {
 func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool {
 	// RabbitMQ limits unsettled deliveries to Prefetch. The extra slot keeps the
 	// delivery stream selectable so its closure remains visible while paused.
-	pending := make([]consumerEnvelope, consumer.config.Prefetch+1)
+	pending := make([]consumerEnvelope, consumerPendingCapacity(consumer.config.Prefetch))
 	pendingHead := 0
 	pendingCount := 0
 	cancellations := generation.cancellations
@@ -341,7 +366,7 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 	deliveriesClosed := false
 	for {
 		consumer.admissionMu.Lock()
-		paused := consumer.paused && !draining
+		paused := consumerAdmissionPaused(consumer.paused, draining)
 		resume := consumer.resume
 		if pendingCount > 0 && !paused {
 			select {
@@ -359,10 +384,10 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 			resume = nil
 		}
 		deliveries := generation.deliveries
-		if deliveriesClosed || (!paused && pendingCount > 0) || pendingCount == len(pending) {
+		if suspendConsumerDeliveries(deliveriesClosed, paused, pendingCount, len(pending)) {
 			deliveries = nil
 		}
-		if draining && deliveriesClosed && pendingCount == 0 {
+		if consumerDrainComplete(draining, deliveriesClosed, pendingCount) {
 			return false
 		}
 
@@ -376,49 +401,46 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 				}
 				draining = true
 				recoveryDone = nil
-				continue
-			}
-			consumer.observe(Observation{Kind: ObservationDelivery, Outcome: ObservationDelivered})
-			if source.Redelivered {
-				consumer.observe(Observation{Kind: ObservationRedelivery, Outcome: ObservationRedelivered})
-			}
-			delivery, err := deliveryFromAMQP(source, consumer.config)
-			if err != nil {
-				if consumer.settle(generation, source.DeliveryTag, Reject(false)) != nil {
-					return true
+			} else {
+				consumer.observe(Observation{Kind: ObservationDelivery, Outcome: ObservationDelivered})
+				if source.Redelivered {
+					consumer.observe(Observation{Kind: ObservationRedelivery, Outcome: ObservationRedelivered})
 				}
-				continue
+				delivery, err := deliveryFromAMQP(source, consumer.config)
+				if consumerOperationFailed(err) {
+					if consumerOperationFailed(consumer.settle(generation, source.DeliveryTag, Reject(false))) {
+						return true
+					}
+				} else {
+					if hasDeadLetterHistory(delivery.Deaths) {
+						consumer.observe(Observation{Kind: ObservationDeadLetter, Outcome: ObservationDeadLettered})
+					}
+					if consumerBacklogFull(pendingCount, len(consumer.jobs), consumer.config.Prefetch) {
+						consumer.observe(Observation{Kind: ObservationBacklogPressure, Outcome: ObservationBacklogFull})
+					}
+					pending[(pendingHead+pendingCount)%len(pending)] = consumerEnvelope{
+						delivery: delivery, tag: source.DeliveryTag, generation: generation,
+					}
+					pendingCount++
+				}
 			}
-			if len(delivery.Deaths) > 0 {
-				consumer.observe(Observation{Kind: ObservationDeadLetter, Outcome: ObservationDeadLettered})
-			}
-			if pendingCount+len(consumer.jobs) >= consumer.config.Prefetch {
-				consumer.observe(Observation{Kind: ObservationBacklogPressure, Outcome: ObservationBacklogFull})
-			}
-			pending[(pendingHead+pendingCount)%len(pending)] = consumerEnvelope{
-				delivery: delivery, tag: source.DeliveryTag, generation: generation,
-			}
-			pendingCount++
 		case <-resume:
 		case <-consumer.admissionChanged:
 		case tag, open := <-cancellations:
 			if !open {
 				cancellations = nil
-				continue
+			} else if matchingConsumerCancellation(tag, consumer.config.Name) {
+				consumer.observe(Observation{
+					Kind: ObservationConsumerCancellation, Outcome: ObservationCancelled,
+				})
+				if consumer.isStopping() {
+					draining = true
+					recoveryDone = nil
+					cancellations = nil
+				} else {
+					return true
+				}
 			}
-			if tag != consumer.config.Name {
-				continue
-			}
-			consumer.observe(Observation{
-				Kind: ObservationConsumerCancellation, Outcome: ObservationCancelled,
-			})
-			if consumer.isStopping() {
-				draining = true
-				recoveryDone = nil
-				cancellations = nil
-				continue
-			}
-			return !consumer.isStopping()
 		case <-generation.failure:
 			return true
 		case <-recoveryDone:
@@ -433,10 +455,38 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 	}
 }
 
+func suspendConsumerDeliveries(deliveriesClosed, paused bool, pendingCount, capacity int) bool {
+	return deliveriesClosed || (!paused && pendingCount > 0) || pendingCount == capacity
+}
+
+func consumerPendingCapacity(prefetch int) int {
+	return prefetch + 1
+}
+
+func consumerAdmissionPaused(paused, draining bool) bool {
+	return paused && !draining
+}
+
+func consumerDrainComplete(draining, deliveriesClosed bool, pendingCount int) bool {
+	return draining && deliveriesClosed && pendingCount == 0
+}
+
+func hasDeadLetterHistory(deaths []Death) bool {
+	return len(deaths) != 0
+}
+
+func consumerBacklogFull(pendingCount, admittedCount, prefetch int) bool {
+	return pendingCount+admittedCount >= prefetch
+}
+
+func matchingConsumerCancellation(tag, name string) bool {
+	return tag == name
+}
+
 func (consumer *Consumer) observePendingCancellation(cancellations <-chan string) {
 	select {
 	case tag, open := <-cancellations:
-		if open && tag == consumer.config.Name {
+		if open && matchingConsumerCancellation(tag, consumer.config.Name) {
 			consumer.observe(Observation{
 				Kind: ObservationConsumerCancellation, Outcome: ObservationCancelled,
 			})
@@ -450,11 +500,11 @@ func (consumer *Consumer) handle(envelope consumerEnvelope) {
 	requested, err := consumer.handler(handlerContext, envelope.delivery)
 	contextErr := handlerContext.Err()
 	cancel()
-	if err != nil || contextErr != nil || requested.Validate() != nil {
+	if invalidConsumerHandlerOutcome(err, contextErr, requested) {
 		consumer.observe(Observation{Kind: ObservationHandlerFailure, Outcome: ObservationHandlerFailed})
 		requested = consumer.config.Failure
 	}
-	if requested.Method == SettlementDelegate {
+	if delegatedSettlement(requested.Method) {
 		envelope.generation.delegated.Store(true)
 		envelope.delivery.completeSettlement(ErrSettlementResultUnavailable)
 		return
@@ -462,13 +512,25 @@ func (consumer *Consumer) handle(envelope consumerEnvelope) {
 	requested = boundedSettlement(envelope.delivery, requested, consumer.config)
 	settlementErr := consumer.settle(envelope.generation, envelope.tag, requested)
 	settlementResult := settlementErr
-	if settlementResult != nil {
+	if consumerOperationFailed(settlementResult) {
 		settlementResult = ErrConsumerUnavailable
 	}
 	envelope.delivery.completeSettlement(settlementResult)
-	if settlementErr != nil {
+	if consumerOperationFailed(settlementErr) {
 		consumer.failGeneration(envelope.generation)
 	}
+}
+
+func invalidConsumerHandlerOutcome(handlerErr, contextErr error, requested Settlement) bool {
+	return handlerErr != nil || contextErr != nil || requested.Validate() != nil
+}
+
+func delegatedSettlement(method SettlementMethod) bool {
+	return method == SettlementDelegate
+}
+
+func consumerOperationFailed(err error) bool {
+	return err != nil
 }
 
 func (consumer *Consumer) settle(generation *consumerGeneration, tag uint64, settlement Settlement) error {
@@ -487,7 +549,7 @@ func (consumer *Consumer) settle(generation *consumerGeneration, tag uint64, set
 				outcome = ObservationNegativeAcknowledged
 			}
 			consumer.observe(Observation{Kind: ObservationSettlement, Outcome: outcome})
-			if settlement.Method == SettlementAcknowledge {
+			if isAcknowledgement(settlement.Method) {
 				consumer.observe(Observation{Kind: ObservationAcknowledgement, Outcome: outcome})
 			}
 		}
@@ -496,6 +558,10 @@ func (consumer *Consumer) settle(generation *consumerGeneration, tag uint64, set
 		_ = consumer.closeGeneration(generation, deadlineFor(ctx, consumer.config.HandlerTimeout))
 		return ErrConsumerUnavailable
 	}
+}
+
+func isAcknowledgement(method SettlementMethod) bool {
+	return method == SettlementAcknowledge
 }
 
 func applySettlement(channel consumerChannel, tag uint64, settlement Settlement) error {
@@ -518,12 +584,12 @@ func (consumer *Consumer) failGeneration(generation *consumerGeneration) {
 	if current && stopping && consumer.drainErr == nil {
 		consumer.drainErr = ErrConsumerUnavailable
 	}
-	changed := current && !stopping && consumer.terminalErr == nil && !consumer.recovering
+	changed := consumerRecoveryAllowed(current, stopping, consumer.terminalErr, consumer.recovering)
 	if changed {
 		consumer.recovering = true
 	}
 	consumer.stateMu.Unlock()
-	if !current || stopping {
+	if !consumerGenerationCanSignal(current, stopping) {
 		return
 	}
 	if changed {
@@ -537,7 +603,7 @@ func (consumer *Consumer) failGeneration(generation *consumerGeneration) {
 
 func (consumer *Consumer) beginRecovery() {
 	consumer.stateMu.Lock()
-	changed := !consumer.stopping && consumer.terminalErr == nil && !consumer.recovering
+	changed := consumerRecoveryAllowed(true, consumer.stopping, consumer.terminalErr, consumer.recovering)
 	if changed {
 		consumer.recovering = true
 	}
@@ -545,6 +611,14 @@ func (consumer *Consumer) beginRecovery() {
 	if changed {
 		consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationRecovering})
 	}
+}
+
+func consumerRecoveryAllowed(current, stopping bool, terminal error, recovering bool) bool {
+	return current && !stopping && terminal == nil && !recovering
+}
+
+func consumerGenerationCanSignal(current, stopping bool) bool {
+	return current && !stopping
 }
 
 func (consumer *Consumer) finishRecovery() {
@@ -562,14 +636,18 @@ func (consumer *Consumer) isStopping() bool {
 
 func (consumer *Consumer) setTerminalError(err error) {
 	consumer.stateMu.Lock()
-	changed := consumer.terminalErr == nil
-	if consumer.terminalErr == nil {
+	changed := consumerTerminalUnset(consumer.terminalErr)
+	if changed {
 		consumer.terminalErr = err
 	}
 	consumer.stateMu.Unlock()
 	if changed {
 		consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationUnavailable})
 	}
+}
+
+func consumerTerminalUnset(err error) bool {
+	return err == nil
 }
 
 func (consumer *Consumer) setResourceError(err error) {
@@ -642,7 +720,11 @@ func (consumer *Consumer) Resume() error {
 func (consumer *Consumer) closed() bool {
 	consumer.stateMu.Lock()
 	defer consumer.stateMu.Unlock()
-	return consumer.stopping || consumer.stopped || consumer.terminalErr != nil
+	return consumerLifecycleClosed(consumer.stopping, consumer.stopped, consumer.terminalErr != nil)
+}
+
+func consumerLifecycleClosed(stopping, stopped, terminal bool) bool {
+	return stopping || stopped || terminal
 }
 
 func (consumer *Consumer) signalAdmissionChanged() {
@@ -696,7 +778,10 @@ func (consumer *Consumer) observe(observation Observation) {
 }
 
 func (consumer *Consumer) cancelGeneration(ctx context.Context, generation *consumerGeneration) error {
-	if generation == nil || generation.closed.Load() {
+	if generation == nil {
+		return nil
+	}
+	if !consumerGenerationCanCancel(generation.closed.Load()) {
 		return nil
 	}
 	generation.cancelOnce.Do(func() {
@@ -712,6 +797,10 @@ func (consumer *Consumer) cancelGeneration(ctx context.Context, generation *cons
 		}
 	})
 	return generation.cancelErr
+}
+
+func consumerGenerationCanCancel(closed bool) bool {
+	return !closed
 }
 
 // Close drains admitted handlers, then closes owned resources. If cancellation
@@ -742,7 +831,7 @@ func (consumer *Consumer) closeGeneration(generation *consumerGeneration, deadli
 		}()
 	})
 	remaining := time.Until(deadline)
-	if remaining <= 0 {
+	if !positiveDuration(remaining) {
 		return ErrConsumerUnavailable
 	}
 	timer := time.NewTimer(remaining)
@@ -794,7 +883,7 @@ func startConsumerClose(closer io.Closer, deadline time.Time) <-chan error {
 
 func waitForConsumerClose(result <-chan error, deadline time.Time) (error, bool) {
 	remaining := time.Until(deadline)
-	if remaining <= 0 {
+	if !positiveDuration(remaining) {
 		return nil, false
 	}
 	timer := time.NewTimer(remaining)
@@ -805,4 +894,8 @@ func waitForConsumerClose(result <-chan error, deadline time.Time) (error, bool)
 	case <-timer.C:
 		return nil, false
 	}
+}
+
+func positiveDuration(duration time.Duration) bool {
+	return duration > 0
 }

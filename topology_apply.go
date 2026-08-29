@@ -91,14 +91,9 @@ func applyTopologyWith(
 	}
 	connection = ownConnectionConfig(connection)
 	topology = ownTopology(topology)
-	if err := connection.Validate(); err != nil {
-		return TopologyResult{}, err
-	}
-	if err := topology.Validate(policy); err != nil {
-		return TopologyResult{}, err
-	}
 	delay := connection.Recovery.InitialDelay
-	for attempt := 0; attempt < connection.Recovery.MaxAttempts; attempt++ {
+	attempt := 0
+	for {
 		select {
 		case <-ctx.Done():
 			return TopologyResult{}, errors.Join(ErrTopologyUnavailable, ctx.Err())
@@ -108,19 +103,19 @@ func applyTopologyWith(
 		deadline, _ := attemptContext.Deadline()
 		var attemptErr error
 		credentials, credentialErr := connection.Credentials.Credentials(attemptContext)
-		if credentialErr != nil || !validCredentials(credentials) {
+		if !usableCredentials(credentials, credentialErr) {
 			attemptErr = attemptContext.Err()
 			cancel()
 			wipe(credentials.Password)
 		} else {
 			channel, resource, dialErr := dial(
 				attemptContext,
-				connection.Endpoints[attempt%len(connection.Endpoints)],
+				connection.Endpoints[recoveryEndpointIndex(0, attempt, len(connection.Endpoints))],
 				connection,
 				credentials,
 			)
 			wipe(credentials.Password)
-			if dialErr == nil && channel != nil && resource != nil {
+			if usableTopologyResources(channel, resource, dialErr) {
 				generation := &topologyGeneration{channel: channel, resource: resource}
 				result, applyErr := applyTopologyChannel(attemptContext, generation, policy, topology)
 				closeErr := generation.close(deadline)
@@ -132,7 +127,7 @@ func applyTopologyWith(
 					if ctxErr := ctx.Err(); ctxErr != nil {
 						return TopologyResult{}, errors.Join(ErrTopologyUnavailable, ctxErr)
 					}
-					if closeErr != nil || attempt == connection.Recovery.MaxAttempts-1 {
+					if closeErr != nil || finalRecoveryAttempt(attempt, connection.Recovery.MaxAttempts) {
 						return TopologyResult{}, applyErr
 					}
 				} else {
@@ -150,22 +145,22 @@ func applyTopologyWith(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return TopologyResult{}, errors.Join(ErrTopologyUnavailable, ctxErr)
 		}
-		if attempt == connection.Recovery.MaxAttempts-1 {
+		if finalRecoveryAttempt(attempt, connection.Recovery.MaxAttempts) {
 			if attemptErr != nil {
 				return TopologyResult{}, errors.Join(ErrTopologyUnavailable, attemptErr)
 			}
-			break
+			return TopologyResult{}, ErrTopologyUnavailable
 		}
 		if err := waitForRecovery(ctx, delay); err != nil {
 			return TopologyResult{}, errors.Join(ErrTopologyUnavailable, err)
 		}
-		if delay > connection.Recovery.MaxDelay/2 {
-			delay = connection.Recovery.MaxDelay
-		} else {
-			delay *= 2
-		}
+		delay = nextRecoveryDelay(delay, connection.Recovery.MaxDelay)
+		attempt = nextRecoveryAttempt(attempt)
 	}
-	return TopologyResult{}, ErrTopologyUnavailable
+}
+
+func nextRecoveryAttempt(attempt int) int {
+	return attempt + 1
 }
 
 func applyTopologyChannel(
@@ -301,6 +296,10 @@ func topologyOperationError(err error) error {
 	return &retryableTopologyOperationError{}
 }
 
+func usableTopologyResources(channel topologyChannel, resource io.Closer, err error) bool {
+	return err == nil && channel != nil && resource != nil
+}
+
 func retryableTopologyOperation(err error) bool {
 	var retryable *retryableTopologyOperationError
 	return errors.As(err, &retryable)
@@ -314,7 +313,7 @@ func queueArguments(queue Queue) amqp.Table {
 	if queue.DeliveryLimit != nil {
 		arguments["x-delivery-limit"] = int64(*queue.DeliveryLimit)
 	}
-	if queue.MaxPriority > 0 {
+	if queuePriorityPresent(queue.MaxPriority) {
 		arguments["x-max-priority"] = int32(queue.MaxPriority)
 	}
 	if queue.MessageTTL != nil {
@@ -344,7 +343,7 @@ func queueArguments(queue Queue) amqp.Table {
 	if queue.MaxLengthBytes != nil {
 		arguments["x-max-length-bytes"] = int64(*queue.MaxLengthBytes)
 	}
-	if queue.Overflow != "" {
+	if queueOverflowPresent(queue.Overflow) {
 		arguments["x-overflow"] = string(queue.Overflow)
 	}
 	if queue.DeadLetter != nil {
@@ -352,11 +351,23 @@ func queueArguments(queue Queue) amqp.Table {
 		if queue.DeadLetter.RoutingKey != nil {
 			arguments["x-dead-letter-routing-key"] = *queue.DeadLetter.RoutingKey
 		}
-		if queue.DeadLetter.Strategy != "" {
+		if deadLetterStrategyPresent(queue.DeadLetter.Strategy) {
 			arguments["x-dead-letter-strategy"] = string(queue.DeadLetter.Strategy)
 		}
 	}
 	return arguments
+}
+
+func queuePriorityPresent(priority uint8) bool {
+	return priority != 0
+}
+
+func queueOverflowPresent(overflow QueueOverflow) bool {
+	return overflow != ""
+}
+
+func deadLetterStrategyPresent(strategy DeadLetterStrategy) bool {
+	return strategy != ""
 }
 
 func bindingArguments(arguments []Header) amqp.Table {
@@ -486,7 +497,7 @@ func openAMQPTopologyConnectionWith(
 		return nil, nil, ErrTopologyUnavailable
 	}
 	channel, err := client.Channel()
-	if err != nil || channel == nil {
+	if !usableAMQPChannel(channel, err) {
 		_ = closeWithDeadline(client, deadline)
 		return nil, nil, ErrTopologyUnavailable
 	}
@@ -497,4 +508,8 @@ func openAMQPTopologyConnectionWith(
 		return nil, nil, ErrTopologyUnavailable
 	}
 	return topology, client, nil
+}
+
+func usableAMQPChannel(channel producerChannel, err error) bool {
+	return channel != nil && err == nil
 }

@@ -45,28 +45,20 @@ type producerConnectionEvents interface {
 
 type amqpConnectionDialFunc func(string, amqp.Config) (amqpConnection, error)
 
+type nativeAMQPDialFunc func(string, amqp.Config) (*amqp.Connection, error)
+type nativeAMQPWrapFunc func(*amqp.Connection) amqpConnection
+
+type nativeChannelOpener interface {
+	Channel() (*amqp.Channel, error)
+}
+
 type nativeAMQPConnection struct {
-	connection *amqp.Connection
+	*amqp.Connection
+	opener nativeChannelOpener
 }
 
 func (connection *nativeAMQPConnection) Channel() (producerChannel, error) {
-	return connection.connection.Channel()
-}
-
-func (connection *nativeAMQPConnection) Close() error {
-	return connection.connection.Close()
-}
-
-func (connection *nativeAMQPConnection) CloseDeadline(deadline time.Time) error {
-	return connection.connection.CloseDeadline(deadline)
-}
-
-func (connection *nativeAMQPConnection) NotifyClose(listener chan *amqp.Error) chan *amqp.Error {
-	return connection.connection.NotifyClose(listener)
-}
-
-func (connection *nativeAMQPConnection) NotifyBlocked(listener chan amqp.Blocking) chan amqp.Blocking {
-	return connection.connection.NotifyBlocked(listener)
+	return connection.opener.Channel()
 }
 
 // OpenProducer establishes an independent producer-only AMQP connection and
@@ -101,12 +93,13 @@ func openProducerWith(
 		return nil, ErrProducerUnavailable
 	}
 	sessionID, err := session()
-	if err != nil || invalidIdentity(sessionID, 128) {
+	if !usableProducerSession(sessionID, err) {
 		return nil, ErrProducerUnavailable
 	}
 
 	delay := connection.Recovery.InitialDelay
-	for attempt := 0; attempt < connection.Recovery.MaxAttempts; attempt++ {
+	attempt := 0
+	for {
 		select {
 		case <-ctx.Done():
 			return nil, errors.Join(ErrProducerUnavailable, ctx.Err())
@@ -115,25 +108,25 @@ func openProducerWith(
 		attemptContext, cancel := context.WithTimeout(ctx, connection.DialTimeout)
 		attemptDeadline, _ := attemptContext.Deadline()
 		credentials, credentialErr := connection.Credentials.Credentials(attemptContext)
-		if credentialErr != nil || !validCredentials(credentials) {
+		if !usableCredentials(credentials, credentialErr) {
 			cancel()
 			wipe(credentials.Password)
 		} else {
 			channel, resource, dialErr := dial(
 				attemptContext,
-				connection.Endpoints[attempt%len(connection.Endpoints)],
+				connection.Endpoints[recoveryEndpointIndex(0, attempt, len(connection.Endpoints))],
 				connection,
 				credentials,
 			)
 			wipe(credentials.Password)
-			if dialErr == nil && channel != nil && resource != nil {
+			if usableProducerResources(channel, resource, dialErr) {
 				recovery := &producerRecovery{
 					connection: connection, session: session, dial: dial,
-					nextEndpoint: attempt + 1,
+					nextEndpoint: nextRecoveryAttempt(attempt),
 				}
 				producer, producerErr := newProducerFromChannelWithRecovery(attemptContext, config, sessionID, channel, resource, recovery)
 				cancel()
-				if producerErr == nil {
+				if producerOpenSucceeded(producer, producerErr) {
 					return producer, nil
 				}
 			} else {
@@ -146,20 +139,19 @@ func openProducerWith(
 				}
 			}
 		}
-		if attempt == connection.Recovery.MaxAttempts-1 {
-			break
+		if finalRecoveryAttempt(attempt, connection.Recovery.MaxAttempts) {
+			return nil, ErrProducerUnavailable
 		}
 		if err := waitForRecovery(ctx, delay); err != nil {
 			return nil, errors.Join(ErrProducerUnavailable, err)
 		}
-		if delay > connection.Recovery.MaxDelay/2 {
-			delay = connection.Recovery.MaxDelay
-		} else {
-			delay *= 2
-		}
+		delay = nextRecoveryDelay(delay, connection.Recovery.MaxDelay)
+		attempt = nextRecoveryAttempt(attempt)
 	}
+}
 
-	return nil, ErrProducerUnavailable
+func producerOpenSucceeded(producer *Producer, err error) bool {
+	return producer != nil && err == nil
 }
 
 func (producer *Producer) recoverRuntime() bool {
@@ -173,32 +165,32 @@ func (producer *Producer) recoverRuntime() bool {
 			return false
 		default:
 		}
-		if attempt > 0 {
+		if shouldWaitForRecovery(attempt) {
 			if err := waitForRecovery(producer.eventsContext, delay); err != nil {
 				return false
 			}
-			if delay > producer.recovery.connection.Recovery.MaxDelay/2 {
-				delay = producer.recovery.connection.Recovery.MaxDelay
-			} else {
-				delay *= 2
-			}
+			delay = nextRecoveryDelay(delay, producer.recovery.connection.Recovery.MaxDelay)
 		}
 		producer.observe(Observation{Kind: ObservationReconnect, Outcome: ObservationAttempted})
 		attemptContext, cancel := context.WithTimeout(producer.eventsContext, producer.recovery.connection.DialTimeout)
 		deadline, _ := attemptContext.Deadline()
 		credentials, credentialErr := producer.recovery.connection.Credentials.Credentials(attemptContext)
-		if credentialErr != nil || !validCredentials(credentials) {
+		if !usableCredentials(credentials, credentialErr) {
 			cancel()
 			wipe(credentials.Password)
 			continue
 		}
 		session, sessionErr := producer.recovery.session()
-		if sessionErr != nil || invalidIdentity(session, maxProducerSessionBytes) {
+		if !usableProducerSession(session, sessionErr) {
 			cancel()
 			wipe(credentials.Password)
 			continue
 		}
-		endpointIndex := (producer.recovery.nextEndpoint + attempt) % len(producer.recovery.connection.Endpoints)
+		endpointIndex := recoveryEndpointIndex(
+			producer.recovery.nextEndpoint,
+			attempt,
+			len(producer.recovery.connection.Endpoints),
+		)
 		channel, resource, dialErr := producer.recovery.dial(
 			attemptContext,
 			producer.recovery.connection.Endpoints[endpointIndex],
@@ -206,7 +198,7 @@ func (producer *Producer) recoverRuntime() bool {
 			credentials,
 		)
 		wipe(credentials.Password)
-		if dialErr != nil || channel == nil || resource == nil {
+		if !usableProducerResources(channel, resource, dialErr) {
 			cancel()
 			_ = closeProducerGeneration(channel, resource, &producerGenerationClose{}, deadline)
 			continue
@@ -289,6 +281,30 @@ func validCredentials(credentials Credentials) bool {
 		len(credentials.Password) <= maxCredentialBytes
 }
 
+func usableCredentials(credentials Credentials, err error) bool {
+	return err == nil && validCredentials(credentials)
+}
+
+func usableProducerSession(session string, err error) bool {
+	return err == nil && !invalidIdentity(session, maxProducerSessionBytes)
+}
+
+func usableProducerResources(channel producerChannel, resource io.Closer, err error) bool {
+	return err == nil && channel != nil && resource != nil
+}
+
+func usableAMQPConnection(connection amqpConnection, err error) bool {
+	return err == nil && connection != nil
+}
+
+func finalRecoveryAttempt(attempt, maximum int) bool {
+	return attempt+1 == maximum
+}
+
+func shouldWaitForRecovery(attempt int) bool {
+	return attempt > 0
+}
+
 func wipe(secret []byte) {
 	for index := range secret {
 		secret[index] = 0
@@ -306,9 +322,21 @@ func waitForRecovery(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+func nextRecoveryDelay(current, maximum time.Duration) time.Duration {
+	return min(current*2, maximum)
+}
+
+func recoveryEndpointIndex(start, attempt, count int) int {
+	return (start + attempt) % count
+}
+
 func randomProducerSession() (string, error) {
+	return producerSessionFrom(rand.Reader)
+}
+
+func producerSessionFrom(source io.Reader) (string, error) {
 	random := make([]byte, 16)
-	if _, err := rand.Read(random); err != nil {
+	if _, err := io.ReadFull(source, random); err != nil {
 		return "", ErrProducerUnavailable
 	}
 	return hex.EncodeToString(random), nil
@@ -394,18 +422,45 @@ func openAMQPConnectionWith(
 }
 
 func dialAMQPConnection(address string, config amqp.Config) (amqpConnection, error) {
-	connection, err := amqp.DialConfig(address, config)
+	return dialAMQPConnectionWithNative(address, config, amqp.DialConfig, wrapNativeAMQPConnection)
+}
+
+func dialAMQPConnectionWithNative(
+	address string,
+	config amqp.Config,
+	dial nativeAMQPDialFunc,
+	wrap nativeAMQPWrapFunc,
+) (amqpConnection, error) {
+	connection, err := dial(address, config)
+	var owned amqpConnection
+	if connection != nil {
+		owned = wrap(connection)
+	}
 	if err != nil {
-		if connection != nil {
-			_ = connection.CloseDeadline(time.Now())
+		if owned != nil {
+			_ = owned.CloseDeadline(time.Now())
 		}
 		return nil, ErrProducerUnavailable
 	}
-	return &nativeAMQPConnection{connection: connection}, nil
+	if owned == nil {
+		return nil, ErrProducerUnavailable
+	}
+	return owned, nil
+}
+
+func wrapNativeAMQPConnection(connection *amqp.Connection) amqpConnection {
+	return &nativeAMQPConnection{Connection: connection, opener: connection}
 }
 
 func buildTLSConfig(config TLSConfig) (*tls.Config, error) {
-	roots, err := x509.SystemCertPool()
+	return buildTLSConfigWithSystemRoots(config, x509.SystemCertPool)
+}
+
+func buildTLSConfigWithSystemRoots(
+	config TLSConfig,
+	systemRoots func() (*x509.CertPool, error),
+) (*tls.Config, error) {
+	roots, err := systemRoots()
 	if err != nil {
 		return nil, ErrInvalidTLS
 	}

@@ -14,7 +14,8 @@ import (
 func TestDeliveryAwaitSettlementRequiresTrackedDeliveryAndContext(t *testing.T) {
 	t.Parallel()
 
-	if err := (Delivery{}).AwaitSettlement(nil); !errors.Is(err, ErrContextRequired) {
+	var nilContext context.Context
+	if err := (Delivery{}).AwaitSettlement(nilContext); !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("AwaitSettlement(nil) error = %v, want context required", err)
 	}
 	if err := (Delivery{}).AwaitSettlement(t.Context()); !errors.Is(err, ErrSettlementResultUnavailable) {

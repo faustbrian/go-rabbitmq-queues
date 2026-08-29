@@ -123,16 +123,23 @@ func (stream *observationStream) close() {
 		select {
 		case stream.channel <- terminal:
 		default:
-			select {
-			case displaced := <-stream.channel:
+			if displaced, ok := takeObservation(stream.channel); ok {
 				terminal.Dropped += displaced.Dropped + 1
-			default:
 			}
 			stream.channel <- terminal
 		}
 		close(stream.channel)
 		stream.mu.Unlock()
 	})
+}
+
+func takeObservation(channel <-chan Observation) (Observation, bool) {
+	select {
+	case observation := <-channel:
+		return observation, true
+	default:
+		return Observation{}, false
+	}
 }
 
 func publishObservationOutcome(state PublishState) ObservationOutcome {

@@ -37,12 +37,16 @@ func (delivery Delivery) AwaitSettlement(ctx context.Context) error {
 	case <-delivery.settlement.done:
 		return delivery.settlement.err
 	case <-ctx.Done():
-		select {
-		case <-delivery.settlement.done:
-			return delivery.settlement.err
-		default:
-			return ctx.Err()
-		}
+		return settlementResultOrContext(delivery.settlement, ctx.Err())
+	}
+}
+
+func settlementResultOrContext(settlement *deliverySettlement, contextErr error) error {
+	select {
+	case <-settlement.done:
+		return settlement.err
+	default:
+		return contextErr
 	}
 }
 

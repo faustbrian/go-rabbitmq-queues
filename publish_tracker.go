@@ -38,11 +38,9 @@ func (tracker *publishTracker) register(
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
-	if tracker.maximum < 1 {
-		return nil, ErrInvalidBounds
-	}
-	if sequence == 0 || token == "" {
-		return nil, ErrInvalidPublishCorrelation
+	accepted, admissionErr := publishRegistrationAdmission(tracker.maximum, sequence, token, len(tracker.sequence))
+	if !accepted {
+		return nil, admissionErr
 	}
 	if _, exists := tracker.sequence[sequence]; exists {
 		return nil, ErrInvalidPublishCorrelation
@@ -50,10 +48,6 @@ func (tracker *publishTracker) register(
 	if _, exists := tracker.token[token]; exists {
 		return nil, ErrInvalidPublishCorrelation
 	}
-	if len(tracker.sequence) >= tracker.maximum {
-		return nil, ErrOutstandingConfirmLimit
-	}
-
 	attempt := &publishAttempt{
 		sequence: sequence,
 		token:    token,
@@ -65,6 +59,19 @@ func (tracker *publishTracker) register(
 	tracker.token[token] = attempt
 
 	return attempt, nil
+}
+
+func publishRegistrationAdmission(maximum int, sequence uint64, token string, registered int) (bool, error) {
+	if maximum < 1 {
+		return false, ErrInvalidBounds
+	}
+	if sequence == 0 || token == "" {
+		return false, ErrInvalidPublishCorrelation
+	}
+	if registered >= maximum {
+		return false, ErrOutstandingConfirmLimit
+	}
+	return true, nil
 }
 
 func (tracker *publishTracker) returned(token string, returned Return) bool {
@@ -101,7 +108,7 @@ func (tracker *publishTracker) confirm(sequence uint64, acknowledged bool) bool 
 }
 
 func (tracker *publishTracker) abandon(sequence uint64, state PublishState) bool {
-	if state != PublishNotSent && state != PublishAmbiguous {
+	if !abandonablePublishState(state) {
 		return false
 	}
 
@@ -116,8 +123,12 @@ func (tracker *publishTracker) abandon(sequence uint64, state PublishState) bool
 	return true
 }
 
+func abandonablePublishState(state PublishState) bool {
+	return state == PublishNotSent || state == PublishAmbiguous
+}
+
 func (tracker *publishTracker) failAll(state PublishState) int {
-	if state != PublishNotSent && state != PublishAmbiguous {
+	if !abandonablePublishState(state) {
 		return 0
 	}
 

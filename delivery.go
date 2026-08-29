@@ -184,8 +184,13 @@ type Delivery struct {
 }
 
 func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, error) {
-	if err := config.Validate(); err != nil || source.DeliveryTag == 0 ||
-		invalidIdentity(source.ConsumerTag, config.Limits.MaxNameBytes) ||
+	if consumerOperationFailed(config.Validate()) {
+		return Delivery{}, ErrInvalidDelivery
+	}
+	if !validDeliveryTag(source.DeliveryTag) {
+		return Delivery{}, ErrInvalidDelivery
+	}
+	if invalidIdentity(source.ConsumerTag, config.Limits.MaxNameBytes) ||
 		len(source.RoutingKey) > config.Limits.MaxRoutingKeyBytes ||
 		containsControl(source.RoutingKey) || len(source.Exchange) > config.Limits.MaxNameBytes ||
 		containsControl(source.Exchange) || len(source.Body) > config.Limits.MaxPayloadBytes {
@@ -210,7 +215,7 @@ func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, er
 		return Delivery{}, err
 	}
 	deathSummaryBytes, err := deliveryDeathSummaryBytes(source.Headers, config.Limits)
-	if err != nil || deathSummaryBytes > config.Limits.MaxHeaderBytes-metadataBytes {
+	if err != nil || !fitsRemainingHeaderBudget(deathSummaryBytes, metadataBytes, config.Limits.MaxHeaderBytes) {
 		return Delivery{}, ErrInvalidDelivery
 	}
 	metadataBytes += deathSummaryBytes
@@ -251,6 +256,14 @@ func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, er
 		Redelivered: source.Redelivered, AcquiredCount: acquiredCount,
 		DeliveryCount: deliveryCount, Deaths: deaths, settlement: newDeliverySettlement(),
 	}, nil
+}
+
+func validDeliveryTag(tag uint64) bool {
+	return tag > 0
+}
+
+func fitsRemainingHeaderBudget(additional, used, maximum int) bool {
+	return additional <= maximum-used
 }
 
 func parseDeliveryExpiration(value string) (*time.Duration, error) {
@@ -321,9 +334,8 @@ func deliveryDeathSummaryBytes(table amqp.Table, limits Limits) (int, error) {
 		if !exists {
 			continue
 		}
-		text, ok := value.(string)
-		if !ok || len(text) > limits.MaxNameBytes || containsControl(text) ||
-			(!field.allowEmpty && invalidIdentity(text, limits.MaxNameBytes)) {
+		text, ok := validDeathSummaryField(value, field.allowEmpty, limits)
+		if !ok {
 			return 0, ErrInvalidDelivery
 		}
 		bytes += len(text)
@@ -332,6 +344,23 @@ func deliveryDeathSummaryBytes(table amqp.Table, limits Limits) (int, error) {
 		}
 	}
 	return bytes, nil
+}
+
+func validDeathSummaryField(value any, allowEmpty bool, limits Limits) (string, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	if len(text) > limits.MaxNameBytes {
+		return "", false
+	}
+	if containsControl(text) {
+		return "", false
+	}
+	if !allowEmpty && invalidIdentity(text, limits.MaxNameBytes) {
+		return "", false
+	}
+	return text, true
 }
 
 func stableDeliveryHeader(key string, value any) (Header, int, bool) {
@@ -410,9 +439,7 @@ func deliveryDeath(fields amqp.Table, limits Limits) (Death, int, error) {
 	queue, queueOK := fields["queue"].(string)
 	exchange, exchangeOK := fields["exchange"].(string)
 	deathTime, timeOK := fields["time"].(time.Time)
-	if !reasonOK || !queueOK || !exchangeOK || !timeOK || deathTime.Before(time.Unix(0, 0)) ||
-		invalidIdentity(reason, limits.MaxNameBytes) || invalidIdentity(queue, limits.MaxNameBytes) ||
-		len(exchange) > limits.MaxNameBytes || containsControl(exchange) {
+	if !validDeliveryDeathFields(reason, reasonOK, queue, queueOK, exchange, exchangeOK, deathTime, timeOK, limits) {
 		return Death{}, 0, ErrInvalidDelivery
 	}
 	routingValues, ok := fields["routing-keys"].([]any)
@@ -424,7 +451,7 @@ func deliveryDeath(fields amqp.Table, limits Limits) (Death, int, error) {
 		return Death{}, 0, err
 	}
 	routingKeys := make([]string, 0, len(routingValues))
-	metadataBytes := 16 + len(reason) + len(queue) + len(exchange) + expirationBytes
+	metadataBytes := deliveryDeathMetadataBytes(reason, queue, exchange, expirationBytes)
 	for _, value := range routingValues {
 		routingKey, ok := value.(string)
 		if !ok || len(routingKey) > limits.MaxRoutingKeyBytes || containsControl(routingKey) {
@@ -439,6 +466,33 @@ func deliveryDeath(fields amqp.Table, limits Limits) (Death, int, error) {
 	}, metadataBytes, nil
 }
 
+func validDeliveryDeathFields(
+	reason string,
+	reasonOK bool,
+	queue string,
+	queueOK bool,
+	exchange string,
+	exchangeOK bool,
+	deathTime time.Time,
+	timeOK bool,
+	limits Limits,
+) bool {
+	if !reasonOK || invalidIdentity(reason, limits.MaxNameBytes) {
+		return false
+	}
+	if !queueOK || invalidIdentity(queue, limits.MaxNameBytes) {
+		return false
+	}
+	if !exchangeOK || len(exchange) > limits.MaxNameBytes || containsControl(exchange) {
+		return false
+	}
+	return timeOK && !deathTime.Before(time.Unix(0, 0))
+}
+
+func deliveryDeathMetadataBytes(reason, queue, exchange string, expirationBytes int) int {
+	return 16 + len(reason) + len(queue) + len(exchange) + expirationBytes
+}
+
 func deathOriginalExpiration(fields amqp.Table) (*time.Duration, int, error) {
 	value, exists := fields["original-expiration"]
 	if !exists {
@@ -451,9 +505,6 @@ func deathOriginalExpiration(fields amqp.Table) (*time.Duration, int, error) {
 	expiration, err := parseDeliveryExpiration(encoded)
 	if err != nil {
 		return nil, 0, err
-	}
-	if expiration == nil {
-		return nil, 0, ErrInvalidDelivery
 	}
 	return expiration, len(encoded), nil
 }

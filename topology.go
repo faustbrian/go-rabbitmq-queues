@@ -345,8 +345,7 @@ func (topology Topology) Validate(policy TopologyPolicy) error {
 	for _, binding := range topology.Bindings {
 		kind, exchangeExists := exchanges[binding.Exchange]
 		_, queueExists := queues[binding.Queue]
-		if !exchangeExists || !queueExists || invalidIdentity(binding.Exchange, 255) ||
-			invalidIdentity(binding.Queue, 255) ||
+		if !exchangeExists || !queueExists ||
 			!validExchangeBinding(kind, binding.RoutingKey, binding.Arguments) {
 			return ErrInvalidTopology
 		}
