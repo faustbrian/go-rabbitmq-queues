@@ -9,6 +9,11 @@
 - Consolidate all shared and package-specific checks into the single canonical
   CI workflow without changing the RabbitMQ evidence matrices or scripts.
 
+### Documentation
+
+- Add repository-local contributor guidance for the shared verification
+  commands, dependency policy, module additions, and submission requirements.
+
 ## [1.0.0] - 2026-08-28
 
 ### Documentation
