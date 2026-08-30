@@ -479,6 +479,29 @@ func TestProducerDrainsReturnStreamsDeterministically(t *testing.T) {
 	}
 }
 
+func TestProducerGenerationStopsOnUncorrelatedMandatoryReturn(t *testing.T) {
+	t.Parallel()
+
+	producer := &Producer{
+		eventsContext: context.Background(),
+		observations:  newObservationStream(ObservationProducer, observationBufferSize),
+	}
+	returns := make(chan amqp.Return, 1)
+	returns <- amqp.Return{Headers: amqp.Table{"other": "value"}}
+
+	if !producer.runGenerationWith(returns, nil, nil, nil, newPublishTracker(1), nil, producer.drainReturns) {
+		t.Fatal("uncorrelated mandatory return did not terminate the producer generation")
+	}
+	select {
+	case observation := <-producer.Observations():
+		if observation.Kind != ObservationReturn || observation.Outcome != ObservationReturned {
+			t.Fatalf("return observation = %#v", observation)
+		}
+	default:
+		t.Fatal("uncorrelated mandatory return was not observed")
+	}
+}
+
 func TestProducerCloseSanitizesResourceFailures(t *testing.T) {
 	t.Parallel()
 
