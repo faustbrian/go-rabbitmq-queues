@@ -39,11 +39,17 @@
         "PHP 8.5.10 and php-amqplib v3.7.4 livebroker harness",
         "kubeconform v0.8.0 against pinned RabbitMQ Operator CRDs"
       ],
-      "specifications": [],
+      "specifications": [
+        "AMQP 0-9-1",
+        "RabbitMQ 4.3"
+      ],
       "conformance_corpora": [
         "Language-neutral AMQP fixture and Go boundary contract at testdata/interoperability/message-v1.json"
       ],
-      "provenance": [],
+      "provenance": [
+        "specification/sources.lock.json",
+        "specification/monitoring.json"
+      ],
       "goal_files": [],
       "goal_status": "not-applicable",
       "goal_evidence": [],

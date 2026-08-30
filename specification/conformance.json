@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "decisions": [
+    {
+      "id": "RABBITMQ-QUEUE-DEC-001",
+      "authoritative_sources": ["amqp091-protocol"],
+      "executable_evidence": ["TestLanguageNeutralInteroperabilityFixturePreservesAMQPMetadataAndBytes", "TestDeliveryConversionOwnsBoundedMetadataAndDeadLetterHistory"],
+      "fixtures": ["testdata/interoperability/message-v1.json"],
+      "fuzz": ["FuzzPublicationValidation", "FuzzDeliveryConversion"],
+      "differential_evidence": ["testdata/interoperability/message-v1.json", "testdata/interoperability/php/composer.lock", "live_interoperability_test.go", "scripts/ci-live-broker.sh"],
+      "differential_classification": "deliberate policy difference",
+      "public_behavior": ["Supported AMQP metadata and opaque body bytes preserve their bounded language-neutral representation across Go and PHP."]
+    },
+    {
+      "id": "RABBITMQ-QUEUE-DEC-002",
+      "authoritative_sources": ["rabbitmq43-confirms"],
+      "executable_evidence": ["TestPublishTrackerReconcilesExactConfirmAndMandatoryReturn", "TestProducerReconcilesReturnBeforePositiveConfirm"],
+      "fixtures": ["testdata/interoperability/message-v1.json"],
+      "fuzz": ["FuzzPublishTrackerCorrelation"],
+      "differential_evidence": ["testdata/interoperability/message-v1.json", "testdata/interoperability/php/composer.lock", "live_interoperability_test.go", "scripts/ci-live-broker.sh"],
+      "differential_classification": "deliberate policy difference",
+      "public_behavior": ["One exact publication reports a confirmed, returned, rejected, not-sent, or ambiguous terminal outcome."]
+    },
+    {
+      "id": "RABBITMQ-QUEUE-DEC-003",
+      "authoritative_sources": ["rabbitmq43-confirms"],
+      "executable_evidence": ["TestProducerKeepsPostTransmissionCancellationAmbiguous", "TestProducerPreservesDefinitiveOutcomeObservedBeforePublishError", "TestPublishTrackerBoundsOutstandingAndFailsGeneration"],
+      "fixtures": [],
+      "fuzz": ["FuzzPublishTrackerCorrelation"],
+      "differential_evidence": [],
+      "differential_classification": "not assessed",
+      "public_behavior": ["A missing outcome after client transmission remains ambiguous rather than being reported as definitely not sent."]
+    },
+    {
+      "id": "RABBITMQ-QUEUE-DEC-004",
+      "authoritative_sources": ["amqp091-protocol"],
+      "executable_evidence": ["TestConsumerConfiguresManualQOSAndAcknowledgesAfterHandler", "TestConsumerBoundsRequeueAndRejectsInvalidDelivery", "TestSettlementPolicyPreventsUnboundedRequeue"],
+      "fixtures": [],
+      "fuzz": ["FuzzDeliveryConversion"],
+      "differential_evidence": [],
+      "differential_classification": "not assessed",
+      "public_behavior": ["Manual post-handler settlement and bounded requeue preserve an explicit at-least-once application contract."]
+    },
+    {
+      "id": "RABBITMQ-QUEUE-DEC-005",
+      "authoritative_sources": ["rabbitmq43-queues", "rabbitmq43-quorum"],
+      "executable_evidence": ["TestQueuePolicyModelsQueueTypeCapabilities", "TestQueuePolicyDistinguishesOmittedAndExplicitQuorumDeliveryLimit", "TestTopologyMutationRequiresExplicitDevelopmentPermit"],
+      "fixtures": ["testdata/operator/topology.yaml"],
+      "fuzz": ["FuzzTopologyValidation"],
+      "differential_evidence": [],
+      "differential_classification": "not assessed",
+      "public_behavior": ["Classic and quorum queue capabilities are validated before passive inspection or explicitly authorized development mutation."]
+    }
+  ]
+}

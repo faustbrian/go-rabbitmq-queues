@@ -3,6 +3,41 @@
   "accessed": "2026-08-27",
   "sources": [
     {
+      "name": "AMQP 0-9-1 protocol reference",
+      "version": "AMQP 0-9-1",
+      "revision": "b8e975a762b8677263ebbbba1e70654b5263af81",
+      "url": "https://raw.githubusercontent.com/rabbitmq/amqp-0.9.1-spec/b8e975a762b8677263ebbbba1e70654b5263af81/docs/amqp-0-9-1-protocol.md",
+      "content_sha256": "252ba1cc3dffd0bad61a6a9a2a04cb7d6a56c51f5b6e5a48e85bad74927e4e22"
+    },
+    {
+      "name": "AMQP 0-9-1 errata",
+      "version": "AMQP 0-9-1",
+      "revision": "b8e975a762b8677263ebbbba1e70654b5263af81",
+      "url": "https://raw.githubusercontent.com/rabbitmq/amqp-0.9.1-spec/b8e975a762b8677263ebbbba1e70654b5263af81/docs/amqp-0-9-1-errata.md",
+      "content_sha256": "912dd55d26cdebe40e34bae43d29136230791696772e5415443db8030ad09f50"
+    },
+    {
+      "name": "RabbitMQ 4.3 publisher confirms",
+      "version": "RabbitMQ 4.3",
+      "revision": "1c99c9687f012ad700385c1e9a6990f6520720d3",
+      "url": "https://raw.githubusercontent.com/rabbitmq/rabbitmq-website/1c99c9687f012ad700385c1e9a6990f6520720d3/versioned_docs/version-4.3/confirms.md",
+      "content_sha256": "861abccf819fddcdaddd661255914d867d6ed511a9ff19311bfef73d0907b127"
+    },
+    {
+      "name": "RabbitMQ 4.3 queue guide",
+      "version": "RabbitMQ 4.3",
+      "revision": "1c99c9687f012ad700385c1e9a6990f6520720d3",
+      "url": "https://raw.githubusercontent.com/rabbitmq/rabbitmq-website/1c99c9687f012ad700385c1e9a6990f6520720d3/versioned_docs/version-4.3/queues.md",
+      "content_sha256": "70a81800b3df6e9e0295391a2fae37f67421af5b097d112e06a3ac9ba3087025"
+    },
+    {
+      "name": "RabbitMQ 4.3 quorum queue guide",
+      "version": "RabbitMQ 4.3",
+      "revision": "1c99c9687f012ad700385c1e9a6990f6520720d3",
+      "url": "https://raw.githubusercontent.com/rabbitmq/rabbitmq-website/1c99c9687f012ad700385c1e9a6990f6520720d3/versioned_docs/version-4.3/quorum-queues/index.md",
+      "content_sha256": "a9a41aca4560ded658c6ada1229258ba8f0a185bc026cb5784dfb831383ff41d"
+    },
+    {
       "name": "RabbitMQ server",
       "version": "4.3.5",
       "revision": "0dde27bfdd1984ff7e157226fd97656854a7f359",

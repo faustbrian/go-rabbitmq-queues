@@ -9,6 +9,8 @@
 
 - [Guarantees and boundaries](guarantees.md)
 - [Interoperability](interoperability.md)
+- [Specification decisions](specification-decisions.md)
+- [Specification conformance matrix](../specification/README.md)
 - [Adoption audit](adoption-audit.md)
 - [`go-queue/rabbitmq` migration and rollback](go-queue-migration.md)
 - [Performance](performance.md)

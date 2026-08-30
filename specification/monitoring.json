@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-08-30",
+  "review_interval_days": 90,
+  "authorities": [
+    {
+      "id": "amqp091-protocol",
+      "kind": "specification",
+      "version": "AMQP 0-9-1",
+      "url": "https://raw.githubusercontent.com/rabbitmq/amqp-0.9.1-spec/b8e975a762b8677263ebbbba1e70654b5263af81/docs/amqp-0-9-1-protocol.md",
+      "sha256": "252ba1cc3dffd0bad61a6a9a2a04cb7d6a56c51f5b6e5a48e85bad74927e4e22",
+      "specifications": ["AMQP 0-9-1"]
+    },
+    {
+      "id": "amqp091-errata",
+      "kind": "errata",
+      "version": "",
+      "url": "https://raw.githubusercontent.com/rabbitmq/amqp-0.9.1-spec/b8e975a762b8677263ebbbba1e70654b5263af81/docs/amqp-0-9-1-errata.md",
+      "sha256": "912dd55d26cdebe40e34bae43d29136230791696772e5415443db8030ad09f50",
+      "specifications": ["AMQP 0-9-1"]
+    },
+    {
+      "id": "rabbitmq43-confirms",
+      "kind": "specification",
+      "version": "RabbitMQ 4.3",
+      "url": "https://raw.githubusercontent.com/rabbitmq/rabbitmq-website/1c99c9687f012ad700385c1e9a6990f6520720d3/versioned_docs/version-4.3/confirms.md",
+      "sha256": "861abccf819fddcdaddd661255914d867d6ed511a9ff19311bfef73d0907b127",
+      "specifications": ["RabbitMQ 4.3"]
+    },
+    {
+      "id": "rabbitmq43-queues",
+      "kind": "specification",
+      "version": "RabbitMQ 4.3",
+      "url": "https://raw.githubusercontent.com/rabbitmq/rabbitmq-website/1c99c9687f012ad700385c1e9a6990f6520720d3/versioned_docs/version-4.3/queues.md",
+      "sha256": "70a81800b3df6e9e0295391a2fae37f67421af5b097d112e06a3ac9ba3087025",
+      "specifications": ["RabbitMQ 4.3"]
+    },
+    {
+      "id": "rabbitmq43-quorum",
+      "kind": "specification",
+      "version": "RabbitMQ 4.3",
+      "url": "https://raw.githubusercontent.com/rabbitmq/rabbitmq-website/1c99c9687f012ad700385c1e9a6990f6520720d3/versioned_docs/version-4.3/quorum-queues/index.md",
+      "sha256": "a9a41aca4560ded658c6ada1229258ba8f0a185bc026cb5784dfb831383ff41d",
+      "specifications": ["RabbitMQ 4.3"]
+    },
+    {
+      "id": "rabbitmq43-release",
+      "kind": "releases",
+      "version": "",
+      "url": "https://raw.githubusercontent.com/rabbitmq/rabbitmq-server/0dde27bfdd1984ff7e157226fd97656854a7f359/release-notes/4.3.5.md",
+      "sha256": "31bc3e0b69ccb97d0c266ba90db5055337772ffb7d0108d7ffcd71803c4ec334",
+      "specifications": ["RabbitMQ 4.3"]
+    }
+  ]
+}

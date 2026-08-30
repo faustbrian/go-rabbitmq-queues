@@ -4,6 +4,15 @@
 
 ### Changed
 
+- Register the package's observable AMQP 0-9-1 and RabbitMQ 4.3 choices in the
+  [specification decision register](docs/specification-decisions.md), bind them
+  to maintained PHP, language-neutral, fuzz, fixture, and Go evidence, and
+  enforce source monitoring and compatibility change control in CI:
+  `RABBITMQ-QUEUE-DEC-001 sha256:f31a2424aa1965197a13ffb0e37821c44d80576a7440dea309f674145a7dbe57`,
+  `RABBITMQ-QUEUE-DEC-002 sha256:00f4f810f7f77017ae64d65c098815ad372465773986727beb6c57d3486e49e2`,
+  `RABBITMQ-QUEUE-DEC-003 sha256:07df997826f9e83b75a445e92c1598bce2d37ee36fbce72e9c3ced72943c6170`,
+  `RABBITMQ-QUEUE-DEC-004 sha256:84fd04f7f765bb73cc6f04e24e423da438d264ef7620a858c022be431a99e767`, and
+  `RABBITMQ-QUEUE-DEC-005 sha256:c3c8d20691ba06b5fc8c7259fe15b79912ddd956b9ce36111fc7dc92e6364213`.
 - Adopt the checksum-verified `go-library-tools` v1.0.13 contract while
   retaining the package-owned RabbitMQ evidence workflows and fixtures.
 - Consolidate all shared and package-specific checks into the single canonical
