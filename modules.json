@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "repository": "github.com/faustbrian/go-rabbitmq-queues",
   "go_version": "1.27.0",
   "modules": [
@@ -25,6 +25,10 @@
       "lifecycle": "stable",
       "kind": "public library",
       "releasable": true,
+      "family": "integration-and-data-movement",
+      "family_label": "Integration And Data Movement",
+      "family_description": "Bounded external I/O, data movement, provider boundaries, and derived search state.",
+      "family_order": 7,
       "version": "1.0.0",
       "tag_prefix": "v",
       "owned_dependencies": [],
@@ -65,6 +69,84 @@
         "race": true,
         "security": true,
         "tests": true
+      },
+      "cohesion": {
+        "family": "integration-and-data-movement",
+        "secondary_capabilities": [
+          "database-and-storage",
+          "eventing-and-messaging",
+          "protocols-and-schemas",
+          "resilience-and-admission"
+        ],
+        "responsibility": "Provide bounded RabbitMQ-native AMQP 0-9-1 classic and quorum queue publishing, consumption, settlement, recovery, topology verification, health, and observation policy.",
+        "non_goals": [
+          "Implement RabbitMQ Streams, application schemas, application idempotency or workflow, exactly-once processing, outbox semantics, generic messaging abstractions, or application-owned reply queues."
+        ],
+        "public_package_identifier": "rabbitmqqueue",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-rabbitmq-queues"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-rabbitmq-queues": "Use for direct RabbitMQ AMQP 0-9-1 classic and quorum queue semantics; use go-queue for a backend-neutral worker abstraction and go-rabbitmq-streams for append-log, offset, and replay semantics."
+        },
+        "lifecycle_status": "active",
+        "maturity": "stable",
+        "construction_styles": [
+          "open",
+          "validated-value"
+        ],
+        "lifecycle_styles": [
+          "close",
+          "drain"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "copy",
+            "transfer"
+          ],
+          "runtime_resources": "package",
+          "background_work": "package"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [],
+        "companions": [
+          "github.com/faustbrian/go-queue/rabbitmq"
+        ],
+        "supported_go": {
+          "minimum": "1.27.0",
+          "tested": [
+            "1.27.0"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [
+          "rabbitmq"
+        ],
+        "supported_protocols": [
+          "amqp-0-9-1"
+        ],
+        "documentation": {
+          "readme": "README.md",
+          "api": "https://pkg.go.dev/github.com/faustbrian/go-rabbitmq-queues",
+          "adoption": "docs/adoption-audit.md",
+          "security": "docs/guarantees.md",
+          "compatibility": "COMPATIBILITY.md",
+          "performance": "docs/performance.md",
+          "examples": "README.md",
+          "faq": null,
+          "changelog": "CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-rabbitmq-queues",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.3.0/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "not-started",
+          "hardening": "not-started",
+          "release": "not-started"
+        }
       }
     }
   ]

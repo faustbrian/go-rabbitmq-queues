@@ -13,6 +13,10 @@ topology, recovery, health, settlement, and observation policies. See the
 [documentation index](docs/README.md) for operational detail and current
 evidence boundaries.
 
+For shared package families, selection guidance, ownership, and lifecycle
+vocabulary, see the versioned [v1.3.0 Go library ecosystem
+index](https://github.com/faustbrian/go-library-tools/blob/v1.3.0/docs/ecosystem/README.md).
+
 ## Policy example
 
 ```go
