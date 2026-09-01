@@ -1,6 +1,6 @@
 schema_version: 1
-tool_version: v1.2.0
-tool_checksums_sha256: 7de6de3a14184eced8c0114bf802cb24a808f3e1592d358f6f6f3d02552d0e27
+tool_version: v1.3.0
+tool_checksums_sha256: 72d38d7d0cab33bfeb9345df6b141eacf9841c5d6817f597ff25b957dc8dc48f
 
 manifest:
   modules: modules.json
