@@ -13,10 +13,16 @@
   `RABBITMQ-QUEUE-DEC-003 sha256:07df997826f9e83b75a445e92c1598bce2d37ee36fbce72e9c3ced72943c6170`,
   `RABBITMQ-QUEUE-DEC-004 sha256:84fd04f7f765bb73cc6f04e24e423da438d264ef7620a858c022be431a99e767`, and
   `RABBITMQ-QUEUE-DEC-005 sha256:c3c8d20691ba06b5fc8c7259fe15b79912ddd956b9ce36111fc7dc92e6364213`.
-- Adopt the checksum-verified `go-library-tools` v1.0.13 contract while
-  retaining the package-owned RabbitMQ evidence workflows and fixtures.
+- Adopt the checksum-verified `go-library-tools` v1.2.0 contract and immutable
+  `1f9629e5f27418600460b55a50a5b2fc81697fab` workflow while retaining the
+  package-owned RabbitMQ evidence workflows and fixtures.
 - Consolidate all shared and package-specific checks into the single canonical
   CI workflow without changing the RabbitMQ evidence matrices or scripts.
+
+### Documentation
+
+- Add repository-local contributor guidance for the shared verification
+  commands, dependency policy, module additions, and submission requirements.
 
 ## [1.0.0] - 2026-08-28
 
