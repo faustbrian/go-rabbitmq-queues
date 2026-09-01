@@ -7,6 +7,13 @@
 3. Identify owned dependencies and reverse dependants in `modules.json`.
 4. Preserve unrelated work and generated or corpus provenance.
 
+Before changing message mapping, publication outcomes, settlement, queue
+policy, topology, or another protocol-facing behavior, review the
+[specification decision register](docs/specification-decisions.md). Update the
+register, conformance manifests, decision history, compatibility notes, and
+changelog together when a decision changes. Superseded decisions remain in
+the register and ledger with a replacement link.
+
 ## Changes
 
 Keep commits focused and conventional. Update every affected changelog with
@@ -40,8 +47,10 @@ Before submitting a repository-wide change:
 make ci
 ```
 
-The full scheduled and release gate is `make ci`. Report every unavailable or
-failing command; do not describe partial results as release-ready.
+The full scheduled and release gate is `make ci`. Broker- and PHP-backed suites
+remain CI-owned as documented in [live broker testing](docs/live-broker-testing.md).
+Report every unavailable or failing command; do not describe partial results as
+release-ready.
 
 ## Adding A Module
 

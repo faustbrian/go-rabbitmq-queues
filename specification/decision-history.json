@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {"id": "RABBITMQ-QUEUE-DEC-001", "digests": ["f31a2424aa1965197a13ffb0e37821c44d80576a7440dea309f674145a7dbe57"]},
+    {"id": "RABBITMQ-QUEUE-DEC-002", "digests": ["00f4f810f7f77017ae64d65c098815ad372465773986727beb6c57d3486e49e2"]},
+    {"id": "RABBITMQ-QUEUE-DEC-003", "digests": ["07df997826f9e83b75a445e92c1598bce2d37ee36fbce72e9c3ced72943c6170"]},
+    {"id": "RABBITMQ-QUEUE-DEC-004", "digests": ["84fd04f7f765bb73cc6f04e24e423da438d264ef7620a858c022be431a99e767"]},
+    {"id": "RABBITMQ-QUEUE-DEC-005", "digests": ["c3c8d20691ba06b5fc8c7259fe15b79912ddd956b9ce36111fc7dc92e6364213"]}
+  ]
+}

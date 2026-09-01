@@ -1,5 +1,10 @@
 # Compatibility pins
 
+Observable AMQP and RabbitMQ interpretations are versioned in the
+[specification decision register](docs/specification-decisions.md). Changes to
+those decisions require compatibility review even when the earlier behavior
+was undocumented.
+
 Research and initial local policy tests use these immutable inputs as of
 2026-08-27:
 

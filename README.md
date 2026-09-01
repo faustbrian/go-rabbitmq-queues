@@ -98,4 +98,5 @@ func main() {
 
 Read the [complete guarantees](docs/guarantees.md), [capability
 matrix](docs/capability-matrix.md), [performance evidence](docs/performance.md),
-and [compatibility policy](COMPATIBILITY.md) before production use.
+the [specification decision register](docs/specification-decisions.md), and
+the [compatibility policy](COMPATIBILITY.md) before production use.
