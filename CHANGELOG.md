@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Advance shared tooling and required CI enforcement to the immutable
+  `go-library-tools` v1.4.0 release and its checksum-verified cohesion contract,
+  and add online specification source monitoring to the local `make ci` gate.
 - Adopt the schema-v2 Golib cohesion catalog contract, including the package's
   family, selection, ownership, lifecycle, compatibility, and documentation
   metadata and add versioned ecosystem navigation.
@@ -24,6 +27,8 @@
 
 ### Documentation
 
+- Point ecosystem and package-family navigation at the immutable v1.4.0
+  documentation set.
 - Add repository-local contributor guidance for the shared verification
   commands, dependency policy, module additions, and submission requirements.
 
