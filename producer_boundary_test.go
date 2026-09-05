@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -210,11 +211,14 @@ func TestProducerPublishTimeoutForcesBlockedTransmissionClosed(t *testing.T) {
 	fallback := time.AfterFunc(50*time.Millisecond, func() { releaseOnce.Do(func() { close(release) }) })
 	defer fallback.Stop()
 	result, publishErr := producer.Publish(context.Background(), testPublication())
-	if resource.deadlineCalls == 0 {
-		releaseOnce.Do(func() { close(release) })
-	}
 	if result.State != PublishAmbiguous || !errors.Is(publishErr, ErrPublishAmbiguous) || !errors.Is(publishErr, context.DeadlineExceeded) {
 		t.Fatalf("Publish() = (%#v, %v), want bounded ambiguous deadline", result, publishErr)
+	}
+	select {
+	case <-release:
+	case <-time.After(time.Second):
+		releaseOnce.Do(func() { close(release) })
+		t.Fatal("publish timeout did not start forced resource cleanup")
 	}
 	if resource.deadlineCalls != 1 {
 		t.Fatalf("deadline close calls = %d, want forced connection close", resource.deadlineCalls)
@@ -226,6 +230,98 @@ func TestProducerPublishTimeoutForcesBlockedTransmissionClosed(t *testing.T) {
 	case <-started:
 	default:
 		t.Fatal("client transmission did not start")
+	}
+}
+
+func TestProducerPublishOwnsPublicationAfterTimedOutTransmission(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	release := make(chan struct{})
+	owned := make(chan bool, 1)
+	channel.publish = func(_ context.Context, _ string, _ string, _ bool, _ bool, publishing amqp.Publishing) error {
+		<-release
+		for _, value := range publishing.Body {
+			if value != 'o' {
+				owned <- false
+				return errors.New("connection closed")
+			}
+		}
+		owned <- true
+		return errors.New("connection closed")
+	}
+	config := testProducerConfig()
+	config.PublishTimeout = time.Millisecond
+	producer, err := newProducerFromChannel(config, "session-owned-publication", channel, io.NopCloser(nilReader{}))
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+
+	publication := testPublication()
+	publication.Message.Body = make([]byte, config.Limits.MaxPayloadBytes)
+	for index := range publication.Message.Body {
+		publication.Message.Body[index] = 'o'
+	}
+	result, publishErr := producer.Publish(context.Background(), publication)
+	if result.State != PublishAmbiguous || !errors.Is(publishErr, context.DeadlineExceeded) {
+		close(release)
+		t.Fatalf("Publish() = (%#v, %v), want bounded ambiguous deadline", result, publishErr)
+	}
+	for index := range publication.Message.Body {
+		publication.Message.Body[index] = 'm'
+	}
+	close(release)
+	if snapshotOwned := <-owned; !snapshotOwned {
+		t.Fatal("transmitted body changed after Publish returned")
+	}
+}
+
+func TestProducerForcedShutdownRejectsPublicationBeforeTransmissionCommit(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	sequenceRequested := make(chan struct{})
+	releaseSequence := make(chan struct{})
+	channel.sequenceHook = func() {
+		close(sequenceRequested)
+		<-releaseSequence
+	}
+	transmitted := make(chan struct{}, 1)
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		transmitted <- struct{}{}
+		return nil
+	}
+	producer, err := newProducerFromChannel(
+		testProducerConfig(), "session-precommit-shutdown", channel, io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	published := make(chan PublishOutcome, 1)
+	go func() {
+		result, publishErr := producer.Publish(context.Background(), testPublication())
+		published <- PublishOutcome{Result: result, Err: publishErr}
+	}()
+	<-sequenceRequested
+
+	shutdownContext, cancelShutdown := context.WithCancel(context.Background())
+	cancelShutdown()
+	if err := producer.Shutdown(shutdownContext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown(cancelled) = %v, want cancellation", err)
+	}
+	waitForProducerCondition(t, producer.isShutdownClosing)
+	close(releaseSequence)
+	outcome := <-published
+	if outcome.Result.State != PublishNotSent || !errors.Is(outcome.Err, ErrProducerClosed) {
+		t.Fatalf("Publish() outcome = %#v, want closed before transmission", outcome)
+	}
+	select {
+	case <-transmitted:
+		t.Fatal("publication transmitted after forced shutdown crossed the cleanup gate")
+	default:
+	}
+	if err := producer.Shutdown(t.Context()); err != nil {
+		t.Fatalf("finish Shutdown(): %v", err)
 	}
 }
 
@@ -299,6 +395,272 @@ func TestProducerCloseDeadlineForcesActivePublishAndClosesOnce(t *testing.T) {
 	var missingContext context.Context
 	if err := producer.Close(missingContext); !errors.Is(err, ErrContextRequired) {
 		t.Fatalf("Close(nil) error = %v, want %v", err, ErrContextRequired)
+	}
+}
+
+func TestProducerShutdownCallersHaveIndependentDeadlines(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	resource := &blockingCloser{started: make(chan struct{}), release: make(chan struct{})}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-shutdown-callers", channel, resource)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+
+	first := make(chan error, 1)
+	go func() { first <- producer.Shutdown(t.Context()) }()
+	<-resource.started
+
+	short, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	second := make(chan error, 1)
+	go func() { second <- producer.Shutdown(short) }()
+	var secondErr error
+	select {
+	case secondErr = <-second:
+	case <-time.After(250 * time.Millisecond):
+		close(resource.release)
+		t.Fatal("second Shutdown() blocked behind cleanup")
+	}
+	if !errors.Is(secondErr, context.DeadlineExceeded) {
+		t.Fatalf("second Shutdown() error = %v, want deadline", secondErr)
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("second Shutdown() blocked for %s behind cleanup", elapsed)
+	}
+
+	close(resource.release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Shutdown(): %v", err)
+	}
+	if err := producer.Shutdown(t.Context()); err != nil {
+		t.Fatalf("repeated Shutdown(): %v", err)
+	}
+}
+
+func TestProducerShutdownExpiredCallerDoesNotWaitForCleanupScheduling(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	resource := newBlockingCloser()
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-expired-shutdown", channel, resource)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := producer.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown(cancelled) error = %v, want cancellation", err)
+	}
+	if result, err := producer.Publish(t.Context(), testPublication()); result.State != PublishNotSent || !errors.Is(err, ErrProducerClosed) {
+		t.Fatalf("Publish() after Shutdown = (%#v, %v), want closed rejection", result, err)
+	}
+	select {
+	case <-resource.started:
+	case <-time.After(time.Second):
+		t.Fatal("expired Shutdown caller did not start cleanup")
+	}
+	close(resource.release)
+	if err := producer.Shutdown(t.Context()); err != nil {
+		t.Fatalf("finish Shutdown(): %v", err)
+	}
+}
+
+func TestProducerShutdownDrainsAdmittedAsynchronousPublication(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		sequence := channel.nextSequence()
+		channel.confirms <- amqp.Confirmation{DeliveryTag: sequence, Ack: true}
+		return nil
+	}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-shutdown-async-drain", channel, io.NopCloser(nilReader{}))
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	producer.publishMu.Lock()
+	future, err := producer.PublishAsync(t.Context(), testPublication())
+	if err != nil {
+		producer.publishMu.Unlock()
+		t.Fatalf("PublishAsync(): %v", err)
+	}
+	shutdown := make(chan error, 1)
+	go func() { shutdown <- producer.Shutdown(context.Background()) }()
+	waitForProducerCondition(t, func() bool {
+		producer.stateMu.Lock()
+		defer producer.stateMu.Unlock()
+		return producer.closed
+	})
+	select {
+	case err := <-shutdown:
+		producer.publishMu.Unlock()
+		t.Fatalf("Shutdown() returned before admitted async publication: %v", err)
+	default:
+	}
+	producer.publishMu.Unlock()
+	if outcome := <-future; outcome.Result.State != PublishConfirmed || outcome.Err != nil {
+		t.Fatalf("asynchronous outcome = %#v, want confirmed", outcome)
+	}
+	if err := <-shutdown; err != nil {
+		t.Fatalf("Shutdown(): %v", err)
+	}
+}
+
+func TestProducerShutdownForcesPendingAsynchronousPublicationAmbiguous(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	transmitted := make(chan struct{})
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		channel.nextSequence()
+		close(transmitted)
+		return nil
+	}
+	resource := &deadlineTrackingCloser{}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-shutdown-async-force", channel, resource)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	future, err := producer.PublishAsync(t.Context(), testPublication())
+	if err != nil {
+		t.Fatalf("PublishAsync(): %v", err)
+	}
+	<-transmitted
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := producer.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown(cancelled) error = %v, want cancellation", err)
+	}
+	if outcome := <-future; outcome.Result.State != PublishAmbiguous || !errors.Is(outcome.Err, ErrPublishAmbiguous) {
+		t.Fatalf("asynchronous outcome = %#v, want ambiguous", outcome)
+	}
+	if err := producer.Shutdown(t.Context()); err != nil {
+		t.Fatalf("finish Shutdown(): %v", err)
+	}
+	if resource.deadlineCalls != 1 || channel.closeCount() != 1 {
+		t.Fatalf("forced cleanup = resource %d channel %d, want one each", resource.deadlineCalls, channel.closeCount())
+	}
+	if result, err := producer.Publish(t.Context(), testPublication()); result.State != PublishNotSent || !errors.Is(err, ErrProducerClosed) {
+		t.Fatalf("Publish() after forced Shutdown = (%#v, %v), want closed rejection", result, err)
+	}
+}
+
+func TestProducerCompletedShutdownHonorsPreCancelledCaller(t *testing.T) {
+	t.Parallel()
+
+	producer, err := newProducerFromChannel(
+		testProducerConfig(), "session-completed-cancelled", newFakeProducerChannel(), io.NopCloser(nilReader{}),
+	)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	if err := producer.Shutdown(t.Context()); err != nil {
+		t.Fatalf("initial Shutdown(): %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for attempt := 0; attempt < 64; attempt++ {
+		if err := producer.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Shutdown(cancelled) attempt %d = %v, want cancellation", attempt, err)
+		}
+	}
+}
+
+func TestProducerForcedShutdownRejectsAdmittedAsyncBeforeTransmission(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	transmitted := make(chan struct{}, 1)
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		transmitted <- struct{}{}
+		return nil
+	}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-force-before-transmit", channel, io.NopCloser(nilReader{}))
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	producer.publishMu.Lock()
+	future, err := producer.PublishAsync(context.Background(), testPublication())
+	if err != nil {
+		producer.publishMu.Unlock()
+		t.Fatalf("PublishAsync(): %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := producer.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		producer.publishMu.Unlock()
+		t.Fatalf("Shutdown(cancelled) = %v, want cancellation", err)
+	}
+	waitForProducerCondition(t, producer.isShutdownClosing)
+	producer.publishMu.Unlock()
+	outcome := <-future
+	if outcome.Result.State != PublishNotSent || !errors.Is(outcome.Err, ErrProducerClosed) {
+		t.Fatalf("asynchronous outcome = %#v, want closed before transmission", outcome)
+	}
+	select {
+	case <-transmitted:
+		t.Fatal("asynchronous publish transmitted after forced cleanup")
+	default:
+	}
+	if err := producer.Shutdown(t.Context()); err != nil {
+		t.Fatalf("finish Shutdown(): %v", err)
+	}
+}
+
+func TestProducerShutdownUsesOneTotalPublishTimeout(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	transmitted := make(chan struct{}, 1)
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		channel.nextSequence()
+		transmitted <- struct{}{}
+		return errors.New("connection closed")
+	}
+	resource := &deadlineTrackingCloser{}
+	config := testProducerConfig()
+	config.PublishTimeout = 50 * time.Millisecond
+	producer, err := newProducerFromChannel(config, "session-shutdown-total-timeout", channel, resource)
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	producer.publishMu.Lock()
+	future, err := producer.PublishAsync(t.Context(), testPublication())
+	if err != nil {
+		producer.publishMu.Unlock()
+		t.Fatalf("PublishAsync(): %v", err)
+	}
+	if err := producer.Shutdown(context.Background()); err != nil {
+		producer.publishMu.Unlock()
+		t.Fatalf("Shutdown(): %v", err)
+	}
+	if resource.deadline.After(resource.calledAt.Add(5 * time.Millisecond)) {
+		producer.publishMu.Unlock()
+		t.Fatalf("cleanup deadline %s extended beyond close start %s", resource.deadline, resource.calledAt)
+	}
+	producer.publishMu.Unlock()
+	if outcome := <-future; outcome.Result.State != PublishNotSent ||
+		(!errors.Is(outcome.Err, context.DeadlineExceeded) && !errors.Is(outcome.Err, ErrProducerClosed)) {
+		t.Fatalf("asynchronous outcome = %#v, want bounded rejection before transmission", outcome)
+	}
+	select {
+	case <-transmitted:
+		t.Fatal("asynchronous publish transmitted after shutdown cleanup")
+	default:
+	}
+}
+
+func waitForProducerCondition(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatal("producer condition was not reached")
+		}
+		runtime.Gosched()
 	}
 }
 
@@ -594,8 +956,11 @@ func TestProducerCloseForcesOwnedConnectionWhenDrainDeadlineExpires(t *testing.T
 	if elapsed := time.Since(startedClose); elapsed > 100*time.Millisecond {
 		t.Fatalf("Close() elapsed = %s, want prompt forced close after deadline", elapsed)
 	}
-	if resource.deadlineCalls == 0 {
+	select {
+	case <-release:
+	case <-time.After(100 * time.Millisecond):
 		releaseOnce.Do(func() { close(release) })
+		t.Fatal("deadline did not trigger continuing resource cleanup")
 	}
 	if !errors.Is(closeErr, context.DeadlineExceeded) {
 		t.Fatalf("Close() error = %v, want deadline", closeErr)
@@ -710,6 +1075,7 @@ type deadlineTrackingCloser struct {
 	closeCalls    int
 	deadlineCalls int
 	deadline      time.Time
+	calledAt      time.Time
 	onDeadline    func()
 }
 
@@ -721,6 +1087,7 @@ func (closer *deadlineTrackingCloser) Close() error {
 func (closer *deadlineTrackingCloser) CloseDeadline(deadline time.Time) error {
 	closer.deadlineCalls++
 	closer.deadline = deadline
+	closer.calledAt = time.Now()
 	if closer.onDeadline != nil {
 		closer.onDeadline()
 	}

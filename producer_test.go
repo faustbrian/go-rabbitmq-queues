@@ -455,15 +455,16 @@ func closeProducerForTest(t *testing.T, producer *Producer) {
 }
 
 type fakeProducerChannel struct {
-	mu         sync.Mutex
-	sequence   uint64
-	closeCalls int
-	returns    chan amqp.Return
-	confirms   chan amqp.Confirmation
-	publish    func(context.Context, string, string, bool, bool, amqp.Publishing) error
-	confirmErr error
-	confirm    func() error
-	closeErr   error
+	mu           sync.Mutex
+	sequence     uint64
+	sequenceHook func()
+	closeCalls   int
+	returns      chan amqp.Return
+	confirms     chan amqp.Confirmation
+	publish      func(context.Context, string, string, bool, bool, amqp.Publishing) error
+	confirmErr   error
+	confirm      func() error
+	closeErr     error
 }
 
 func newFakeProducerChannel() *fakeProducerChannel {
@@ -488,6 +489,9 @@ func (channel *fakeProducerChannel) NotifyPublish(listener chan amqp.Confirmatio
 }
 
 func (channel *fakeProducerChannel) GetNextPublishSeqNo() uint64 {
+	if channel.sequenceHook != nil {
+		channel.sequenceHook()
+	}
 	channel.mu.Lock()
 	defer channel.mu.Unlock()
 	return channel.sequence

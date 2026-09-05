@@ -39,6 +39,7 @@ type consumerGeneration struct {
 	closeErr      error
 	closed        atomic.Bool
 	cancelOnce    sync.Once
+	cancelDone    chan struct{}
 	cancelErr     error
 	delegated     atomic.Bool
 }
@@ -66,18 +67,22 @@ type Consumer struct {
 	observations     *observationStream
 	admissionChanged chan struct{}
 
-	admissionMu sync.Mutex
-	paused      bool
-	resume      chan struct{}
+	admissionMu             sync.Mutex
+	paused                  bool
+	resume                  chan struct{}
+	shutdownAdmissionClosed atomic.Bool
 
-	stateMu     sync.Mutex
-	stopping    bool
-	recovering  bool
-	stopped     bool
-	terminalErr error
-	generation  *consumerGeneration
-	drainErr    error
-	resourceErr error
+	stateMu      sync.Mutex
+	stopping     bool
+	recovering   bool
+	stopped      bool
+	terminalErr  error
+	generation   *consumerGeneration
+	drainErr     error
+	resourceErr  error
+	shutdownOnce sync.Once
+	shutdownDone chan struct{}
+	shutdownErr  error
 }
 
 func newConsumerFromChannel(
@@ -124,6 +129,7 @@ func newConsumerFromChannelWithRecovery(
 		observations:     newObservationStream(ObservationConsumer, observationBufferSize),
 		admissionChanged: make(chan struct{}, 1),
 		generation:       generation,
+		shutdownDone:     make(chan struct{}),
 	}
 	consumer.observe(Observation{Kind: ObservationConnectionState, Outcome: ObservationConnected})
 	go consumer.run(generation)
@@ -366,6 +372,16 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 	deliveriesClosed := false
 	for {
 		consumer.admissionMu.Lock()
+		if consumer.shutdownAdmissionClosed.Load() {
+			if pendingCount > 0 {
+				consumer.setDrainError()
+			}
+			discardConsumerPending(pending)
+			pendingHead = 0
+			pendingCount = 0
+			draining = true
+			recoveryDone = nil
+		}
 		paused := consumerAdmissionPaused(consumer.paused, draining)
 		resume := consumer.resume
 		if pendingCount > 0 && !paused {
@@ -401,6 +417,10 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 				}
 				draining = true
 				recoveryDone = nil
+			} else if consumer.shutdownAdmissionClosed.Load() {
+				consumer.setDrainError()
+				draining = true
+				recoveryDone = nil
 			} else {
 				consumer.observe(Observation{Kind: ObservationDelivery, Outcome: ObservationDelivered})
 				if source.Redelivered {
@@ -421,7 +441,7 @@ func (consumer *Consumer) consumeGeneration(generation *consumerGeneration) bool
 					pending[(pendingHead+pendingCount)%len(pending)] = consumerEnvelope{
 						delivery: delivery, tag: source.DeliveryTag, generation: generation,
 					}
-					pendingCount++
+					pendingCount = nextConsumerPendingCount(pendingCount)
 				}
 			}
 		case <-resume:
@@ -462,6 +482,10 @@ func suspendConsumerDeliveries(deliveriesClosed, paused bool, pendingCount, capa
 func consumerPendingCapacity(prefetch int) int {
 	return prefetch + 1
 }
+
+func nextConsumerPendingCount(pending int) int { return pending + 1 }
+
+func discardConsumerPending(pending []consumerEnvelope) { clear(pending) }
 
 func consumerAdmissionPaused(paused, draining bool) bool {
 	return paused && !draining
@@ -659,6 +683,12 @@ func (consumer *Consumer) setResourceError(err error) {
 	consumer.stateMu.Unlock()
 }
 
+func (consumer *Consumer) setDrainError() {
+	consumer.stateMu.Lock()
+	consumer.drainErr = ErrConsumerUnavailable
+	consumer.stateMu.Unlock()
+}
+
 func (consumer *Consumer) drainError() error {
 	consumer.stateMu.Lock()
 	defer consumer.stateMu.Unlock()
@@ -738,7 +768,7 @@ func (consumer *Consumer) signalAdmissionChanged() {
 // from the broker. It leaves the healthy owned connection open after complete
 // settlement; delegated work or a drain deadline closes the connection.
 func (consumer *Consumer) Drain(ctx context.Context) error {
-	if ctx == nil {
+	if !contextProvided(ctx) {
 		return ErrContextRequired
 	}
 	drainContext, cancelDrain := context.WithDeadline(ctx, deadlineFor(ctx, consumer.config.HandlerTimeout))
@@ -759,12 +789,19 @@ func (consumer *Consumer) Drain(ctx context.Context) error {
 	}
 	select {
 	case <-consumer.done:
-		return consumer.drainError()
+		return consumerCompletedDrainResult(drainContext, consumer.drainError())
 	case <-drainContext.Done():
 		consumer.stopLifetime()
 		_ = consumer.closeGeneration(generation, deadlineFor(drainContext, consumer.config.HandlerTimeout))
 		return drainContext.Err()
 	}
+}
+
+func consumerCompletedDrainResult(ctx context.Context, drainErr error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return drainErr
 }
 
 // Observations returns the bounded best-effort consumer event stream. It closes
@@ -785,42 +822,87 @@ func (consumer *Consumer) cancelGeneration(ctx context.Context, generation *cons
 		return nil
 	}
 	generation.cancelOnce.Do(func() {
-		cancelled := make(chan error, 1)
-		go func() { cancelled <- generation.channel.Cancel(consumer.config.Name, false) }()
-		select {
-		case err := <-cancelled:
-			if err != nil {
+		generation.cancelDone = make(chan struct{})
+		go func() {
+			if err := generation.channel.Cancel(consumer.config.Name, false); err != nil {
 				generation.cancelErr = ErrConsumerUnavailable
 			}
-		case <-ctx.Done():
-			generation.cancelErr = ctx.Err()
-		}
+			close(generation.cancelDone)
+		}()
 	})
-	return generation.cancelErr
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-generation.cancelDone:
+		return generation.cancelErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func consumerGenerationCanCancel(closed bool) bool {
 	return !closed
 }
 
-// Close drains admitted handlers, then closes owned resources. If cancellation
-// or the drain deadline fails, resources are still closed for redelivery.
-func (consumer *Consumer) Close(ctx context.Context) error {
-	if ctx == nil {
+// Shutdown stops handler admission, drains admitted handlers, then closes owned
+// resources. Broker deliveries buffered before admission are left unsettled for
+// redelivery and make an overlapping Drain report ErrConsumerUnavailable. It is
+// safe to call repeatedly or concurrently. Each caller waits only for its own
+// context; cleanup continues after a caller returns early. If cancellation or
+// the internal drain deadline fails, resources are still closed for redelivery.
+func (consumer *Consumer) Shutdown(ctx context.Context) error {
+	if !contextProvided(ctx) {
 		return ErrContextRequired
 	}
-	drainErr := consumer.Drain(ctx)
-	consumer.setResourceError(consumer.closeGeneration(consumer.currentGeneration(), deadlineFor(ctx, consumer.config.HandlerTimeout)))
-	if drainErr != nil {
-		return drainErr
+	consumer.shutdownOnce.Do(func() {
+		deadline := time.Now().Add(consumer.config.HandlerTimeout)
+		consumer.admissionMu.Lock()
+		consumer.shutdownAdmissionClosed.Store(true)
+		consumer.admissionMu.Unlock()
+		consumer.signalAdmissionChanged()
+		consumer.stateMu.Lock()
+		firstShutdown := !consumer.stopping
+		consumer.stopping = true
+		consumer.stateMu.Unlock()
+		if firstShutdown {
+			consumer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownStarted})
+		}
+		go consumer.finishShutdown(deadline)
+	})
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	consumer.stateMu.Lock()
-	defer consumer.stateMu.Unlock()
-	return consumer.resourceErr
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-consumer.shutdownDone:
+		return consumer.shutdownErr
+	}
 }
 
+func (consumer *Consumer) finishShutdown(deadline time.Time) {
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	drainErr := consumer.Drain(ctx)
+	consumer.setResourceError(consumer.closeGeneration(consumer.currentGeneration(), deadline))
+	if drainErr != nil {
+		consumer.shutdownErr = drainErr
+		close(consumer.shutdownDone)
+		return
+	}
+	consumer.stateMu.Lock()
+	consumer.shutdownErr = consumer.resourceErr
+	consumer.stateMu.Unlock()
+	close(consumer.shutdownDone)
+}
+
+// Close is retained for compatibility.
+// Deprecated: use Shutdown.
+func (consumer *Consumer) Close(ctx context.Context) error { return consumer.Shutdown(ctx) }
+
 func (consumer *Consumer) closeGeneration(generation *consumerGeneration, deadline time.Time) error {
-	if generation == nil {
+	if !consumerGenerationPresent(generation) {
 		return nil
 	}
 	generation.closeOnce.Do(func() {
@@ -843,6 +925,8 @@ func (consumer *Consumer) closeGeneration(generation *consumerGeneration, deadli
 		return ErrConsumerUnavailable
 	}
 }
+
+func consumerGenerationPresent(generation *consumerGeneration) bool { return generation != nil }
 
 func boundedCloseConsumerResources(resource io.Closer, channel io.Closer, deadline time.Time) error {
 	failed := false

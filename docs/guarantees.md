@@ -60,7 +60,7 @@ internal transfer.
   work while recovering, then rebuilds a fresh confirm generation with bounded
   endpoint rotation and refreshed credentials. Exhausted recovery is terminal.
 - Producer generation cleanup is idempotent and retains its sanitized failure
-  result, so `Close` cannot report success after terminal cleanup already
+  result, so `Shutdown` cannot report success after terminal cleanup already
   failed. A recovered generation owns an independent cleanup result.
 - `BlockedNotifications` reports coalesced blocked/unblocked transitions without
   exposing broker reason text; a blocked connection does not by itself retry a
@@ -106,6 +106,10 @@ internal transfer.
   settlement also closes the generation for redelivery and makes the drain
   unavailable instead of reporting success. Delegated settlement closes the
   generation during drain because its connection lifecycle owns redelivery.
+- `Shutdown` synchronously closes handler admission. Broker deliveries buffered
+  inside the package but not yet admitted are left unsettled for redelivery; an
+  overlapping `Drain` and the completed shutdown report consumer unavailability
+  instead of claiming that every received delivery settled.
 - Connection loss can redeliver a message while its earlier handler invocation
   is still completing. Applications must tolerate concurrent duplicates.
 - Manual settlement provides at-least-once processing; applications remain
@@ -121,7 +125,37 @@ internal transfer.
   metadata for application-owned request/reply flows. The package does not own
   reply queues or provide an RPC lifecycle abstraction.
 - Handler, settlement, and shutdown work is bounded by the configured handler
-  timeout; handlers must observe cancellation for graceful draining.
+  timeout. Once that total cleanup budget expires, shutdown reports the
+  deadline and resource closure continues without extending the bound to wait
+  for arbitrary handler code. Handlers must observe cancellation for graceful
+  draining and prompt goroutine completion.
+- Producer and consumer `Shutdown` are repeatable and safe for concurrent use.
+  The first call starts one package-owned cleanup; every caller waits against
+  its own context and a shorter later caller never waits behind another
+  caller's synchronization. For producers, cancellation or deadline expiry
+  from any caller accelerates the shared cleanup and can make active
+  publications ambiguous. For consumers, a caller context bounds only that
+  caller's wait while the configured handler timeout bounds the shared drain
+  and cleanup. Returning a context error does not abandon cleanup. Deprecated
+  `Close(ctx)` methods delegate to the same lifecycle.
+- An asynchronous publication's caller context and configured publish timeout
+  bound its complete lifetime from admission through transmission and broker
+  outcome. Expiry while it waits behind another publication returns a known
+  not-sent result. No publication crosses the package transmission commit point
+  after resource cleanup begins; a committed transmission can still be
+  ambiguous while its broker call or confirmation is pending.
+- Consumer broker cancellation is initiated once. Concurrent `Drain` and
+  `Shutdown` callers wait independently against their own bounds, so an earlier
+  caller cannot transfer its cancellation result or block the shutdown budget.
+- Credential callbacks execute synchronously without package locks and may run
+  concurrently when one provider is shared across resources. They receive a
+  non-nil bounded attempt context on package-owned open and recovery paths,
+  must return on cancellation, must not depend on
+  re-entry into the resource being opened, and must not panic. Returned
+  password bytes are zeroed after a package-owned connection attempt, while
+  direct callers and provider-retained aliases remain caller-owned. Open and
+  recovery paths sanitize callback errors; direct `Credentials` calls return
+  the provider's error unchanged.
 - `Queue.DeliveryLimit` models RabbitMQ 4.3's quorum-only failed-redelivery
   bound. Omission leaves the broker policy or default of 20 effective, while an
   explicit zero makes the first failed redelivery exceed the limit. The package

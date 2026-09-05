@@ -32,7 +32,10 @@
       "version": "1.0.0",
       "tag_prefix": "v",
       "owned_dependencies": [],
-      "reverse_owned_dependencies": [],
+      "reverse_owned_dependencies": [
+        "github.com/faustbrian/go-queue/adapters/rabbitmq",
+        "github.com/faustbrian/go-queue/rabbitmq"
+      ],
       "external_runtime_dependencies": [
         "github.com/rabbitmq/amqp091-go"
       ],
@@ -97,7 +100,8 @@
         ],
         "lifecycle_styles": [
           "close",
-          "drain"
+          "drain",
+          "shutdown"
         ],
         "ownership": {
           "configuration": "caller",
@@ -111,6 +115,7 @@
         "optional_owned_dependencies": [],
         "adapters": [],
         "companions": [
+          "github.com/faustbrian/go-queue/adapters/rabbitmq",
           "github.com/faustbrian/go-queue/rabbitmq"
         ],
         "supported_go": {
@@ -132,11 +137,11 @@
           "readme": "README.md",
           "api": "https://pkg.go.dev/github.com/faustbrian/go-rabbitmq-queues",
           "adoption": "docs/adoption-audit.md",
-          "security": "docs/guarantees.md",
+          "security": "SECURITY.md",
           "compatibility": "COMPATIBILITY.md",
           "performance": "docs/performance.md",
-          "examples": "README.md",
-          "faq": null,
+          "examples": "example_test.go",
+          "faq": "docs/faq.md",
           "changelog": "CHANGELOG.md",
           "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-rabbitmq-queues",
           "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"

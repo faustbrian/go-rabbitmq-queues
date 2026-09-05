@@ -67,6 +67,41 @@ func TestNilCredentialProviderFunctionFailsWithoutPanic(t *testing.T) {
 	}
 }
 
+func TestCredentialProviderFuncRejectsNilContextWithoutCallingProvider(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	provider := CredentialProviderFunc(func(context.Context) (Credentials, error) {
+		called = true
+		return Credentials{Username: "operator", Password: []byte("secret")}, nil
+	})
+	var ctx context.Context
+	credentials, err := provider.Credentials(ctx)
+	if !errors.Is(err, ErrContextRequired) {
+		t.Fatalf("Credentials(nil) error = %v, want %v", err, ErrContextRequired)
+	}
+	if credentials.Username != "" || len(credentials.Password) != 0 {
+		t.Fatalf("Credentials(nil) = %#v, want empty credentials", credentials)
+	}
+	if called {
+		t.Fatal("credential callback ran with a nil context")
+	}
+}
+
+func TestNilCredentialProviderFunctionRejectsNilContextFirst(t *testing.T) {
+	t.Parallel()
+
+	var provider CredentialProviderFunc
+	var ctx context.Context
+	credentials, err := provider.Credentials(ctx)
+	if !errors.Is(err, ErrContextRequired) {
+		t.Fatalf("Credentials(nil) error = %v, want %v", err, ErrContextRequired)
+	}
+	if credentials.Username != "" || len(credentials.Password) != 0 {
+		t.Fatalf("Credentials(nil) = %#v, want empty credentials", credentials)
+	}
+}
+
 func TestPublicationCoversBoundedHeaderKindsAndInvalidPolicy(t *testing.T) {
 	t.Parallel()
 

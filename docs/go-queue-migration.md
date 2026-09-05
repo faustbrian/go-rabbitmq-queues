@@ -1,26 +1,28 @@
-# `go-queue/rabbitmq` migration and rollback gate
+# `go-queue` RabbitMQ adapter migration and rollback gate
 
 This document records the compatibility boundary between
-`github.com/faustbrian/go-queue/rabbitmq` and `rabbitmqqueue`. The compatibility
-adapter is implemented and broker-verified; this document remains a migration
-and rollback gate rather than evidence that an application cutover is complete.
-Cross-library ownership and application requirements are recorded in the
-[adoption audit](adoption-audit.md).
+the target-oriented `github.com/faustbrian/go-queue/adapters/rabbitmq`
+successor, the deprecated `github.com/faustbrian/go-queue/rabbitmq` facade, and
+`rabbitmqqueue`. The adapter is implemented and broker-verified; this document
+remains a migration and rollback gate rather than evidence that an application
+cutover is complete. Cross-library ownership and application requirements are
+recorded in the [adoption audit](adoption-audit.md).
 
-The comparison was refreshed on 2026-08-28 against:
+The comparison was refreshed on 2026-09-05 against:
 
-- `go-rabbitmq-queues` commit `1a27b9ba6a35` on `main`;
-- `go-queue` pull request
-  [#13](https://github.com/faustbrian/go-queue/pull/13) at head commit
-  `be82484b2ab3`;
-- the adapter's pinned `go-rabbitmq-queues` pseudo-version at commit
-  `1a27b9ba6a35`; and
+- the published `go-rabbitmq-queues` `v1.0.0` release at commit
+  `59b21563c1f36f3f5cd201c79903913a04fd10e3`;
+- both `go-queue` RabbitMQ paths, with `adapters/rabbitmq` as the current
+  implementation and `rabbitmq` retained as its compatibility facade;
+- the adapters' pinned `go-rabbitmq-queues v1.0.0` dependency without a local
+  filesystem `replace`; and
 - the pins in [`COMPATIBILITY.md`](../COMPATIBILITY.md), including
   `amqp091-go` `v1.14.0` and RabbitMQ `4.3.5`.
 
-The native module has no semantic version tag. The adapter consumes its
-retrievable immutable pseudo-version without a local filesystem `replace`.
-Creating release tags remains a separate authorized release action.
+The native module and historical facade are published as `v1.0.0`. Publication
+of the target-oriented successor is owned by the independent `go-queue` release
+boundary; applications must select a retrievable released version rather than
+a local filesystem replacement.
 
 ## Contract comparison
 
@@ -121,8 +123,9 @@ failure, manual settlement, retry-before-ACK, terminal replacement, lazy
 consumer startup, runtime loss, and shutdown behavior. Application adoption
 and production topology remain separate gates.
 
-A bounded application inventory must search for both the current module path
-`github.com/faustbrian/go-queue/rabbitmq` and the historical path
+A bounded application inventory must search for the successor
+`github.com/faustbrian/go-queue/adapters/rabbitmq`, the deprecated facade
+`github.com/faustbrian/go-queue/rabbitmq`, and the historical path
 `github.com/golang-queue/rabbitmq`. A search of primary local checkouts,
 excluding archived and duplicate worktrees, found no source import outside
 `go-queue` documentation. That local search is not an application inventory and
