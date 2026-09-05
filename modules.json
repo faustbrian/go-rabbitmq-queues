@@ -29,7 +29,7 @@
       "family_label": "Integration And Data Movement",
       "family_description": "Bounded external I/O, data movement, provider boundaries, and derived search state.",
       "family_order": 7,
-      "version": "1.0.0",
+      "version": "1.1.0",
       "tag_prefix": "v",
       "owned_dependencies": [],
       "reverse_owned_dependencies": [
@@ -148,8 +148,8 @@
         },
         "known_good_compatibility_sets": [],
         "delivery": {
-          "implementation": "not-started",
-          "hardening": "not-started",
+          "implementation": "in-progress",
+          "hardening": "in-progress",
           "release": "not-started"
         }
       }
