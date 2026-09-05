@@ -45,9 +45,49 @@ type producerChannel interface {
 	Close() error
 }
 
+type contextMutex struct {
+	once  sync.Once
+	token chan struct{}
+}
+
+func (mutex *contextMutex) initialize() {
+	mutex.once.Do(func() {
+		mutex.token = make(chan struct{}, 1)
+		mutex.token <- struct{}{}
+	})
+}
+
+func (mutex *contextMutex) Lock() {
+	mutex.initialize()
+	<-mutex.token
+}
+
+func (mutex *contextMutex) LockContext(ctx context.Context) error {
+	mutex.initialize()
+	select {
+	case <-mutex.token:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (mutex *contextMutex) TryLock() bool {
+	mutex.initialize()
+	select {
+	case <-mutex.token:
+		return true
+	default:
+		return false
+	}
+}
+
+func (mutex *contextMutex) Unlock() { mutex.token <- struct{}{} }
+
 // Producer owns one active confirm-enabled AMQP generation and never creates consumers.
-// Publish is safe for concurrent use. Close prevents new work, drains bounded
-// active calls, cancels recovery, and then releases the channel and connection resource.
+// Publish is safe for concurrent use. Shutdown prevents new work, drains
+// bounded active calls, cancels recovery, and then releases the channel and
+// connection resource.
 type Producer struct {
 	config            ProducerConfig
 	session           string
@@ -67,19 +107,24 @@ type Producer struct {
 	blockedEvents     chan ConnectionBlockedState
 	observations      *observationStream
 
-	publishMu    sync.Mutex
-	stateMu      sync.Mutex
-	closed       bool
-	unavailable  bool
-	recovering   bool
-	terminal     bool
-	stopped      bool
-	blocked      bool
-	active       int
-	drained      chan struct{}
-	drainedOnce  sync.Once
-	resourceOnce sync.Once
-	resourceErr  error
+	publishMu         contextMutex
+	stateMu           sync.Mutex
+	closed            bool
+	unavailable       bool
+	recovering        bool
+	terminal          bool
+	stopped           bool
+	blocked           bool
+	active            int
+	drained           chan struct{}
+	drainedOnce       sync.Once
+	resourceOnce      sync.Once
+	resourceErr       error
+	shutdownOnce      sync.Once
+	shutdownForceOnce sync.Once
+	shutdownForce     chan struct{}
+	shutdownClosing   bool
+	shutdownDone      chan struct{}
 }
 
 func newProducerFromChannel(
@@ -138,6 +183,8 @@ func newProducerFromChannelWithRecovery(
 		blockedEvents:   make(chan ConnectionBlockedState, 1),
 		observations:    newObservationStream(ObservationProducer, observationBufferSize),
 		drained:         make(chan struct{}),
+		shutdownForce:   make(chan struct{}),
+		shutdownDone:    make(chan struct{}),
 	}
 	producer.returns = returns
 	producer.confirms = confirms
@@ -186,11 +233,15 @@ func (producer *Producer) Publish(ctx context.Context, publication Publication) 
 		return PublishResult{State: PublishNotSent}, err
 	}
 	defer producer.release()
+	publication = ownPublication(publication)
 	return producer.publishAdmitted(ctx, publication)
 }
 
 // PublishAsync admits one bounded publication and returns a channel that emits
-// exactly one terminal outcome. Admission failures do not create goroutines.
+// exactly one terminal outcome. Its caller context and PublishTimeout bound the
+// total interval from admission through transmission and confirmation; expiry
+// before transmission reports PublishNotSent. Admission failures do not create
+// goroutines.
 func (producer *Producer) PublishAsync(ctx context.Context, publication Publication) (<-chan PublishOutcome, error) {
 	if !contextProvided(ctx) {
 		return nil, ErrContextRequired
@@ -206,11 +257,13 @@ func (producer *Producer) PublishAsync(ctx context.Context, publication Publicat
 	if err := producer.admit(); consumerOperationFailed(err) {
 		return nil, err
 	}
+	publishContext, cancel := context.WithTimeout(ctx, producer.config.PublishTimeout)
 	publication = ownPublication(publication)
 	future := make(chan PublishOutcome, 1)
 	go func() {
+		defer cancel()
 		defer producer.release()
-		result, err := producer.publishAdmitted(ctx, publication)
+		result, err := producer.publishAdmitted(publishContext, publication)
 		future <- PublishOutcome{Result: result, Err: err}
 		close(future)
 	}()
@@ -284,7 +337,13 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 	default:
 	}
 
-	producer.publishMu.Lock()
+	if err := producer.publishMu.LockContext(publishContext); consumerOperationFailed(err) {
+		return PublishResult{State: PublishNotSent}, err
+	}
+	if producer.isShutdownClosing() {
+		producer.publishMu.Unlock()
+		return PublishResult{State: PublishNotSent}, ErrProducerClosed
+	}
 	if producer.isUnavailable() {
 		producer.publishMu.Unlock()
 		return PublishResult{State: PublishNotSent}, ErrProducerUnavailable
@@ -300,6 +359,11 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 	if err != nil {
 		producer.publishMu.Unlock()
 		return PublishResult{State: PublishNotSent}, err
+	}
+	if producer.isShutdownClosing() {
+		tracker.abandon(attempt.sequence, PublishNotSent)
+		producer.publishMu.Unlock()
+		return PublishResult{State: PublishNotSent}, ErrProducerClosed
 	}
 	sent := make(chan error, 1)
 	confirmationStarted = time.Now()
@@ -322,13 +386,14 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 		default:
 			transmissionTimeout = publishContext.Err()
 			producer.failGeneration(tracker, failure)
-			_ = closeProducerGeneration(
-				channel,
-				resource,
-				generationClose,
-				deadlineFor(publishContext, producer.config.PublishTimeout),
-			)
-			err = <-sent
+			go func() {
+				_ = closeProducerGeneration(
+					channel,
+					resource,
+					generationClose,
+					deadlineFor(publishContext, producer.config.PublishTimeout),
+				)
+			}()
 		}
 	}
 	contextErr := publishContext.Err()
@@ -342,11 +407,7 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 			tracker.abandon(attempt.sequence, PublishNotSent)
 			return PublishResult{State: PublishNotSent}, contextErr
 		}
-		publishErr := error(ErrPublishAmbiguous)
-		if transmissionTimeout != nil {
-			publishErr = errors.Join(ErrPublishAmbiguous, transmissionTimeout)
-		}
-		return producer.completePublishError(tracker, attempt, PublishAmbiguous, publishErr)
+		return producer.completePublishError(tracker, attempt, PublishAmbiguous, ErrPublishAmbiguous)
 	}
 	if transmissionTimeout != nil {
 		return producer.completePublishError(
@@ -467,6 +528,12 @@ func (producer *Producer) isUnavailable() bool {
 	producer.stateMu.Lock()
 	defer producer.stateMu.Unlock()
 	return producer.unavailable
+}
+
+func (producer *Producer) isShutdownClosing() bool {
+	producer.stateMu.Lock()
+	defer producer.stateMu.Unlock()
+	return producer.shutdownClosing
 }
 
 func (producer *Producer) release() {
@@ -734,47 +801,74 @@ func sanitizedReturnReason(reason string) string {
 	return ""
 }
 
-// Close prevents new publications, waits for active bounded calls, and closes
-// owned AMQP resources. A drain deadline forces the owned connection closed,
-// making any still-active publication ambiguous.
-func (producer *Producer) Close(ctx context.Context) error {
-	if ctx == nil {
+// Shutdown prevents new publications, waits for active bounded calls, and
+// closes owned AMQP resources. It is safe to call repeatedly or concurrently.
+// Each caller waits only for its own context; cleanup continues after a caller
+// returns early. Cancellation or deadline expiry from any caller accelerates
+// the shared cleanup by forcing the owned connection closed, making any
+// still-active publication ambiguous.
+func (producer *Producer) Shutdown(ctx context.Context) error {
+	if !contextProvided(ctx) {
 		return ErrContextRequired
 	}
-	producer.stateMu.Lock()
-	firstClose := !producer.closed
-	producer.closed = true
-	if producerDrainComplete(true, producer.active) {
-		producer.drainedOnce.Do(func() { close(producer.drained) })
-	}
-	drained := producer.drained
-	producer.stateMu.Unlock()
-	if firstClose {
-		producer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownStarted})
+	producer.startShutdown()
+	if err := ctx.Err(); err != nil {
+		producer.shutdownForceOnce.Do(func() { close(producer.shutdownForce) })
+		return err
 	}
 	select {
 	case <-ctx.Done():
-		producer.closeOwnedResources(producer.closeDeadline(ctx))
-		producer.stateMu.Lock()
-		producer.stopped = true
-		producer.stateMu.Unlock()
-		producer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownCompleted})
-		producer.observations.close()
+		producer.shutdownForceOnce.Do(func() { close(producer.shutdownForce) })
 		return ctx.Err()
-	case <-drained:
+	case <-producer.shutdownDone:
+		return producer.resourceErr
 	}
+}
 
-	producer.closeOwnedResources(producer.closeDeadline(ctx))
+func (producer *Producer) startShutdown() {
+	producer.shutdownOnce.Do(func() {
+		deadline := time.Now().Add(producer.config.PublishTimeout)
+		producer.stateMu.Lock()
+		producer.closed = true
+		if producerDrainComplete(true, producer.active) {
+			producer.drainedOnce.Do(func() { close(producer.drained) })
+		}
+		producer.stateMu.Unlock()
+		producer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownStarted})
+		go producer.finishShutdown(deadline)
+	})
+}
+
+func (producer *Producer) finishShutdown(deadline time.Time) {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-producer.drained:
+	case <-producer.shutdownForce:
+	case <-timer.C:
+	}
+	producer.stateMu.Lock()
+	producer.shutdownClosing = true
+	producer.stateMu.Unlock()
+	locked := producer.publishMu.TryLock()
+	if locked {
+		producer.publishMu.Unlock()
+	}
+	producer.closeOwnedResources(deadline)
 	producer.stateMu.Lock()
 	producer.stopped = true
 	producer.stateMu.Unlock()
 	producer.observe(Observation{Kind: ObservationShutdown, Outcome: ObservationShutdownCompleted})
 	producer.observations.close()
-	return producer.resourceErr
+	close(producer.shutdownDone)
 }
 
+// Close is retained for compatibility.
+// Deprecated: use Shutdown.
+func (producer *Producer) Close(ctx context.Context) error { return producer.Shutdown(ctx) }
+
 // Observations returns the bounded best-effort producer event stream. The
-// stream closes after Close completes; terminal recovery alone does not release
+// stream closes after Shutdown completes; terminal recovery alone does not release
 // caller-owned observation consumption.
 func (producer *Producer) Observations() <-chan Observation {
 	return producer.observations.channel
@@ -809,10 +903,6 @@ func shouldObserveConfirmationLatency(started time.Time, state PublishState) boo
 	default:
 		return false
 	}
-}
-
-func (producer *Producer) closeDeadline(ctx context.Context) time.Time {
-	return deadlineFor(ctx, producer.config.PublishTimeout)
 }
 
 func (producer *Producer) closeOwnedResources(deadline time.Time) {

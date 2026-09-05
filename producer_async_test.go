@@ -129,6 +129,87 @@ func TestProducerAsyncOwnsPublicationBeforeReturning(t *testing.T) {
 	}
 }
 
+func TestProducerAsyncDeadlineExpiresWhileAwaitingPublicationLock(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	transmitted := make(chan struct{}, 1)
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		transmitted <- struct{}{}
+		return nil
+	}
+	producer, err := newProducerFromChannel(testProducerConfig(), "session-async-lock-deadline", channel, io.NopCloser(nilReader{}))
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	t.Cleanup(func() { closeProducerForTest(t, producer) })
+	producer.publishMu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	future, err := producer.PublishAsync(ctx, testPublication())
+	if err != nil {
+		producer.publishMu.Unlock()
+		t.Fatalf("PublishAsync(): %v", err)
+	}
+	<-ctx.Done()
+	var outcome PublishOutcome
+	select {
+	case outcome = <-future:
+	case <-time.After(100 * time.Millisecond):
+		producer.publishMu.Unlock()
+		<-future
+		t.Fatal("asynchronous outcome waited behind the publication lock after its deadline")
+	}
+	producer.publishMu.Unlock()
+	if outcome.Result.State != PublishNotSent || !errors.Is(outcome.Err, context.DeadlineExceeded) {
+		t.Fatalf("asynchronous outcome = %#v, want deadline before transmission", outcome)
+	}
+	select {
+	case <-transmitted:
+		t.Fatal("asynchronous publication ran after its admission deadline")
+	default:
+	}
+}
+
+func TestProducerAsyncTransmissionTimeoutDoesNotWaitForUncooperativeSend(t *testing.T) {
+	t.Parallel()
+
+	channel := newFakeProducerChannel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	channel.publish = func(context.Context, string, string, bool, bool, amqp.Publishing) error {
+		channel.nextSequence()
+		close(started)
+		<-release
+		return nil
+	}
+	config := testProducerConfig()
+	config.PublishTimeout = 20 * time.Millisecond
+	producer, err := newProducerFromChannel(config, "session-async-uncooperative", channel, io.NopCloser(nilReader{}))
+	if err != nil {
+		t.Fatalf("construct producer: %v", err)
+	}
+	future, err := producer.PublishAsync(context.Background(), testPublication())
+	if err != nil {
+		t.Fatalf("PublishAsync(): %v", err)
+	}
+	<-started
+	select {
+	case outcome := <-future:
+		if outcome.Result.State != PublishAmbiguous || !errors.Is(outcome.Err, ErrPublishAmbiguous) || !errors.Is(outcome.Err, context.DeadlineExceeded) {
+			t.Fatalf("asynchronous outcome = %#v, want bounded ambiguous deadline", outcome)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("asynchronous outcome waited for an uncooperative send")
+	}
+	releaseOnce.Do(func() { close(release) })
+	if err := producer.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown(): %v", err)
+	}
+}
+
 func TestProducerBatchPreservesOrderedIndependentOutcomes(t *testing.T) {
 	t.Parallel()
 
@@ -232,8 +313,16 @@ func TestProducerBatchCancellationLeavesRemainingItemsNotSent(t *testing.T) {
 	t.Parallel()
 
 	channel := newFakeProducerChannel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	var releaseOnce sync.Once
+	releaseClient := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseClient)
 	channel.publish = func(ctx context.Context, _ string, _ string, _ bool, _ bool, _ amqp.Publishing) error {
+		startedOnce.Do(func() { close(started) })
 		<-ctx.Done()
+		<-release
 		return ctx.Err()
 	}
 	config := testProducerConfig()
@@ -244,14 +333,38 @@ func TestProducerBatchCancellationLeavesRemainingItemsNotSent(t *testing.T) {
 	}
 	t.Cleanup(func() { closeProducerForTest(t, producer) })
 
-	outcomes, err := producer.PublishBatch(context.Background(), []Publication{testPublication(), testPublication()})
+	type batchResult struct {
+		outcomes []PublishOutcome
+		err      error
+	}
+	completed := make(chan batchResult, 1)
+	go func() {
+		outcomes, batchErr := producer.PublishBatch(
+			context.Background(), []Publication{testPublication(), testPublication()},
+		)
+		completed <- batchResult{outcomes: outcomes, err: batchErr}
+	}()
+	select {
+	case <-started:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("PublishBatch() did not start the first client transmission")
+	}
+	var outcomes []PublishOutcome
+	select {
+	case result := <-completed:
+		outcomes, err = result.outcomes, result.err
+	case <-time.After(250 * time.Millisecond):
+		releaseClient()
+		t.Fatal("PublishBatch() did not return while client transmission ignored cancellation")
+	}
+	releaseClient()
 	if err != nil {
 		t.Fatalf("PublishBatch(): %v", err)
 	}
-	if len(outcomes) != 2 || outcomes[0].Result.State != PublishNotSent ||
-		!errors.Is(outcomes[0].Err, context.DeadlineExceeded) ||
+	if len(outcomes) != 2 || outcomes[0].Result.State != PublishAmbiguous ||
+		!errors.Is(outcomes[0].Err, ErrPublishAmbiguous) || !errors.Is(outcomes[0].Err, context.DeadlineExceeded) ||
 		outcomes[1].Result.State != PublishNotSent ||
-		(!errors.Is(outcomes[1].Err, context.DeadlineExceeded) && !errors.Is(outcomes[1].Err, ErrProducerUnavailable)) {
+		!errors.Is(outcomes[1].Err, ErrProducerUnavailable) {
 		t.Fatalf("cancelled batch outcomes = %#v", outcomes)
 	}
 }

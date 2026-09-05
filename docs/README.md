@@ -17,6 +17,9 @@
 - [Live broker evidence harness](live-broker-testing.md)
 - [Kubernetes Operator compatibility](operator-compatibility.md)
 - [Compatibility policy](../COMPATIBILITY.md)
+- [Security policy](../SECURITY.md)
+- [Support](../SUPPORT.md)
+- [Frequently asked questions](faq.md)
 
 ## API reference
 

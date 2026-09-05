@@ -37,15 +37,27 @@ type Credentials struct {
 }
 
 // CredentialProvider resolves credentials for an individual connection attempt.
+// Implementations may be called concurrently by independent producers and
+// consumers. Package-owned connection attempts supply a non-nil, bounded
+// context. Calls are synchronous, are never made while a package lock is held,
+// and panics are not recovered. Implementations must return when the supplied
+// context is cancelled.
 type CredentialProvider interface {
 	Credentials(context.Context) (Credentials, error)
 }
 
-// CredentialProviderFunc adapts a function to CredentialProvider.
+// CredentialProviderFunc adapts a function to CredentialProvider. The function
+// must follow CredentialProvider's concurrency, cancellation, and panic rules.
 type CredentialProviderFunc func(context.Context) (Credentials, error)
 
-// Credentials resolves a fresh credential snapshot.
+// Credentials resolves a fresh caller-owned credential snapshot. OpenProducer,
+// OpenConsumer, and ApplyTopology zero their returned password snapshot after
+// each connection attempt. Direct callers and providers remain responsible for
+// snapshots and aliases they retain.
 func (provider CredentialProviderFunc) Credentials(ctx context.Context) (Credentials, error) {
+	if ctx == nil {
+		return Credentials{}, ErrContextRequired
+	}
 	if provider == nil {
 		return Credentials{}, ErrCredentialsRequired
 	}

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add repeatable, concurrency-safe, caller-bounded `Shutdown(ctx)` lifecycle
+  methods for producers and consumers while retaining deprecated `Close(ctx)`
+  compatibility methods.
+
 ### Changed
 
 - Advance shared tooling and required CI enforcement to the immutable
@@ -24,9 +30,18 @@
   package-owned RabbitMQ evidence workflows and fixtures.
 - Consolidate all shared and package-specific checks into the single canonical
   CI workflow without changing the RabbitMQ evidence matrices or scripts.
+- Reject nil contexts passed to `CredentialProviderFunc.Credentials` without
+  invoking the provider callback.
+- Bound asynchronous publication from admission through confirmation and keep
+  `Drain` caller cancellation independent from shared consumer shutdown.
 
 ### Documentation
 
+- Define lifecycle, callback, cancellation, ownership, error, zeroization, and
+  concurrent-use guarantees for shutdown and credential resolution.
+- Add executable provider guidance plus security-reporting and support entry
+  points, and record the owned successor and compatibility `go-queue` RabbitMQ
+  reverse dependencies.
 - Point ecosystem and package-family navigation at the immutable v1.4.0
   documentation set.
 - Add repository-local contributor guidance for the shared verification
@@ -143,6 +158,8 @@
   consumer, including while paused, before leaving healthy resources open, and
   close the generation when settlement fails or remains delegated during
   shutdown.
+- Report consumer unavailability when shutdown leaves a package-buffered
+  delivery unsettled for redelivery, including to an overlapping drain caller.
 - Preserve RabbitMQ 4.3 acquired and failed-delivery counters as separate
   bounded delivery metadata.
 - Bound quorum requeue requests with RabbitMQ 4.3's acquired count, including

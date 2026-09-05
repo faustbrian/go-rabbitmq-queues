@@ -63,6 +63,35 @@ func TestMutationContractConsumerFastFailurePredicates(t *testing.T) {
 	if got := consumerPendingCapacity(3); got != 4 {
 		t.Fatalf("consumer pending capacity = %d, want 4", got)
 	}
+	if got := nextConsumerPendingCount(3); got != 4 {
+		t.Fatalf("next consumer pending count = %d, want 4", got)
+	}
+	pending := []consumerEnvelope{
+		{delivery: Delivery{MessageID: "first"}, tag: 1, generation: generation},
+		{delivery: Delivery{MessageID: "second"}, tag: 2, generation: generation},
+	}
+	discardConsumerPending(pending)
+	for index, envelope := range pending {
+		if envelope.delivery.MessageID != "" || envelope.tag != 0 || envelope.generation != nil {
+			t.Fatalf("discarded consumer pending item %d = %#v", index, envelope)
+		}
+	}
+	if consumerGenerationPresent(nil) || !consumerGenerationPresent(generation) {
+		t.Fatal("consumer generation presence collapsed nil and initialized generations")
+	}
+	var missingContext context.Context
+	if err := (&Consumer{}).Drain(missingContext); !errors.Is(err, ErrContextRequired) {
+		t.Fatalf("Drain(nil) = %v, want context required", err)
+	}
+	if err := (&Consumer{}).Shutdown(missingContext); !errors.Is(err, ErrContextRequired) {
+		t.Fatalf("Consumer.Shutdown(nil) = %v, want context required", err)
+	}
+	if err := (&Producer{}).Shutdown(missingContext); !errors.Is(err, ErrContextRequired) {
+		t.Fatalf("Producer.Shutdown(nil) = %v, want context required", err)
+	}
+	if err := (&Consumer{}).closeGeneration(nil, time.Now()); err != nil {
+		t.Fatalf("close nil consumer generation = %v", err)
+	}
 	for name, test := range map[string]struct {
 		paused, draining bool
 		want             bool

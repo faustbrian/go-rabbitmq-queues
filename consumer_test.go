@@ -115,6 +115,11 @@ func TestDeliveryAwaitSettlementSanitizesBrokerFailure(t *testing.T) {
 	if !errors.Is(err, ErrConsumerUnavailable) || errors.Is(err, brokerErr) {
 		t.Fatalf("AwaitSettlement() error = %v, want sanitized unavailable", err)
 	}
+	select {
+	case <-consumer.Done():
+	case <-time.After(time.Second):
+		t.Fatal("consumer did not reach terminal cleanup after settlement failure")
+	}
 }
 
 func TestDeliveryAwaitSettlementRejectsDelegatedSettlement(t *testing.T) {
