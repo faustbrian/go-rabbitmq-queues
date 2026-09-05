@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-06
+
 ### Added
 
 - Add repeatable, concurrency-safe, caller-bounded `Shutdown(ctx)` lifecycle
@@ -34,6 +36,8 @@
   invoking the provider callback.
 - Bound asynchronous publication from admission through confirmation and keep
   `Drain` caller cancellation independent from shared consumer shutdown.
+- Report consumer unavailability when shutdown leaves a package-buffered
+  delivery unsettled for redelivery, including to an overlapping drain caller.
 
 ### Documentation
 
@@ -158,8 +162,6 @@
   consumer, including while paused, before leaving healthy resources open, and
   close the generation when settlement fails or remains delegated during
   shutdown.
-- Report consumer unavailability when shutdown leaves a package-buffered
-  delivery unsettled for redelivery, including to an overlapping drain caller.
 - Preserve RabbitMQ 4.3 acquired and failed-delivery counters as separate
   bounded delivery metadata.
 - Bound quorum requeue requests with RabbitMQ 4.3's acquired count, including
@@ -183,5 +185,6 @@
   wrapper benchmark harnesses with explicit live-broker evidence boundaries.
 - Pin RabbitMQ 4.3 compatibility research and queue capability distinctions.
 
-[Unreleased]: https://github.com/faustbrian/go-rabbitmq-queues/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/faustbrian/go-rabbitmq-queues/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/faustbrian/go-rabbitmq-queues/releases/tag/v1.1.0
 [1.0.0]: https://github.com/faustbrian/go-rabbitmq-queues/releases/tag/v1.0.0
