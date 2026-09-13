@@ -122,6 +122,9 @@ func main() {
 
 - `github.com/faustbrian/go-rabbitmq-queues` owns native AMQP 0-9-1 topology,
   publishing, consumption, settlement, recovery, health, and observations.
+- `github.com/faustbrian/go-rabbitmq-queues/adapters/otel` adds optional
+  RabbitMQ producer/process spans and W3C Trace Context propagation without
+  adding OpenTelemetry dependencies to the root module.
 - `github.com/faustbrian/go-queue/adapters/rabbitmq` adapts these native
   contracts to the backend-neutral `go-queue` worker API; adopt it only through
   a published, cleanly resolvable module version.
