@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add an independently releasable OpenTelemetry adapter with RabbitMQ
+  producer and process spans, bounded W3C Trace Context propagation, explicit
+  failure isolation, and no root-module telemetry dependency.
+
 ## [1.1.0] - 2026-09-06
 
 ### Added

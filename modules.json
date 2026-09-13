@@ -33,6 +33,7 @@
       "tag_prefix": "v",
       "owned_dependencies": [],
       "reverse_owned_dependencies": [
+        "github.com/faustbrian/go-rabbitmq-queues/adapters/otel",
         "github.com/faustbrian/go-queue/adapters/rabbitmq",
         "github.com/faustbrian/go-queue/rabbitmq"
       ],
@@ -113,7 +114,9 @@
           "background_work": "package"
         },
         "optional_owned_dependencies": [],
-        "adapters": [],
+        "adapters": [
+          "github.com/faustbrian/go-rabbitmq-queues/adapters/otel"
+        ],
         "companions": [
           "github.com/faustbrian/go-queue/adapters/rabbitmq",
           "github.com/faustbrian/go-queue/rabbitmq"
@@ -144,6 +147,141 @@
           "faq": "docs/faq.md",
           "changelog": "CHANGELOG.md",
           "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-rabbitmq-queues",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "in-progress",
+          "hardening": "in-progress",
+          "release": "not-started"
+        }
+      }
+    },
+    {
+      "directory": "adapters/otel",
+      "module_path": "github.com/faustbrian/go-rabbitmq-queues/adapters/otel",
+      "go_version": "1.27.0",
+      "packages": [
+        {
+          "module_directory": "adapters/otel",
+          "directory": ".",
+          "name": "rabbitmqqueueotel",
+          "import_path": "github.com/faustbrian/go-rabbitmq-queues/adapters/otel",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        }
+      ],
+      "purpose": "Add bounded OpenTelemetry RabbitMQ producer and process spans plus W3C Trace Context propagation without coupling the root queue module to telemetry dependencies.",
+      "lifecycle": "stable",
+      "kind": "public library",
+      "releasable": true,
+      "family": "integration-and-data-movement",
+      "family_label": "Integration And Data Movement",
+      "family_description": "Bounded external I/O, data movement, provider boundaries, and derived search state.",
+      "family_order": 7,
+      "version": "1.0.0",
+      "tag_prefix": "adapters/otel/v",
+      "owned_dependencies": [
+        "github.com/faustbrian/go-rabbitmq-queues"
+      ],
+      "reverse_owned_dependencies": [],
+      "external_runtime_dependencies": [
+        "go.opentelemetry.io/otel",
+        "go.opentelemetry.io/otel/trace"
+      ],
+      "required_services": [],
+      "build_tags": [],
+      "test_tags": [],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [],
+      "goal_status": "not-applicable",
+      "goal_evidence": [],
+      "gates": {
+        "api_compatibility": true,
+        "benchmarks": true,
+        "conformance": false,
+        "coverage": true,
+        "documentation": true,
+        "fuzz": true,
+        "lint": true,
+        "mutation": false,
+        "race": true,
+        "security": true,
+        "tests": true
+      },
+      "cohesion": {
+        "family": "integration-and-data-movement",
+        "secondary_capabilities": [
+          "eventing-and-messaging",
+          "observability",
+          "protocols-and-schemas"
+        ],
+        "responsibility": "Create bounded RabbitMQ producer and process spans and propagate W3C Trace Context through queue headers.",
+        "non_goals": [
+          "Configure exporters or providers, own telemetry shutdown, emit metrics, record payloads or arbitrary headers, or claim broker settlement completion."
+        ],
+        "public_package_identifier": "rabbitmqqueueotel",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-rabbitmq-queues/adapters/otel"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-rabbitmq-queues/adapters/otel": "Use when a native RabbitMQ queue publisher or push consumer needs bounded OpenTelemetry messaging spans and W3C Trace Context propagation."
+        },
+        "lifecycle_status": "active",
+        "maturity": "stable",
+        "construction_styles": [
+          "new-config"
+        ],
+        "lifecycle_styles": [
+          "stateless"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "borrow",
+            "copy"
+          ],
+          "runtime_resources": "caller",
+          "background_work": "none"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [],
+        "companions": [],
+        "supported_go": {
+          "minimum": "1.27.0",
+          "tested": [
+            "1.27.0"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [
+          "opentelemetry",
+          "rabbitmq"
+        ],
+        "supported_protocols": [
+          "amqp-0-9-1",
+          "w3c-trace-context"
+        ],
+        "documentation": {
+          "readme": "adapters/otel/README.md",
+          "api": "https://pkg.go.dev/github.com/faustbrian/go-rabbitmq-queues/adapters/otel",
+          "adoption": "adapters/otel/README.md",
+          "security": "SECURITY.md",
+          "compatibility": "adapters/otel/docs/reference.md",
+          "performance": "adapters/otel/docs/reference.md",
+          "examples": "adapters/otel/example_test.go",
+          "faq": "adapters/otel/docs/reference.md",
+          "changelog": "adapters/otel/CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-rabbitmq-queues/adapters/otel",
           "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"
         },
         "known_good_compatibility_sets": [],

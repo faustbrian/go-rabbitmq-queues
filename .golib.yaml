@@ -17,8 +17,27 @@ api:
     - module: .
       mode: apidiff
       path: api/baseline.txt
+    - module: adapters/otel
+      mode: apidiff
+      path: adapters/otel/api/baseline.txt
 
 operations:
+  - module: adapters/otel
+    gate: fuzz
+    steps:
+      - type: go-test
+        packages: [.]
+        fuzz: '^FuzzPropagationOwnershipAndBounds$'
+        budget: 100x
+        timeout: 2m
+  - module: adapters/otel
+    gate: benchmark
+    steps:
+      - type: go-test
+        packages: [./...]
+        benchmark: .
+        budget: 100ms
+        timeout: 20m
   - module: .
     gate: fuzz
     steps:

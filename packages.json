@@ -13,6 +13,18 @@
       "coverage_required": true,
       "build_required": true,
       "build_tags": []
+    },
+    {
+      "module_directory": "adapters/otel",
+      "directory": ".",
+      "name": "rabbitmqqueueotel",
+      "import_path": "github.com/faustbrian/go-rabbitmq-queues/adapters/otel",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
     }
   ]
 }
