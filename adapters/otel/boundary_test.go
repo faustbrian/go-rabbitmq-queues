@@ -411,7 +411,7 @@ func spanText(span sdktrace.ReadOnlySpan) string {
 func attributeStrings(attributes []attribute.KeyValue) []string {
 	values := make([]string, 0, len(attributes)*2)
 	for _, item := range attributes {
-		values = append(values, string(item.Key), item.Value.Emit())
+		values = append(values, string(item.Key), item.Value.String())
 	}
 	return values
 }

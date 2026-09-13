@@ -357,9 +357,6 @@ func consumerDestination(
 	if queue != delivery.RoutingKey || len(parts) == 0 {
 		parts = append(parts, queue)
 	}
-	if len(parts) == 0 {
-		return "amq.default"
-	}
 
 	return strings.Join(parts, ":")
 }
