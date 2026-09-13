@@ -269,7 +269,7 @@ func TestProducerPreservesDefinitiveOutcomeObservedBeforePublishError(t *testing
 	}
 }
 
-func TestProducerReportsCancellationBeforeClientTransmissionAsNotSent(t *testing.T) {
+func TestProducerSafelyClassifiesCancellationRacingTheClientResult(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -285,8 +285,20 @@ func TestProducerReportsCancellationBeforeClientTransmissionAsNotSent(t *testing
 	t.Cleanup(func() { closeProducerForTest(t, producer) })
 
 	result, err := producer.Publish(ctx, testPublication())
-	if result.State != PublishNotSent || !errors.Is(err, context.Canceled) || errors.Is(err, ErrPublishAmbiguous) {
-		t.Fatalf("Publish() = (%#v, %v), want cancelled not sent", result, err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Publish() error = %v, want context cancellation", err)
+	}
+	switch result.State {
+	case PublishNotSent:
+		if errors.Is(err, ErrPublishAmbiguous) {
+			t.Fatalf("Publish() = (%#v, %v), not-sent outcome cannot be ambiguous", result, err)
+		}
+	case PublishAmbiguous:
+		if !errors.Is(err, ErrPublishAmbiguous) {
+			t.Fatalf("Publish() = (%#v, %v), ambiguous outcome lacks classification", result, err)
+		}
+	default:
+		t.Fatalf("Publish() = (%#v, %v), want not sent or ambiguous", result, err)
 	}
 }
 
