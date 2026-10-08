@@ -106,11 +106,11 @@ func newConsumerFromChannelWithRecovery(
 	if !contextProvided(ctx) {
 		return nil, ErrContextRequired
 	}
-	config = ownConsumerConfig(config)
 	configAccepted, configErr := acceptedConsumerConfig(config.Validate())
 	if !configAccepted {
 		return nil, configErr
 	}
+	config = ownConsumerConfig(config)
 	if !consumerInputsPresent(handler, channel, resource) {
 		return nil, ErrInvalidConsumer
 	}

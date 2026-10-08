@@ -285,7 +285,11 @@ func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
 			return nil, 0, ErrInvalidDelivery
 		}
 	}
-	keys := make([]string, 0, len(table))
+	count, err := admittedDeliveryHeaderCount(table, limits)
+	if err != nil {
+		return nil, 0, err
+	}
+	keys := make([]string, 0, count)
 	for key := range table {
 		if !reservedDeliveryMetadataHeader(key) {
 			keys = append(keys, key)
@@ -313,6 +317,44 @@ func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
 		headers = append(headers, header)
 	}
 	return headers, bytes, nil
+}
+
+// Inspect borrowed values before allocating key storage or owned byte copies.
+// Reserved metadata has its own bounded validators and is not application data.
+func admittedDeliveryHeaderCount(table amqp.Table, limits Limits) (int, error) {
+	count, bytes := 0, 0
+	for key, value := range table {
+		if reservedDeliveryMetadataHeader(key) {
+			continue
+		}
+		count++
+		if count > limits.MaxHeaderEntries || invalidIdentity(key, limits.MaxNameBytes) ||
+			!fitsRemainingHeaderBudget(len(key), bytes, limits.MaxHeaderBytes) {
+			return 0, ErrInvalidDelivery
+		}
+		bytes += len(key)
+		size, ok := deliveryHeaderSize(value)
+		if !ok || !fitsRemainingHeaderBudget(size, bytes, limits.MaxHeaderBytes) {
+			return 0, ErrInvalidDelivery
+		}
+		bytes += size
+	}
+	return count, nil
+}
+
+func deliveryHeaderSize(value any) (int, bool) {
+	switch value := value.(type) {
+	case string:
+		return len(value), true
+	case []byte:
+		return len(value), true
+	case bool:
+		return 1, true
+	case int8, int16, int32, int64, uint8, uint16, uint32:
+		return 8, true
+	default:
+		return 0, false
+	}
 }
 
 func deliveryDeathSummaryBytes(table amqp.Table, limits Limits) (int, error) {

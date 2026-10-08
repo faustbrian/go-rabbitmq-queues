@@ -48,10 +48,10 @@ func openConsumerWith(
 	if err := connection.Validate(); err != nil {
 		return nil, err
 	}
-	config = ownConsumerConfig(config)
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	config = ownConsumerConfig(config)
 	connection = ownConnectionConfig(connection)
 	if handler == nil {
 		return nil, ErrInvalidConsumer
