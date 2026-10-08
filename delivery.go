@@ -295,24 +295,17 @@ func deliveryHeaders(table amqp.Table, limits Limits) ([]Header, int, error) {
 			keys = append(keys, key)
 		}
 	}
-	if len(keys) > limits.MaxHeaderEntries {
-		return nil, 0, ErrInvalidDelivery
-	}
 	sort.Strings(keys)
 	headers := make([]Header, 0, len(keys))
 	bytes := 0
 	for _, key := range keys {
-		if invalidIdentity(key, limits.MaxNameBytes) {
-			return nil, 0, ErrInvalidDelivery
-		}
 		bytes += len(key)
-		header, size, ok := stableDeliveryHeader(key, table[key])
-		if !ok {
-			return nil, 0, ErrInvalidDelivery
-		}
+		// The borrowed table is immutable during this conversion. Admission
+		// already validated the same authoritative type and size mapping.
+		header, size, _ := borrowedDeliveryHeader(key, table[key])
 		bytes += size
-		if bytes > limits.MaxHeaderBytes {
-			return nil, 0, ErrInvalidDelivery
+		if header.Kind == HeaderBytes {
+			header.Bytes = append([]byte(nil), header.Bytes...)
 		}
 		headers = append(headers, header)
 	}
@@ -333,28 +326,13 @@ func admittedDeliveryHeaderCount(table amqp.Table, limits Limits) (int, error) {
 			return 0, ErrInvalidDelivery
 		}
 		bytes += len(key)
-		size, ok := deliveryHeaderSize(value)
+		_, size, ok := borrowedDeliveryHeader(key, value)
 		if !ok || !fitsRemainingHeaderBudget(size, bytes, limits.MaxHeaderBytes) {
 			return 0, ErrInvalidDelivery
 		}
 		bytes += size
 	}
 	return count, nil
-}
-
-func deliveryHeaderSize(value any) (int, bool) {
-	switch value := value.(type) {
-	case string:
-		return len(value), true
-	case []byte:
-		return len(value), true
-	case bool:
-		return 1, true
-	case int8, int16, int32, int64, uint8, uint16, uint32:
-		return 8, true
-	default:
-		return 0, false
-	}
 }
 
 func deliveryDeathSummaryBytes(table amqp.Table, limits Limits) (int, error) {
@@ -405,14 +383,15 @@ func validDeathSummaryField(value any, allowEmpty bool, limits Limits) (string, 
 	return text, true
 }
 
-func stableDeliveryHeader(key string, value any) (Header, int, bool) {
+// Return a borrowed descriptor; only the admitted materialization owns bytes.
+func borrowedDeliveryHeader(key string, value any) (Header, int, bool) {
 	switch value := value.(type) {
 	case string:
 		return StringHeader(key, value), len(value), true
 	case bool:
 		return BoolHeader(key, value), 1, true
 	case []byte:
-		return BytesHeader(key, value), len(value), true
+		return Header{Key: key, Kind: HeaderBytes, Bytes: value}, len(value), true
 	case int8:
 		return Int64Header(key, int64(value)), 8, true
 	case int16:

@@ -3,6 +3,7 @@ package rabbitmqqueue
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -142,6 +143,55 @@ func TestChannelOpeningHonorsCancellation(t *testing.T) {
 				}
 			case <-time.After(250 * time.Millisecond):
 				t.Error("channel opening ignored cancellation")
+			}
+		})
+	}
+}
+
+func TestCancelledChannelSetupDoesNotStartRPC(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	connection := &blockedChannelConnection{
+		entered: make(chan struct{}), closed: make(chan struct{}), exited: make(chan struct{}),
+	}
+	channel, err := boundedAMQPChannel(ctx, connection, time.Now().Add(time.Hour))
+	if channel != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled channel setup = %v, %v", channel, err)
+	}
+	select {
+	case <-connection.entered:
+		t.Error("cancelled setup started a channel RPC")
+	default:
+	}
+	select {
+	case <-connection.closed:
+	default:
+		t.Error("cancelled setup retained its connection")
+	}
+}
+
+func TestNativeDialOwnersRejectCancelledAttempt(t *testing.T) {
+	owners := map[string]func(context.Context, Endpoint, ConnectionConfig, Credentials) (any, io.Closer, error){
+		"producer": func(ctx context.Context, endpoint Endpoint, config ConnectionConfig, credentials Credentials) (any, io.Closer, error) {
+			return dialAMQPProducer(ctx, endpoint, config, credentials)
+		},
+		"consumer": func(ctx context.Context, endpoint Endpoint, config ConnectionConfig, credentials Credentials) (any, io.Closer, error) {
+			return dialAMQPConsumer(ctx, endpoint, config, credentials)
+		},
+		"topology": func(ctx context.Context, endpoint Endpoint, config ConnectionConfig, credentials Credentials) (any, io.Closer, error) {
+			return dialAMQPTopology(ctx, endpoint, config, credentials)
+		},
+	}
+	for owner, dial := range owners {
+		t.Run(owner, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Hour)
+			cancel()
+			// A literal endpoint plus an already cancelled context prevents DNS
+			// and socket activity while exercising the production dial wiring.
+			channel, resource, err := dial(ctx, Endpoint{Host: "127.0.0.1", Port: 5671},
+				testConnectionConfig(), Credentials{Username: "caller", Password: []byte("unused")})
+			if channel != nil || resource != nil || err == nil {
+				t.Fatalf("cancelled native dial = %v, %v, %v", channel, resource, err)
 			}
 		})
 	}

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Honor startup and recovery cancellation and dial deadlines while opening
+  producer, consumer and topology AMQP channels; close and join owned setup
+  cleanup before returning or transferring a connection to runtime ownership.
+- Reject oversized delivery headers before allocating application-header
+  snapshots, and validate consumer configuration before copying transient
+  binding arguments.
+
+### Documentation
+
+- Record the repository threat model, trust boundaries, remaining deployment
+  obligations and pending security release verdict.
+
 ## [1.1.0] - 2026-09-06
 
 ### Added

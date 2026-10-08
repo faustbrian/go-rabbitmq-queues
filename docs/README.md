@@ -18,6 +18,7 @@
 - [Kubernetes Operator compatibility](operator-compatibility.md)
 - [Compatibility policy](../COMPATIBILITY.md)
 - [Security policy](../SECURITY.md)
+- [Security threat model and release boundary](security-threat-model.md)
 - [Support](../SUPPORT.md)
 - [Frequently asked questions](faq.md)
 
