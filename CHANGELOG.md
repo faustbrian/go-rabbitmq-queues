@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-08
+
 ### Fixed
 
 - Honor startup and recovery cancellation and dial deadlines while opening

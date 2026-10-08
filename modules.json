@@ -29,7 +29,7 @@
       "family_label": "Integration And Data Movement",
       "family_description": "Bounded external I/O, data movement, provider boundaries, and derived search state.",
       "family_order": 7,
-      "version": "1.1.0",
+      "version": "1.1.1",
       "tag_prefix": "v",
       "owned_dependencies": [],
       "reverse_owned_dependencies": [
@@ -43,7 +43,7 @@
       "build_tags": [],
       "test_tags": [],
       "interoperability_tools": [
-        "PHP 8.5.10 and php-amqplib v3.7.4 livebroker harness",
+        "PHP 8.5.11 and php-amqplib v3.7.4 livebroker harness",
         "kubeconform v0.8.0 against pinned RabbitMQ Operator CRDs"
       ],
       "specifications": [
