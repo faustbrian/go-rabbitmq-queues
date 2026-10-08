@@ -186,7 +186,10 @@ func dialAMQPConsumer(
 	connection ConnectionConfig,
 	credentials Credentials,
 ) (consumerChannel, io.Closer, error) {
-	return dialAMQPConsumerWith(ctx, endpoint, connection, credentials, openAMQPConsumerConnection)
+	return dialAMQPConsumerWith(ctx, endpoint, connection, credentials,
+		func(address string, config amqp.Config, deadline time.Time) (consumerChannel, io.Closer, error) {
+			return openAMQPConsumerConnectionWithContext(ctx, address, config, deadline, dialAMQPConnection)
+		})
 }
 
 func dialAMQPConsumerWith(
@@ -217,6 +220,16 @@ func openAMQPConsumerConnectionWith(
 	deadline time.Time,
 	dial amqpConnectionDialFunc,
 ) (consumerChannel, io.Closer, error) {
+	return openAMQPConsumerConnectionWithContext(context.Background(), address, config, deadline, dial)
+}
+
+func openAMQPConsumerConnectionWithContext(
+	ctx context.Context,
+	address string,
+	config amqp.Config,
+	deadline time.Time,
+	dial amqpConnectionDialFunc,
+) (consumerChannel, io.Closer, error) {
 	client, err := dial(address, config)
 	if !usableAMQPConnection(client, err) {
 		if client != nil {
@@ -224,7 +237,7 @@ func openAMQPConsumerConnectionWith(
 		}
 		return nil, nil, ErrConsumerUnavailable
 	}
-	channel, err := client.Channel()
+	channel, err := boundedAMQPChannel(ctx, client, deadline)
 	if err != nil {
 		_ = boundedCloseConsumerResources(client, nil, deadline)
 		return nil, nil, ErrConsumerUnavailable

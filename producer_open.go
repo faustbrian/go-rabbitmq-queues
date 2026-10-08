@@ -348,7 +348,10 @@ func dialAMQPProducer(
 	connection ConnectionConfig,
 	credentials Credentials,
 ) (producerChannel, io.Closer, error) {
-	return dialAMQPProducerWith(ctx, endpoint, connection, credentials, openAMQPConnection)
+	return dialAMQPProducerWith(ctx, endpoint, connection, credentials,
+		func(address string, config amqp.Config, deadline time.Time) (producerChannel, io.Closer, error) {
+			return openAMQPConnectionWithContext(ctx, address, config, deadline, dialAMQPConnection)
+		})
 }
 
 func dialAMQPProducerWith(
@@ -403,6 +406,16 @@ func openAMQPConnectionWith(
 	deadline time.Time,
 	dial amqpConnectionDialFunc,
 ) (producerChannel, io.Closer, error) {
+	return openAMQPConnectionWithContext(context.Background(), address, config, deadline, dial)
+}
+
+func openAMQPConnectionWithContext(
+	ctx context.Context,
+	address string,
+	config amqp.Config,
+	deadline time.Time,
+	dial amqpConnectionDialFunc,
+) (producerChannel, io.Closer, error) {
 	client, err := dial(address, config)
 	if err != nil {
 		if client != nil {
@@ -413,7 +426,7 @@ func openAMQPConnectionWith(
 	if client == nil {
 		return nil, nil, ErrProducerUnavailable
 	}
-	channel, err := client.Channel()
+	channel, err := boundedAMQPChannel(ctx, client, deadline)
 	if err != nil {
 		_ = client.CloseDeadline(deadline)
 		return nil, nil, ErrProducerUnavailable

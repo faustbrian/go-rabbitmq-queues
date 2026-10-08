@@ -455,7 +455,10 @@ func dialAMQPTopology(
 	connection ConnectionConfig,
 	credentials Credentials,
 ) (topologyChannel, io.Closer, error) {
-	return dialAMQPTopologyWith(ctx, endpoint, connection, credentials, openAMQPTopologyConnection)
+	return dialAMQPTopologyWith(ctx, endpoint, connection, credentials,
+		func(address string, config amqp.Config, deadline time.Time) (topologyChannel, io.Closer, error) {
+			return openAMQPTopologyConnectionWithContext(ctx, address, config, deadline, dialAMQPConnection)
+		})
 }
 
 func dialAMQPTopologyWith(
@@ -489,6 +492,16 @@ func openAMQPTopologyConnectionWith(
 	deadline time.Time,
 	dial amqpConnectionDialFunc,
 ) (topologyChannel, io.Closer, error) {
+	return openAMQPTopologyConnectionWithContext(context.Background(), address, config, deadline, dial)
+}
+
+func openAMQPTopologyConnectionWithContext(
+	ctx context.Context,
+	address string,
+	config amqp.Config,
+	deadline time.Time,
+	dial amqpConnectionDialFunc,
+) (topologyChannel, io.Closer, error) {
 	client, err := dial(address, config)
 	if err != nil || client == nil {
 		if client != nil {
@@ -496,7 +509,7 @@ func openAMQPTopologyConnectionWith(
 		}
 		return nil, nil, ErrTopologyUnavailable
 	}
-	channel, err := client.Channel()
+	channel, err := boundedAMQPChannel(ctx, client, deadline)
 	if !usableAMQPChannel(channel, err) {
 		_ = closeWithDeadline(client, deadline)
 		return nil, nil, ErrTopologyUnavailable
