@@ -3,7 +3,7 @@ package rabbitmqqueue
 import "time"
 
 const (
-	publishTokenHeader      = "x-rabbitmqqueue-publish-token"
+	publishTokenHeader      = "x-rabbitmqqueue-publish-token" // #nosec G101 -- Public AMQP header name, not a token value or credential.
 	maxProducerSessionBytes = 128
 	maxPublishTokenBytes    = maxProducerSessionBytes + 1 + 20
 )

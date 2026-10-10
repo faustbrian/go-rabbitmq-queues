@@ -985,6 +985,7 @@ func amqpPublishing(message Message, mode DeliveryMode, token string) amqp.Publi
 	headers[publishTokenHeader] = token
 	priority := uint8(0)
 	if message.Priority != nil {
+		// #nosec G115 -- Publication.Validate bounds the owned priority to [0,255] before admission.
 		priority = uint8(*message.Priority)
 	}
 	expiration := ""

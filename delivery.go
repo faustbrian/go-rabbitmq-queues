@@ -533,12 +533,16 @@ func deathOriginalExpiration(fields amqp.Table) (*time.Duration, int, error) {
 func unsignedAMQPInteger(value any) (uint64, bool) {
 	switch value := value.(type) {
 	case int8:
+		// #nosec G115 -- Nonnegative signed values fit uint64; negative values return invalid and callers reject them.
 		return uint64(value), value >= 0
 	case int16:
+		// #nosec G115 -- Nonnegative signed values fit uint64; negative values return invalid and callers reject them.
 		return uint64(value), value >= 0
 	case int32:
+		// #nosec G115 -- Nonnegative signed values fit uint64; negative values return invalid and callers reject them.
 		return uint64(value), value >= 0
 	case int64:
+		// #nosec G115 -- Nonnegative signed values fit uint64; negative values return invalid and callers reject them.
 		return uint64(value), value >= 0
 	case uint8:
 		return uint64(value), true

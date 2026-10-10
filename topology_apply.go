@@ -338,9 +338,11 @@ func queueArguments(queue Queue) amqp.Table {
 		}
 	}
 	if queue.MaxLength != nil {
+		// #nosec G115 -- Queue.Validate checks this owned uint64 value is at most math.MaxInt64.
 		arguments["x-max-length"] = int64(*queue.MaxLength)
 	}
 	if queue.MaxLengthBytes != nil {
+		// #nosec G115 -- Queue.Validate checks this owned uint64 value is at most math.MaxInt64.
 		arguments["x-max-length-bytes"] = int64(*queue.MaxLengthBytes)
 	}
 	if queueOverflowPresent(queue.Overflow) {
