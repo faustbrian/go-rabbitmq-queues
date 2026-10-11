@@ -13,6 +13,11 @@ on:
         required: false
         default: false
         type: boolean
+      full_assurance:
+        description: Run the unchanged broker, PHP, performance and cluster campaigns
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -21,16 +26,57 @@ permissions:
 
 jobs:
   ci:
-    uses: faustbrian/go-library-tools/.github/workflows/library-ci.yml@c7f232472d9c4c5ac5359d70bbef3b8f1571b834 # reviewed security maintenance source
+    uses: faustbrian/go-library-tools/.github/workflows/library-ci.yml@e192eb43fa434081af318a40b0f20caf57094701 # qualified public v2.1.3 source
     with:
-      tooling_sha: c7f232472d9c4c5ac5359d70bbef3b8f1571b834
-      source_bootstrap: true
+      tooling_sha: e192eb43fa434081af318a40b0f20caf57094701
+      source_bootstrap: false
       public_dependencies: true
       release_dry_run: ${{ inputs.release_dry_run || false }}
 
+  integration-scope:
+    name: Select owned broker assurance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      focused: ${{ steps.scope.outputs.focused }}
+      full: ${{ steps.scope.outputs.full }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          FULL_ASSURANCE: ${{ github.event_name == 'workflow_dispatch' && (inputs.full_assurance || inputs.release_dry_run) }}
+        run: |
+          set -euo pipefail
+          case "${FULL_ASSURANCE}" in true|false) ;; *) exit 1 ;; esac
+          case "${EVENT_NAME}" in pull_request|push|schedule|workflow_dispatch) ;; *) exit 1 ;; esac
+          focused=true
+          if [[ "${FULL_ASSURANCE}" == false && "${EVENT_NAME}" == schedule ]]; then
+            focused=false
+          elif [[ "${FULL_ASSURANCE}" == false &&
+                  ( "${EVENT_NAME}" == pull_request || "${EVENT_NAME}" == push ) ]]; then
+            [[ "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            git cat-file -e "${BASE_SHA}^{commit}" || exit 1
+            changed_paths="$(git diff --no-ext-diff --no-renames --name-only "${BASE_SHA}" HEAD)" || exit 1
+            focused=false
+            while IFS= read -r path; do
+              [[ -n "${path}" ]] || continue
+              case "${path}" in
+                README.md|CONTRIBUTING.md|AGENTS.md|CODE_OF_CONDUCT.md|SUPPORT.md|SECURITY.md|LICENSE|CHANGELOG.md) ;;
+                *) focused=true; break ;;
+              esac
+            done <<< "${changed_paths}"
+          fi
+          printf 'focused=%s\nfull=%s\n' "${focused}" "${FULL_ASSURANCE}" >> "${GITHUB_OUTPUT}"
+
   live-broker:
     name: RabbitMQ 4.3 TLS
-    if: github.event_name != 'schedule'
+    needs: integration-scope
+    if: needs.integration-scope.outputs.focused == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -45,7 +91,8 @@ jobs:
 
   php-interop:
     name: PHP 8.5 interoperability
-    if: github.event_name != 'schedule'
+    needs: integration-scope
+    if: needs.integration-scope.outputs.focused == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -66,7 +113,8 @@ jobs:
 
   performance:
     name: Performance ${{ matrix.queue_type }} ${{ matrix.daily_messages }}/day
-    if: github.event_name != 'schedule'
+    needs: integration-scope
+    if: needs.integration-scope.outputs.full == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -89,7 +137,8 @@ jobs:
 
   cluster:
     name: Three-node ${{ matrix.scenario }}
-    if: github.event_name != 'schedule'
+    needs: integration-scope
+    if: needs.integration-scope.outputs.full == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -118,7 +167,8 @@ jobs:
 
   cluster-performance:
     name: Three-node performance leader-loss ${{ matrix.daily_messages }}/day
-    if: github.event_name != 'schedule'
+    needs: integration-scope
+    if: needs.integration-scope.outputs.full == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -140,13 +190,15 @@ jobs:
   required:
     name: Required
     if: always()
-    needs: [ci, live-broker, php-interop, performance, cluster, cluster-performance]
+    needs: [ci, integration-scope, live-broker, php-interop, performance, cluster, cluster-performance]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every result
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          SCOPE_RESULT: ${{ needs.integration-scope.result }}
+          FOCUSED: ${{ needs.integration-scope.outputs.focused }}
+          FULL: ${{ needs.integration-scope.outputs.full }}
           CI_RESULT: ${{ needs.ci.result }}
           LIVE_BROKER_RESULT: ${{ needs.live-broker.result }}
           PHP_INTEROP_RESULT: ${{ needs.php-interop.result }}
@@ -156,14 +208,18 @@ jobs:
         run: |
           set -euo pipefail
           test "${CI_RESULT}" = success
-          if [[ "${EVENT_NAME}" == schedule ]]; then
-            exit 0
+          test "${SCOPE_RESULT}" = success
+          case "${FOCUSED}" in true) focused_result=success ;; false) focused_result=skipped ;; *) exit 1 ;; esac
+          case "${FULL}" in true) full_result=success ;; false) full_result=skipped ;; *) exit 1 ;; esac
+          if [[ "${FULL}" == true ]]; then
+            test "${FOCUSED}" = true
           fi
+          for result in "${LIVE_BROKER_RESULT}" "${PHP_INTEROP_RESULT}"; do
+            test "${result}" = "${focused_result}"
+          done
           for result in \
-            "${LIVE_BROKER_RESULT}" \
-            "${PHP_INTEROP_RESULT}" \
             "${PERFORMANCE_RESULT}" \
             "${CLUSTER_RESULT}" \
             "${CLUSTER_PERFORMANCE_RESULT}"; do
-            test "${result}" = success
+            test "${result}" = "${full_result}"
           done

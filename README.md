@@ -161,5 +161,11 @@ the [compatibility policy](COMPATIBILITY.md) before production use. Report
 vulnerabilities through the private process in [SECURITY.md](SECURITY.md); use
 [SUPPORT.md](SUPPORT.md) for reproducible defects and adoption questions, and
 consult the [FAQ](docs/faq.md) for common ownership and delivery questions.
-Run `go test ./...` for the package test suite and `make ci` for the complete
-repository gate. This module is distributed under the [MIT license](LICENSE).
+Use Go 1.27.2 and verified public Tools v2.1.3; the module minimum remains
+Go 1.27.0. `make check` and `make ci` run bounded checks; `make check-full`
+explicitly selects full campaigns. Non-policy changes also retain CI-owned
+single-node TLS/PHP checks. Broader matrices require full-assurance or release
+workflow dispatch; scheduled checks remain bounded. See
+[contributing](CONTRIBUTING.md#verification) for standalone tests, fuzz seeds
+versus active smoke, installation and optional mutation. This module is
+distributed under the [MIT license](LICENSE).

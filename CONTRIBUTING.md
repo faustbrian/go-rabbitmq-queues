@@ -26,7 +26,7 @@ New direct dependencies and dependency updates must follow the
 Package-local update bots are forbidden; repository policy owns every module
 and action update.
 
-Required mutation gates must finish with zero surviving viable mutants.
+Required release mutation gates must finish with zero surviving viable mutants.
 
 Do not add package-local workflows, permanent replacements, machine-specific
 paths, bypass flags, broad mutation exclusions, or aggregate quality metrics
@@ -34,23 +34,78 @@ that hide a failing package.
 
 ## Verification
 
-Run during development:
+Use Go 1.27.2; the public module minimum remains Go 1.27.0. An isolated
+checkout needs no sibling repositories or coordination goal files. Begin
+with deterministic tests and one active target when publication validation
+changes, using a disposable cache per bounded session:
+
+```bash
+(
+  set -eu
+  GOCACHE="$(mktemp -d)"
+  export GOCACHE
+  trap 'rm -rf "${GOCACHE}"' EXIT
+  GOWORK=off go test ./...
+  GOWORK=off go test . -run '^$' -fuzz '^FuzzPublicationValidation$' -fuzztime=2s -timeout=2m
+)
+```
+
+Deterministic tests execute fuzz seeds/corpus, not active fuzzing, and do not
+qualify live brokers. Install the public v2.1.3 binary archive for your platform
+from [go-library-tools releases](https://github.com/faustbrian/go-library-tools/releases/tag/v2.1.3),
+checking `checksums.txt` against `.golib.yaml` and the archive against that
+checksum set. Put the extracted `golib` binary on `PATH`, or select it through
+`GOLIB`; do not build Tools from source. CI uses this public release and checks
+out its immutable reusable workflow source.
+
+Run adjacent commands in one disposable-cache session as shown above:
 
 ```bash
 make inventory
 make check
+make ci
+make specification-check
+golib mutation --module . --package .
 ```
 
-Before submitting a repository-wide change:
+`make check` and `make ci` select the bounded contract. The root race runs
+once with a two-minute timeout: 100 concurrent completions keep mandatory
+returns correlated with the right confirm, and concurrent shutdown callers
+retain independent deadlines. Fake channels do not prove TLS, live AMQP
+behavior or PHP interoperability. Base-free checks run seeds/corpus;
+changed-source CI selects causal active fuzz smoke. Optional mutation selects
+one production package, one worker and a twenty-minute deadline. Offline
+specification checking is ordinary; the module has no default service or tag.
+
+PR/push changes outside the explicitly named non-executable policy documents
+jointly select the existing single-node TLS and PHP interoperability jobs
+(two jobs, each capped at twenty minutes). Executable verifier/configuration,
+workflow, source, tests, protocol fixtures and unknown paths remain selected;
+missing or invalid Git evidence fails the selector. Policy-only changes keep
+mandatory local/workflow/security checks without live fixtures. The selector
+has a two-minute bound. Required demands success for selected jobs and exactly
+skipped for unselected jobs; missing, failed or cancelled results never pass.
+
+Select full qualification and release rehearsal explicitly:
 
 ```bash
-make ci
+make check-full
+make specification-check-online
+make -f verification/package.mk operator
+golib api check
+golib release dry-run --module .
 ```
 
-The full scheduled and release gate is `make ci`. Broker- and PHP-backed suites
-remain CI-owned as documented in [live broker testing](docs/live-broker-testing.md).
-Report every unavailable or failing command; do not describe partial results as
-release-ready.
+Full checks retain all four fuzz targets at 10000x/20m, the 100ms/20m benchmark,
+operator conformance and language-neutral interoperability operations, plus
+all original API/module gates. Workflow dispatch with `full_assurance: true`
+or `release_dry_run: true` also selects all unchanged broker/PHP/performance/
+cluster campaigns: 19 matrix executions, each capped at twenty minutes.
+Scheduled CI is bounded and does not automatically run those campaigns.
+Broker- and PHP-backed suites remain CI-owned as documented in
+[live broker testing](docs/live-broker-testing.md); operator checking validates
+fixtures, not a live Kubernetes deployment. Report unavailable or failing
+commands; bounded checks alone do not establish release qualification.
 
 ## Adding A Module
 
