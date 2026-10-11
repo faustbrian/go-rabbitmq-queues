@@ -28,7 +28,7 @@ and action update.
 
 Required release mutation gates must finish with zero surviving viable mutants.
 
-Do not add package-local workflows, permanent replacements, machine-specific
+Do not fork shared verification workflows, add permanent replacements, machine-specific
 paths, bypass flags, broad mutation exclusions, or aggregate quality metrics
 that hide a failing package.
 
@@ -106,6 +106,30 @@ Broker- and PHP-backed suites remain CI-owned as documented in
 [live broker testing](docs/live-broker-testing.md); operator checking validates
 fixtures, not a live Kubernetes deployment. Report unavailable or failing
 commands; bounded checks alone do not establish release qualification.
+
+## Selected Monthly Assurance
+
+The owner-level [selected-assurance caller](.github/workflows/assurance.yml) is
+configured for main only, on day 5 of each month at 06:13 UTC. It selects one
+of the 4 current declared root-module fuzz targets using the shared UTC-week
+rotation, with 30 seconds of active exploration. The selected risks are:
+deterministic publication/topology validation, bounded delivery conversion
+with copied body ownership, and exact publish-return/confirm correlation.
+The root targets use in-process AMQP values and tracker state, not a broker.
+They do not qualify TLS, live delivery/settlement, PHP interoperability or cluster
+behavior. Existing selected PR broker/PHP jobs and explicit full/manual broker,
+operator and performance campaigns retain their separate contracts.
+
+Base-free ordinary checks execute deterministic seeds, not active exploration;
+committed-range CI selects affected active smoke. Manual assurance requires an
+exact anchored selector from the root fuzz operation in `.golib.yaml`, for
+example `^FuzzPublicationValidation$`.
+Empty, unknown and malformed selections refuse. The shared job bounds setup
+and execution to ten minutes, active workers and CPU to two, owned memory to
+2 GiB, native output to 1 MiB and private-cache lifetime. Failure, cancellation,
+exhausted budgets and cleanup refusal remain attributable failures. This lane
+does not run mutation or replace Required, original full fuzz budgets,
+explicit `make check-full`, or relevant release qualification.
 
 ## Adding A Module
 

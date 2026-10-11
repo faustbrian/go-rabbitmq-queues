@@ -146,7 +146,10 @@ unrelated change merely because the check exists.
 
 ## CI And Workflows
 
-- `.github/workflows/ci.yml` is the only owned GitHub Actions workflow.
+- `.github/workflows/ci.yml` owns ordinary CI; `assurance.yml` is the optional
+  owner-level caller for risk-selected monthly fuzz assurance and explicit
+  main-only diagnostics. It MUST retain bounded shared execution and MUST NOT
+  run campaigns on pull requests or ordinary pushes.
 - Package-local workflows MUST NOT be added.
 - Actions and external tools MUST be pinned to immutable versions.
 - Every selected module MUST have an attributable result. A durable evidence

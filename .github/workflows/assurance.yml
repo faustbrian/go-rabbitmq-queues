@@ -1,0 +1,21 @@
+name: Selected assurance
+
+on:
+  schedule:
+    - cron: '13 6 5 * *'
+  workflow_dispatch:
+    inputs:
+      fuzz_target:
+        description: Exact declared root fuzz selector, for example ^FuzzPublicationValidation$
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  assurance:
+    uses: faustbrian/go-library-tools/.github/workflows/library-assurance.yml@70a5d7da3531b5c3ab2c2fdfa8aa3cba8211afc5
+    with:
+      tooling_sha: 70a5d7da3531b5c3ab2c2fdfa8aa3cba8211afc5
+      fuzz_target: ${{ inputs.fuzz_target || '' }}
