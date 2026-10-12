@@ -115,6 +115,42 @@ the bounded scheduled carrier does not certify broker or PHP behavior.
 
 ## PHP interoperability harness
 
+### CI toolchain acquisition
+
+The Ubuntu 24.04 PHP job runs `scripts/ci-php-toolchain.sh` in one private
+`RUNNER_TEMP` prefix. Its reviewed inputs are the setup-php maintainer's
+[php-ubuntu asset 613079199](https://api.github.com/repos/shivammathur/php-ubuntu/releases/assets/613079199)
+(`php_8.5-nts+ubuntu24.04.tar.zst`, SHA-256
+`8fe4b28e1e5c3228d45416fed28152cc0ab8325ae7f6e0d5bb531f8501671bf9`)
+and [Composer 2.10.1](https://getcomposer.org/download/2.10.1/composer.phar)
+(SHA-256 `345b9c6a98da5c30dcbd4b0d99fc8710bf0ae98a3898eea18f7b2ad9dec93f06`).
+Both digests are checked before extraction or execution; a missing asset or
+changed response fails rather than selecting the newest minor release.
+
+Only the regular `usr/bin/php8.5` CLI and `mbstring`, `sockets`, `phar`,
+`iconv`, and `ctype` extension files from ABI directory `usr/lib/php/20250925`
+are selected. Private wrappers use `php -n` with that extension directory and
+preserve absolute host script paths and loopback networking. Exact PHP 8.5.11,
+builtin OpenSSL and the loaded extensions are checked before invoking the
+existing broker owner. Composer retains its existing locked installation and
+task-owned home/vendor paths. The acquisition token is removed before PHP runs.
+No archive system configuration, apt/dpkg state, alternatives or FPM service is
+installed. Missing Ubuntu host libraries (including `libonig.so.5` for
+mbstring) fail closed; the script does not install replacements. The whole
+private prefix is removed on success, failure or handled interruption, and a
+cleanup failure fails the job.
+
+The library maintainer owns updates: authenticate the replacement numeric
+asset and Composer bytes, inspect regular members and extension ABI/host
+library requirements, and update identities and digests together. Before
+adoption, run `python3 scripts/test-ci-php-toolchain.py`, shell/workflow checks,
+and the existing hosted PHP job to prove exact versions, locked dependencies,
+extensions, bidirectional TLS interoperability and cleanup. Local acquisition
+tests exercise real checksum failure and cleanup with controlled fixtures;
+they do not execute Linux PHP or qualify the hosted runtime profile.
+
+### Harness contract
+
 `TestLiveBrokerPHPInteroperability` uses the same single TLS endpoint and
 direct exchange with two additional dedicated, durable queues. Bind the
 Go-to-PHP and PHP-to-Go queues to their distinct configured routing keys. The
