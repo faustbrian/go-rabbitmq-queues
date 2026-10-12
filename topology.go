@@ -19,19 +19,28 @@ const (
 type ExchangeKind string
 
 const (
-	ExchangeDirect  ExchangeKind = "direct"
-	ExchangeTopic   ExchangeKind = "topic"
-	ExchangeFanout  ExchangeKind = "fanout"
+	// ExchangeDirect selects direct routing by exact key.
+	ExchangeDirect ExchangeKind = "direct"
+	// ExchangeTopic selects topic-pattern routing.
+	ExchangeTopic ExchangeKind = "topic"
+	// ExchangeFanout selects fanout routing without a key criterion.
+	ExchangeFanout ExchangeKind = "fanout"
+	// ExchangeHeaders selects field-table binding criteria rather than a routing key.
 	ExchangeHeaders ExchangeKind = "headers"
 )
 
 // Exchange is a stable exchange identity and equivalence policy.
 type Exchange struct {
-	Name       string
-	Kind       ExchangeKind
-	Durable    bool
+	// Name is a required named exchange identity; the default exchange is not declared.
+	Name string
+	// Kind selects direct, topic, fanout or headers semantics for local validation.
+	Kind ExchangeKind
+	// Durable is supplied declaration intent, not independently queried broker state.
+	Durable bool
+	// AutoDelete is supplied broker lifecycle intent.
 	AutoDelete bool
-	Internal   bool
+	// Internal requests broker-only publication access when declaring the exchange.
+	Internal bool
 }
 
 // Validate checks exchange identity and supported kind.
@@ -51,16 +60,21 @@ func (exchange Exchange) Validate() error {
 type QueueType string
 
 const (
+	// QueueClassic selects the package-supported classic queue capability subset.
 	QueueClassic QueueType = "classic"
-	QueueQuorum  QueueType = "quorum"
+	// QueueQuorum selects durable quorum queue policy with no exclusive/auto-delete flags.
+	QueueQuorum QueueType = "quorum"
 )
 
 // QueueOverflow selects RabbitMQ's queue-length overflow behavior.
 type QueueOverflow string
 
 const (
-	QueueOverflowDropHead                QueueOverflow = "drop-head"
-	QueueOverflowRejectPublish           QueueOverflow = "reject-publish"
+	// QueueOverflowDropHead requests removal of ready head messages on overflow.
+	QueueOverflowDropHead QueueOverflow = "drop-head"
+	// QueueOverflowRejectPublish requests broker publication rejection on overflow.
+	QueueOverflowRejectPublish QueueOverflow = "reject-publish"
+	// QueueOverflowRejectPublishDeadLetter is classic-only reject-publish-dlx policy.
 	QueueOverflowRejectPublishDeadLetter QueueOverflow = "reject-publish-dlx"
 )
 
@@ -69,7 +83,9 @@ const (
 type DeadLetterStrategy string
 
 const (
-	DeadLetterAtMostOnce  DeadLetterStrategy = "at-most-once"
+	// DeadLetterAtMostOnce requests broker at-most-once dead-letter transfer.
+	DeadLetterAtMostOnce DeadLetterStrategy = "at-most-once"
+	// DeadLetterAtLeastOnce requests quorum transfer retries, which can duplicate effects.
 	DeadLetterAtLeastOnce DeadLetterStrategy = "at-least-once"
 )
 
@@ -79,9 +95,13 @@ const (
 // string emits an explicit empty routing key. RabbitMQ policies are preferred
 // for production configuration because they remain mutable.
 type QueueDeadLetter struct {
-	Exchange   string
+	// Exchange is the target exchange; empty explicitly selects the default exchange.
+	Exchange string
+	// RoutingKey is nil to omit the argument or points to an explicit key, including empty.
 	RoutingKey *string
-	Strategy   DeadLetterStrategy
+	// Strategy is omitted at zero; at-least-once requires quorum and reject-publish overflow.
+	// It describes broker transfer policy, not exactly-once application effects.
+	Strategy DeadLetterStrategy
 }
 
 // QueueDeliveryLimit bounds RabbitMQ quorum failed redeliveries. The unsigned
@@ -93,9 +113,13 @@ type QueueDeliveryLimit uint32
 type DelayedRetryType string
 
 const (
+	// DelayedRetryDisabled explicitly disables broker delayed retry and forbids delays.
 	DelayedRetryDisabled DelayedRetryType = "disabled"
-	DelayedRetryAll      DelayedRetryType = "all"
-	DelayedRetryFailed   DelayedRetryType = "failed"
+	// DelayedRetryAll requests broker delay for all returned deliveries.
+	DelayedRetryAll DelayedRetryType = "all"
+	// DelayedRetryFailed requests broker delay for failed-delivery-count increments.
+	DelayedRetryFailed DelayedRetryType = "failed"
+	// DelayedRetryReturned requests broker delay for returns without that increment.
 	DelayedRetryReturned DelayedRetryType = "returned"
 )
 
@@ -103,8 +127,11 @@ const (
 // Enabled retry requires a positive millisecond Minimum. A nil Maximum uses a
 // fixed delay equal to Minimum; otherwise Maximum must not precede Minimum.
 type QueueDelayedRetry struct {
-	Type    DelayedRetryType
+	// Type selects a RabbitMQ 4.3 quorum policy; disabled forbids delay values.
+	Type DelayedRetryType
+	// Minimum is positive whole milliseconds when enabled, not an application sleep.
 	Minimum time.Duration
+	// Maximum is optional whole milliseconds at least Minimum; nil emits no maximum.
 	Maximum *time.Duration
 }
 
@@ -120,26 +147,47 @@ type QueueDelayedRetry struct {
 // deliveries are returned after a consumer node becomes unreachable.
 // DelayedRetry is RabbitMQ 4.3's quorum-only linear-backoff policy.
 type Queue struct {
-	Name                        string
-	Type                        QueueType
-	Durable                     bool
-	AutoDelete                  bool
-	Exclusive                   bool
-	SingleActiveConsumer        bool
-	DeliveryLimit               *QueueDeliveryLimit
-	MaxPriority                 uint8
-	MessageTTL                  *time.Duration
-	Expires                     *time.Duration
-	ConsumerTimeout             *time.Duration
+	// Name is a bounded queue identity; empty is only valid for exclusive classic values.
+	// ApplyTopology still rejects exclusive queues it cannot retain.
+	Name string
+	// Type is explicitly classic or quorum; no broker default/type inference is used.
+	Type QueueType
+	// Durable is required for quorum and nonexclusive classic under package policy.
+	Durable bool
+	// AutoDelete is declaration lifecycle intent, rejected for quorum.
+	AutoDelete bool
+	// Exclusive is connection ownership intent, classic-only and incompatible with Durable.
+	Exclusive bool
+	// SingleActiveConsumer requests broker SAC declaration; it is not a local handler mutex.
+	SingleActiveConsumer bool
+	// DeliveryLimit is optional quorum-only bounded failed-redelivery policy, including zero.
+	DeliveryLimit *QueueDeliveryLimit
+	// MaxPriority is classic-only x-max-priority in 1..255 when nonzero; zero omits it.
+	MaxPriority uint8
+	// MessageTTL is optional nonnegative whole-millisecond queue message TTL.
+	MessageTTL *time.Duration
+	// Expires is optional positive whole-millisecond unused-queue expiry.
+	Expires *time.Duration
+	// ConsumerTimeout is optional quorum-only nonnegative millisecond acknowledgement timeout.
+	ConsumerTimeout *time.Duration
+	// DisconnectedConsumerTimeout is optional quorum-only nonnegative millisecond partition wait.
 	DisconnectedConsumerTimeout *time.Duration
-	DelayedRetry                *QueueDelayedRetry
-	MaxLength                   *uint64
-	MaxLengthBytes              *uint64
-	Overflow                    QueueOverflow
-	DeadLetter                  *QueueDeadLetter
+	// DelayedRetry is optional quorum-only broker linear-backoff policy, not republishing.
+	DelayedRetry *QueueDelayedRetry
+	// MaxLength is optional ready-message count within the signed 64-bit argument range.
+	MaxLength *uint64
+	// MaxLengthBytes is optional ready-message byte count within the signed 64-bit range.
+	MaxLengthBytes *uint64
+	// Overflow is optional queue-type-specific overflow policy; zero omits the argument.
+	Overflow QueueOverflow
+	// DeadLetter supplies optional declaration-time DLX policy; effective operator policy
+	// and permissions require separate infrastructure evidence.
+	DeadLetter *QueueDeadLetter
 }
 
-// Validate rejects policies that RabbitMQ cannot apply to the selected queue type.
+// Validate enforces the package's RabbitMQ 4.3 queue-type subset, identity,
+// optional argument ranges/presence and supported combinations (DEC-005).
+// It performs no broker I/O, authorization or effective-policy inspection.
 func (queue Queue) Validate() error {
 	if queue.Name == "" {
 		if queue.Type != QueueClassic || !queue.Exclusive {
@@ -237,16 +285,19 @@ func validQueueLength(value *uint64) bool {
 	return value == nil || *value <= math.MaxInt64
 }
 
-// TopologyMode selects passive equivalence verification or active declaration.
+// TopologyMode selects passive broker checks or active development declaration.
 type TopologyMode string
 
 const (
+	// TopologyPassive requests passive broker checks without declarations or binding mutation.
 	TopologyPassive TopologyMode = "passive"
+	// TopologyDeclare requests nontransactional development mutation with an explicit permit.
 	TopologyDeclare TopologyMode = "declare"
 )
 
 // DevelopmentTopologyPermit is an explicit capability for test and local
-// topology declaration. Its zero value never permits mutation.
+// topology declaration. Its zero value never permits mutation. This is a local
+// opt-in value, not an unforgeable security principal or broker permission.
 type DevelopmentTopologyPermit struct{ allowed bool }
 
 // PermitDevelopmentTopology explicitly opts a development or test process
@@ -257,7 +308,10 @@ func PermitDevelopmentTopology() DevelopmentTopologyPermit {
 
 // TopologyPolicy keeps production verification distinct from development declaration.
 type TopologyPolicy struct {
-	Mode        TopologyMode
+	// Mode must explicitly select passive or declare; the zero policy is invalid.
+	Mode TopologyMode
+	// Development is required only for declare. The permit is explicit caller intent,
+	// not environment detection or RabbitMQ authorization.
 	Development DevelopmentTopologyPermit
 }
 
@@ -280,24 +334,34 @@ func (policy TopologyPolicy) Validate() error {
 // Arguments are supported only for headers exchanges; other built-in exchange
 // kinds use the explicit routing key.
 type Binding struct {
-	Exchange   string
-	Queue      string
+	// Exchange references a named exchange in the same Topology.
+	Exchange string
+	// Queue references a named queue in the same Topology.
+	Queue string
+	// RoutingKey is exchange-specific; headers/fanout require empty and direct/topic allow it.
 	RoutingKey string
-	Arguments  []Header
+	// Arguments is a bounded headers-exchange criterion set; omitted x-match means all.
+	// Other kinds forbid arguments, and every match mode needs an effective criterion.
+	Arguments []Header
 }
 
 // Topology is one bounded exchange, queue, and binding graph. Passive AMQP
-// verification can compare exchange and queue declarations, but AMQP 0-9-1 has
+// checks depend on the broker passive response and do not independently prove
+// all declaration properties. AMQP 0-9-1 has
 // no passive binding method. Bindings therefore require development declaration
 // or separate infrastructure/operator verification.
 type Topology struct {
+	// Exchanges is a bounded, unique named exchange list, processed first in input order.
 	Exchanges []Exchange
-	Queues    []Queue
-	Bindings  []Binding
+	// Queues is a bounded unique named nonexclusive queue list, processed after exchanges.
+	Queues []Queue
+	// Bindings is a bounded graph reference list, processed last only in declare mode.
+	Bindings []Binding
 }
 
 // TopologyResult returns verified or declared queue names in Topology.Queues order.
 type TopologyResult struct {
+	// QueueNames is an owned result slice in input queue order, not a broker topology inventory.
 	QueueNames []string
 }
 

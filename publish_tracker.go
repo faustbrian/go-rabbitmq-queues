@@ -14,6 +14,9 @@ type publishAttempt struct {
 
 // publishTracker correlates channel-scoped confirmation sequences and
 // generation-scoped return tokens. Its mutex is the sole owner of both maps.
+// Every completion removes both indexes before sending one buffered outcome;
+// late callbacks cannot complete a later attempt. Tokens correlate, not
+// authenticate broker messages or enforce application MessageID uniqueness.
 type publishTracker struct {
 	mu       sync.Mutex
 	maximum  int

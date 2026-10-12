@@ -4,17 +4,24 @@ package rabbitmqqueue
 type SettlementMethod string
 
 const (
-	SettlementAcknowledge         SettlementMethod = "ack"
+	// SettlementAcknowledge requests a single-delivery positive acknowledgement.
+	SettlementAcknowledge SettlementMethod = "ack"
+	// SettlementNegativeAcknowledge requests a single-delivery NACK, with bounded requeue.
 	SettlementNegativeAcknowledge SettlementMethod = "nack"
-	SettlementReject              SettlementMethod = "reject"
-	SettlementDelegate            SettlementMethod = "delegate"
+	// SettlementReject requests a single-delivery rejection, with bounded requeue.
+	SettlementReject SettlementMethod = "reject"
+	// SettlementDelegate leaves the tracked delivery to generation closure/redelivery.
+	SettlementDelegate SettlementMethod = "delegate"
 )
 
 // Settlement is a handler's explicit request for one delivery. Delegate leaves
 // the delivery unsettled until the consumer drains, closes, or loses its
 // connection.
 type Settlement struct {
-	Method  SettlementMethod
+	// Method selects ACK, NACK, Reject or lifecycle delegation; zero is invalid.
+	Method SettlementMethod
+	// Requeue requests broker redelivery only with NACK/Reject, then is reduced by
+	// ConsumerConfig.MaxRequeues and observed delivery state.
 	Requeue bool
 }
 
@@ -49,6 +56,11 @@ func (settlement Settlement) Validate() error {
 	}
 }
 
+// RabbitMQ 4.3 acquired counts cover returns even when NACK does not increment
+// the failed-delivery count. Quorum Reject can use the latter if acquired count
+// is absent; classic/NACK fallback refuses an already-redelivered message. A cap
+// only clears Requeue; it does not replace the method or publish another message.
+// See TestSettlementPolicyPreventsUnboundedRequeue and DEC-004.
 func boundedSettlement(delivery Delivery, requested Settlement, config ConsumerConfig) Settlement {
 	if !requested.Requeue {
 		return requested

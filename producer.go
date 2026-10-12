@@ -12,14 +12,21 @@ import (
 )
 
 const (
+	// MaxOutstandingConfirms caps admitted active publications and retained confirm state.
 	MaxOutstandingConfirms = 4096
-	MaxPublishBatchSize    = 1024
+	// MaxPublishBatchSize caps the count prevalidated by one sequential batch call.
+	MaxPublishBatchSize = 1024
 )
 
 // ProducerConfig bounds synchronous producer work and confirmation state.
 type ProducerConfig struct {
-	Limits         Limits
+	// Limits supplies explicit, caller-reduced message bounds; zero limits are invalid.
+	Limits Limits
+	// MaxOutstanding bounds admitted active calls/async workers and correlations, in
+	// 1..MaxOutstandingConfirms; a full window rejects rather than waits.
 	MaxOutstanding int
+	// PublishTimeout is positive and at most two minutes; it bounds the admitted
+	// transmission/confirmation interval and the shared shutdown drain budget.
 	PublishTimeout time.Duration
 }
 
@@ -87,7 +94,9 @@ func (mutex *contextMutex) Unlock() { mutex.token <- struct{}{} }
 // Producer owns one active confirm-enabled AMQP generation and never creates consumers.
 // Publish is safe for concurrent use. Shutdown prevents new work, drains
 // bounded active calls, cancels recovery, and then releases the channel and
-// connection resource.
+// connection resource. Its zero value is unusable; obtain a resource through
+// OpenProducer. Shared input buffers must not be mutated while validation/copy
+// reads them. Reconnects do not automatically replay failed/ambiguous work.
 type Producer struct {
 	config            ProducerConfig
 	session           string
@@ -221,7 +230,13 @@ func deadlineFor(ctx context.Context, fallback time.Duration) time.Time {
 }
 
 // Publish sends one publication and waits for its exact mandatory-return and
-// confirmation outcome. A timeout after transmission is always ambiguous.
+// confirmation outcome. A previously observed definitive result wins over a
+// later cancellation/error; otherwise a post-transmission timeout is ambiguous.
+// Admission is nonblocking and bounded, then mutable publication data is copied.
+// The context and PublishTimeout bound cooperative transmission/outcome waiting,
+// not proof of broker absence. Non-mandatory confirmation can include unroutable
+// drops and does not prove consumer processing. See DEC-002/003 and
+// TestProducerPreservesDefinitiveOutcomeObservedBeforePublishError.
 func (producer *Producer) Publish(ctx context.Context, publication Publication) (PublishResult, error) {
 	if !contextProvided(ctx) {
 		return PublishResult{State: PublishNotSent}, ErrContextRequired
@@ -241,7 +256,9 @@ func (producer *Producer) Publish(ctx context.Context, publication Publication) 
 // exactly one terminal outcome. Its caller context and PublishTimeout bound the
 // total interval from admission through transmission and confirmation; expiry
 // before transmission reports PublishNotSent. Admission failures do not create
-// goroutines.
+// goroutines. A successful admission copies mutable publication data before
+// returning; the one-element buffered result channel is package-closed and need
+// not be drained to let its worker finish. Do not close it yourself.
 func (producer *Producer) PublishAsync(ctx context.Context, publication Publication) (<-chan PublishOutcome, error) {
 	if !contextProvided(ctx) {
 		return nil, ErrContextRequired
@@ -297,6 +314,9 @@ func expirationPresent(expiration *time.Duration) bool {
 
 // PublishBatch validates the complete bounded batch before publishing each
 // item. Outcomes preserve input order; the batch is not an atomic broker unit.
+// It publishes sequentially and continues after per-item failures, returning nil
+// top-level error once prevalidation succeeds. Inspect each outcome. It does not
+// snapshot the entire batch up front; keep all inputs stable until it returns.
 func (producer *Producer) PublishBatch(ctx context.Context, publications []Publication) ([]PublishOutcome, error) {
 	if ctx == nil {
 		return nil, ErrContextRequired
@@ -353,6 +373,9 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 	resource := producer.resource
 	generationClose := producer.generationClose
 	failure := producer.failure
+	// Serialize sequence reservation and the client send within one generation.
+	// The bounded, context-aware lock wait prevents an admitted caller from
+	// borrowing a sequence/channel that recovery or shutdown has replaced.
 	sequence := channel.GetNextPublishSeqNo()
 	token := producer.session + "/" + strconv.FormatUint(sequence, 10)
 	attempt, err := tracker.register(sequence, token, publication.Exchange, publication.RoutingKey)
@@ -421,6 +444,10 @@ func (producer *Producer) publishAdmitted(ctx context.Context, publication Publi
 	return producer.waitForOutcome(publishContext, tracker, attempt)
 }
 
+// A client error matching the cancelled context is classified as preflight.
+// Implementations must not use that error shape after possible transmission;
+// other send failures remain ambiguous and an earlier tracker result can win.
+// See TestProducerClassifiesPreflightAndTransmissionErrors.
 func isPreflightCancellation(err, contextErr error) bool {
 	return contextErr != nil && errors.Is(err, contextErr)
 }
@@ -682,6 +709,9 @@ func (producer *Producer) runGenerationWith(
 			if !open {
 				return true
 			}
+			// RabbitMQ 4.3 can return an unroutable mandatory publication before
+			// acknowledging processing. Drain pending returns before completing its
+			// confirm, or a positive ACK can falsely report routing success (DEC-002).
 			if !drainReturns(tracker, returns) {
 				return true
 			}
@@ -806,7 +836,10 @@ func sanitizedReturnReason(reason string) string {
 // Each caller waits only for its own context; cleanup continues after a caller
 // returns early. Cancellation or deadline expiry from any caller accelerates
 // the shared cleanup by forcing the owned connection closed, making any
-// still-active publication ambiguous.
+// still-active publication ambiguous. A returned context error does not prove
+// cleanup finished; a later call can await the shared cleanup result. Normal
+// completion closes event streams, but arbitrary blocking native cleanup cannot
+// be forcibly interrupted by a Go context alone.
 func (producer *Producer) Shutdown(ctx context.Context) error {
 	if !contextProvided(ctx) {
 		return ErrContextRequired
@@ -864,12 +897,15 @@ func (producer *Producer) finishShutdown(deadline time.Time) {
 }
 
 // Close is retained for compatibility.
+//
 // Deprecated: use Shutdown.
 func (producer *Producer) Close(ctx context.Context) error { return producer.Shutdown(ctx) }
 
 // Observations returns the bounded best-effort producer event stream. The
 // stream closes after Shutdown completes; terminal recovery alone does not release
-// caller-owned observation consumption.
+// caller-owned observation consumption. The same channel is returned each time;
+// multiple readers divide events rather than receiving independent broadcasts.
+// It is lossy/nonblocking with terminal tail-drop reporting; never close it.
 func (producer *Producer) Observations() <-chan Observation {
 	return producer.observations.channel
 }

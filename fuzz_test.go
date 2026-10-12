@@ -10,6 +10,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// FuzzPublicationValidation explores bounded property/header variants; known error classes
+// and deterministic validation are the oracle, not successful broker routing.
 func FuzzPublicationValidation(f *testing.F) {
 	f.Add(uint16(6), uint16(12), uint16(7), uint16(8), uint8(0), uint8(HeaderString), uint8(DeliveryPersistent))
 	f.Add(uint16(33), uint16(33), uint16(65), uint16(33), uint8(7), uint8(0), uint8(0))
@@ -44,6 +46,8 @@ func FuzzPublicationValidation(f *testing.F) {
 	})
 }
 
+// FuzzDeliveryConversion explores already-decoded native AMQP metadata; accepted
+// output must obey wrapper bounds and own payload bytes, not prove wire admission.
 func FuzzDeliveryConversion(f *testing.F) {
 	f.Add(uint16(7), uint16(5), uint8(2), uint8(1))
 	f.Add(uint16(80), uint16(80), uint8(5), uint8(31))
@@ -82,6 +86,8 @@ func FuzzDeliveryConversion(f *testing.F) {
 	})
 }
 
+// FuzzPublishTrackerCorrelation explores exact/foreign/late callback identities;
+// only the registered sequence/token may complete once, with return precedence.
 func FuzzPublishTrackerCorrelation(f *testing.F) {
 	f.Add(uint64(1), uint64(7), true, true)
 	f.Add(^uint64(0), uint64(0), false, false)
@@ -120,6 +126,8 @@ func FuzzPublishTrackerCorrelation(f *testing.F) {
 	})
 }
 
+// FuzzTopologyValidation explores bounded graph/policy variants and deterministic
+// error classes; it does not declare or verify live RabbitMQ topology.
 func FuzzTopologyValidation(f *testing.F) {
 	f.Add(uint8(1), uint8(1), uint16(0), uint8(0), uint8(0))
 	f.Add(uint8(129), uint8(129), uint16(513), uint8(7), uint8(4))

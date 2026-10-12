@@ -9,11 +9,16 @@ import (
 )
 
 const (
-	MaxConsumerPrefetch    = 4096
+	// MaxConsumerPrefetch caps per-consumer unsettled delivery QoS.
+	MaxConsumerPrefetch = 4096
+	// MaxConsumerConcurrency caps concurrent handler workers.
 	MaxConsumerConcurrency = 256
-	MaxConsumerRequeues    = 100
-	MaxDeathRecords        = 128
-	MaxDeathRoutingKeys    = 32
+	// MaxConsumerRequeues caps configured local requeue policy, not broker-wide attempts.
+	MaxConsumerRequeues = 100
+	// MaxDeathRecords caps retained x-death records per delivery.
+	MaxDeathRecords = 128
+	// MaxDeathRoutingKeys caps routing keys retained in each x-death record.
+	MaxDeathRoutingKeys = 32
 )
 
 const (
@@ -44,9 +49,12 @@ func reservedDeliveryMetadataHeader(key string) bool {
 // declares and consumes it on the same connection so RabbitMQ can retain the
 // exclusive queue for exactly that generation.
 type TransientQueue struct {
-	Exchange   Exchange
+	// Exchange is an existing exchange checked passively before transient queue setup.
+	Exchange Exchange
+	// RoutingKey and Arguments follow the exchange-specific binding policy.
 	RoutingKey string
-	Arguments  []Header
+	// Arguments contains bounded headers-exchange criteria, copied during opening.
+	Arguments []Header
 }
 
 // QueueReference identifies either an existing operator-owned queue or an
@@ -54,10 +62,16 @@ type TransientQueue struct {
 // declaration intent for local policy validation; callers use passive topology
 // verification when they need broker evidence for a named queue.
 type QueueReference struct {
-	Name                 string
-	Type                 QueueType
+	// Name is the existing named queue identity, empty only with Transient.
+	Name string
+	// Type is explicitly QueueClassic or QueueQuorum, not inferred from the broker.
+	Type QueueType
+	// SingleActiveConsumer asserts expected declaration intent for local exclusivity checks,
+	// not verified named-queue topology.
 	SingleActiveConsumer bool
-	Transient            *TransientQueue
+	// Transient opts into one server-named exclusive classic queue per generation.
+	// Recovery creates a new empty queue; lost-generation backlog is not recovered.
+	Transient *TransientQueue
 }
 
 // Validate rejects missing queue identities and unsupported queue types.
@@ -97,18 +111,32 @@ func (reference QueueReference) validate(limits Limits) error {
 // combined with single-active-consumer topology. HandlerTimeout also bounds
 // settlement and supplies the shutdown fallback; handlers must observe their
 // context for graceful draining. MaxRequeues uses RabbitMQ 4.3's quorum
-// acquired count when available and otherwise permits at most one redelivery.
+// acquired count first, then the failed-delivery count for quorum Reject when
+// available. Otherwise it permits only an initial non-redelivered request.
 type ConsumerConfig struct {
-	Limits         Limits
-	Queue          QueueReference
-	Name           string
-	Priority       *int32
-	Exclusive      bool
-	Prefetch       int
-	Concurrency    int
+	// Limits supplies explicit message/identity/metadata bounds.
+	Limits Limits
+	// Queue selects a named operator-owned queue or client-owned transient generation.
+	Queue QueueReference
+	// Name is a required bounded consumer tag, preserved across recovery.
+	Name string
+	// Priority is optional signed x-priority; nil omits it and explicit zero is emitted.
+	Priority *int32
+	// Exclusive requests classic-only consumer exclusivity, incompatible with SAC intent.
+	Exclusive bool
+	// Prefetch is 1..MaxConsumerPrefetch for per-consumer manual unsettled delivery QoS.
+	Prefetch int
+	// Concurrency is 1..MaxConsumerConcurrency and at most Prefetch, with concurrent handlers.
+	Concurrency int
+	// HandlerTimeout is positive and at most two minutes, used for cooperative handlers,
+	// settlement/setup waits and shared shutdown fallback, not callback preemption.
 	HandlerTimeout time.Duration
-	MaxRequeues    uint32
-	Failure        Settlement
+	// MaxRequeues is at most MaxConsumerRequeues; zero clears every requeue request.
+	// It bounds observed broker state, not application-side republishing.
+	MaxRequeues uint32
+	// Failure is NACK or Reject policy used after handler error, expired context or
+	// invalid settlement. It cannot ACK or Delegate; its requeue flag is also bounded.
+	Failure Settlement
 }
 
 // Validate rejects unbounded consumption and unsafe automatic failure outcomes.
@@ -145,42 +173,76 @@ func ownConsumerConfig(config ConsumerConfig) ConsumerConfig {
 
 // Death preserves one bounded RabbitMQ x-death record without exposing a raw field table.
 type Death struct {
-	Count              uint64
-	Reason             string
-	Queue              string
-	Exchange           string
-	RoutingKeys        []string
-	Time               time.Time
+	// Count is the nonnegative broker dead-letter count, not a handler attempt count.
+	Count uint64
+	// Reason is bounded broker reason text, not an authenticated application decision.
+	Reason string
+	// Queue is the bounded queue identity where dead lettering occurred.
+	Queue string
+	// Exchange is the bounded dead-letter source exchange and may be empty.
+	Exchange string
+	// RoutingKeys is an owned bounded list preserving empty routing keys and broker order.
+	RoutingKeys []string
+	// Time is the nonnegative broker timestamp, not a package observation clock.
+	Time time.Time
+	// OriginalExpiration preserves omitted versus explicit-zero original TTL.
 	OriginalExpiration *time.Duration
 }
 
 // Delivery is an owned, bounded AMQP delivery snapshot. Delivery tags and the
-// underlying client delivery never cross the public API boundary.
+// underlying client delivery never cross the public API boundary. The native
+// client has already decoded/allocated it; wrapper limits govern retained copies,
+// not hostile wire allocation. Copies share their settlement result and mutable
+// fields, so ownership does not mean concurrent mutation safety. Handlers must
+// leave acquired/delivery counter pointees unchanged for the observed-state
+// requeue bound; the consumer reads the shared values after return. See DEC-001/004.
 type Delivery struct {
-	Body            []byte
-	Headers         []Header
-	MessageID       string
-	CorrelationID   string
-	ContentType     string
+	// Body is copied opaque payload owned by this delivery; copies of Delivery alias it.
+	Body []byte
+	// Headers is a sorted, copied application-header subset, excluding reserved metadata.
+	Headers []Header
+	// MessageID is optional bounded broker message identity, not deduplicated by the package.
+	MessageID string
+	// CorrelationID is optional application correlation, not a provided RPC lifecycle.
+	CorrelationID string
+	// ContentType is descriptive metadata without body validation.
+	ContentType string
+	// ContentEncoding is descriptive metadata without decoding or decompression.
 	ContentEncoding string
-	ReplyTo         string
-	Type            string
-	UserID          string
-	AppID           string
-	Timestamp       time.Time
+	// ReplyTo is optional application-owned reply routing metadata.
+	ReplyTo string
+	// Type is bounded application type metadata.
+	Type string
+	// UserID is bounded broker property text; wrapper conversion does not authorize it.
+	UserID string
+	// AppID is bounded publisher property text, not wrapper-verified identity.
+	AppID string
+	// Timestamp is the broker property, with zero allowed; conversion does not normalize it.
+	Timestamp time.Time
 	// Expiration distinguishes an omitted TTL from RabbitMQ's explicit
 	// zero-duration immediate-expiration value.
-	Expiration    *time.Duration
-	Priority      uint8
-	DeliveryMode  DeliveryMode
-	Consumer      string
-	Exchange      string
-	RoutingKey    string
-	Redelivered   bool
+	Expiration *time.Duration
+	// Priority is the AMQP octet; broker queue-type policy controls its effect.
+	Priority uint8
+	// DeliveryMode is normalized to transient for native zero/transient and persistent for two.
+	DeliveryMode DeliveryMode
+	// Consumer is the bounded broker consumer tag, without exposing the delivery tag.
+	Consumer string
+	// Exchange is the bounded broker routing exchange, which can be empty.
+	Exchange string
+	// RoutingKey is the bounded broker route, preserving native empty keys.
+	RoutingKey string
+	// Redelivered is the broker flag, not proof of a prior handler invocation.
+	Redelivered bool
+	// AcquiredCount is optional nonnegative RabbitMQ 4.3 assignment count, preferred for
+	// local quorum requeue bounds.
 	AcquiredCount *uint64
+	// DeliveryCount is optional nonnegative failed-delivery count, distinct from assignments.
 	DeliveryCount *uint64
-	Deaths        []Death
-	settlement    *deliverySettlement
+	// Deaths is owned bounded x-death history. Copies of Delivery share this slice
+	// and pointer fields; synchronize any mutations across copies.
+	Deaths     []Death
+	settlement *deliverySettlement
 }
 
 func deliveryFromAMQP(source amqp.Delivery, config ConsumerConfig) (Delivery, error) {

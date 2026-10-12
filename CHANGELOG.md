@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- Clarify publish admission/cancellation and definitive outcomes, local settlement
+  send results, cooperative callback deadlines, retained credential/broker text,
+  requeue counters and passive-topology limits without changing runtime policy.
+- Reconcile current AMQP decision descriptions and public names with those source
+  contracts, preserving historical decision identities and pinned evidence.
+
 ## [1.1.1] - 2026-10-08
 
 ### Fixed

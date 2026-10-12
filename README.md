@@ -135,8 +135,8 @@ func main() {
 - Mandatory returns must be reconciled with confirms before acceptance.
 - Connection loss can redeliver a message while its earlier handler invocation
   is still completing. Applications must tolerate concurrent duplicates.
-- Manual settlement provides at-least-once processing; applications remain
-  responsible for idempotency.
+- Manual settlement permits redelivery after uncertain acknowledgement;
+  applications remain responsible for idempotency and explicit drop policies.
 - `Shutdown(ctx)` is the preferred producer and consumer lifecycle method. It
   is repeatable and safe for concurrent use; each caller is bounded by its own
   context while the one package-owned cleanup continues. The deprecated
@@ -149,7 +149,8 @@ func main() {
   with a non-nil, bounded context. A shared provider must be concurrency-safe,
   return on cancellation, avoid re-entering the producer or consumer being
   opened, and must not panic. The package zeroes its returned password snapshot
-  after each attempt but cannot zero aliases retained by the provider. Direct
+  after each attempt, including same-buffer aliases, but cannot erase other
+  copies, native SASL strings or retained TLS material. Direct
   provider callers own their snapshots and receive callback errors unchanged.
 - The package does not implement RabbitMQ Streams, application schemas,
   exactly-once processing, an outbox, or a generic messaging interface.

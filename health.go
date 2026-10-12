@@ -5,8 +5,11 @@ package rabbitmqqueue
 type Liveness string
 
 const (
-	LivenessLive    Liveness = "live"
-	LivenessFailed  Liveness = "failed"
+	// LivenessLive means the resource supervisor remains live, including recovery.
+	LivenessLive Liveness = "live"
+	// LivenessFailed means terminal resource failure, not a process health probe.
+	LivenessFailed Liveness = "failed"
+	// LivenessStopped means the resource lifecycle stopped normally.
 	LivenessStopped Liveness = "stopped"
 )
 
@@ -14,7 +17,9 @@ const (
 type Readiness string
 
 const (
-	ReadinessReady    Readiness = "ready"
+	// ReadinessReady is local advisory readiness, not an admission reservation.
+	ReadinessReady Readiness = "ready"
+	// ReadinessNotReady means local lifecycle, pause, recovery or blocking denies readiness.
 	ReadinessNotReady Readiness = "not_ready"
 )
 
@@ -23,11 +28,16 @@ const (
 type DependencyHealth string
 
 const (
-	DependencyAvailable   DependencyHealth = "available"
-	DependencyBlocked     DependencyHealth = "blocked"
-	DependencyRecovering  DependencyHealth = "recovering"
+	// DependencyAvailable is the current local connected state, not a fresh broker probe.
+	DependencyAvailable DependencyHealth = "available"
+	// DependencyBlocked means RabbitMQ reported producer flow blocking.
+	DependencyBlocked DependencyHealth = "blocked"
+	// DependencyRecovering means bounded generation replacement is underway.
+	DependencyRecovering DependencyHealth = "recovering"
+	// DependencyUnavailable means local resource failure/exhausted recovery.
 	DependencyUnavailable DependencyHealth = "unavailable"
-	DependencyUnknown     DependencyHealth = "unknown"
+	// DependencyUnknown means the lifecycle no longer reports a connected dependency.
+	DependencyUnknown DependencyHealth = "unknown"
 )
 
 // Liveness reports producer supervision state without probing RabbitMQ.
@@ -43,7 +53,8 @@ func (producer *Producer) Liveness() Liveness {
 	return LivenessLive
 }
 
-// Readiness reports whether the producer currently admits publications.
+// Readiness reports advisory local lifecycle/recovery/blocking state, without
+// probing RabbitMQ or reserving capacity; a full window can still reject work.
 func (producer *Producer) Readiness() Readiness {
 	producer.stateMu.Lock()
 	defer producer.stateMu.Unlock()

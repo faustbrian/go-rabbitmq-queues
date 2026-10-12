@@ -3,7 +3,7 @@
 Production clients use passive topology verification. Active declarations are
 available only behind the explicit development permit and are not a production
 topology-management mechanism. AMQP 0-9-1 has no passive binding inspection,
-so passive application checks verify exchange and queue equivalence while the
+so passive application checks request broker existence/response checks while the
 infrastructure control plane verifies bindings. Mandatory publishing still
 reports routing drift as a returned publication. Development declarations are
 ordered, non-transactional AMQP operations and can leave a partial test topology
@@ -25,14 +25,16 @@ internal transfer.
 - Mandatory returns must be reconciled with confirms before acceptance.
 - Mandatory-return route details come from the exact bounded publication
   registered for the correlated token. Broker-supplied route fields never
-  cross the public result boundary; reply text is sanitized before exposure.
+  cross the public result boundary; reply text is kept only within a 255-byte,
+  ASCII-control-free bound. That is not secret redaction; treat printable
+  broker text as untrusted diagnostics.
   A return without an active exact token makes outstanding work ambiguous and
   forces generation recovery instead of allowing a positive confirm to report
   acceptance.
 - Publications can name the expected direct, topic, fanout, or headers exchange
   kind so routing-key validation matches the exchange semantic. The kind is a
-  local policy assertion; passive topology verification proves the broker's
-  actual exchange declaration.
+  local policy assertion; passive topology requests the broker's checks; full
+  exchange properties require separate infrastructure evidence.
 - An empty publication exchange is accepted only with an explicit direct kind,
   representing RabbitMQ's predeclared default exchange. Queue targeting uses
   the queue name as its routing key; an omitted exchange is not inferred.
@@ -87,7 +89,8 @@ internal transfer.
   argument and uses RabbitMQ's zero default, while a pointer to zero preserves
   explicit-zero intent. Exclusive consumption is rejected for quorum queues and
   for queue references marked single-active-consumer. The reference records
-  expected topology; use passive topology verification for broker equivalence.
+  expected topology; use separate broker/infrastructure evidence for full
+  declaration properties.
 - A consumer with `QueueReference.Transient` passively verifies the referenced
   exchange and declares, binds, and consumes one non-durable, auto-delete,
   exclusive, server-named classic queue on its owned connection. Recovery
@@ -112,20 +115,24 @@ internal transfer.
   instead of claiming that every received delivery settled.
 - Connection loss can redeliver a message while its earlier handler invocation
   is still completing. Applications must tolerate concurrent duplicates.
-- Manual settlement provides at-least-once processing; applications remain
-  responsible for idempotency.
+- Manual settlement permits redelivery after an uncertain ACK, so applications
+  need idempotency. Explicit reject/drop/dead-letter outcomes and transient queue
+  loss remain possible; no universal successful-processing guarantee is provided.
 - Deliveries preserve RabbitMQ 4.3's bounded `x-acquired-count` and
   `x-delivery-count` as separate optional unsigned counters. Assignment to a
   consumer does not prove that the handler observed the message, and only the
   failed-delivery counter participates in the quorum delivery limit. The
   package applies `MaxRequeues` to the acquired count when available, so returns
   caused by NACK, reject, or connection loss all consume the local retry bound.
-  Without that quorum counter, the fallback permits at most one redelivery.
+  Without acquired count, quorum Reject can use the failed-delivery count.
+  The remaining fallback permits only an initial non-redelivered request;
+  reaching a bound clears Requeue without changing the settlement method.
 - Publications and deliveries preserve bounded `reply-to` and correlation
   metadata for application-owned request/reply flows. The package does not own
   reply queues or provide an RPC lifecycle abstraction.
-- Handler, settlement, and shutdown work is bounded by the configured handler
-  timeout. Once that total cleanup budget expires, shutdown reports the
+- Handler contexts and settlement/shutdown waits use the configured handler
+  timeout; arbitrary application callback execution is not forcibly bounded.
+  Once that total cleanup budget expires, shutdown reports the
   deadline and resource closure continues without extending the bound to wait
   for arbitrary handler code. Handlers must observe cancellation for graceful
   draining and prompt goroutine completion.
@@ -153,8 +160,10 @@ internal transfer.
   must return on cancellation, must not depend on
   re-entry into the resource being opened, and must not panic. Returned
   password bytes are zeroed after a package-owned connection attempt, while
-  direct callers and provider-retained aliases remain caller-owned. Open and
-  recovery paths sanitize callback errors; direct `Credentials` calls return
+  the same-buffer aliases observe that clearing. Other copies, native SASL
+  strings and retained TLS material are not guaranteed erased. Direct callers
+  own clearing of their callback results. Open and recovery paths sanitize
+  callback errors; direct `Credentials` calls return
   the provider's error unchanged.
 - `Queue.DeliveryLimit` models RabbitMQ 4.3's quorum-only failed-redelivery
   bound. Omission leaves the broker policy or default of 20 effective, while an
@@ -186,3 +195,21 @@ internal transfer.
   not automatically publish replacement messages.
 - The package does not implement RabbitMQ Streams, application schemas,
   exactly-once processing, an outbox, or a generic messaging interface.
+
+`Delivery.AwaitSettlement` reports the local ACK/NACK/Reject call result, not a
+broker acknowledgement of that call. It must be awaited outside the handler
+being settled. Handler errors/timeouts/invalid requests select the configured
+failure policy; all requeue requests then undergo the same observed-state bound.
+
+The pinned [AMQP 0-9-1 XML authority](https://raw.githubusercontent.com/rabbitmq/amqp-0.9.1-spec/b8e975a762b8677263ebbbba1e70654b5263af81/xml/amqp0-9-1.xml)
+defines passive exchange/queue declaration as existence checks ignoring other
+flags except name/no-wait, while separately describing argument comparison.
+That cannot establish all type/durability/lifecycle properties or effective
+operator policy. Local fake RPC assertions prove supplied arguments, not full
+broker equivalence; use independent infrastructure evidence for those properties.
+
+Handlers must leave `AcquiredCount` and `DeliveryCount` pointees unchanged when
+relying on the observed-state requeue bound. A copied `Delivery` shares those
+pointers with the consumer envelope used after handler return; mutation changes
+the local decision. This is a trusted-handler contract, not tamper-proof broker
+metadata or protection against malicious application callbacks.

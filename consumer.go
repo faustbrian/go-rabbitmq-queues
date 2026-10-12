@@ -25,7 +25,15 @@ type consumerChannel interface {
 	Close() error
 }
 
-// DeliveryHandler processes one owned delivery and returns its explicit manual settlement.
+// DeliveryHandler processes one delivery and requests manual settlement after
+// returning. Invocations can run concurrently up to Concurrency and can overlap
+// redelivery after connection loss. Honor the supplied timeout/cancellation and
+// make effects idempotent. Panics are not contained and arbitrary blocking code
+// is not forcibly stopped. Error, expired context or invalid settlement selects
+// ConsumerConfig.Failure; the handler's error text is not exposed by Consumer.
+// Delivery buffers belong to this invocation; copied values still share them.
+// Treat AcquiredCount/DeliveryCount pointers as read-only: the consumer uses
+// those same values after return to decide whether requeue remains permitted.
 type DeliveryHandler func(context.Context, Delivery) (Settlement, error)
 
 type consumerGeneration struct {
@@ -52,7 +60,11 @@ type consumerEnvelope struct {
 
 // Consumer owns one active manual-acknowledgement generation and a bounded
 // worker pool. Runtime recovery replaces the complete connection/channel/
-// consumer generation before admitting more broker deliveries.
+// consumer generation before admitting more broker deliveries. Its zero value
+// is unusable. Opens borrow the handler but snapshot configuration; callers own
+// callback termination and Shutdown. Pause, Resume, Drain, Shutdown and health
+// accessors synchronize their state, but health views are advisory snapshots,
+// not atomic broker readiness checks or cross-method transactions.
 type Consumer struct {
 	config   ConsumerConfig
 	handler  DeliveryHandler
@@ -519,6 +531,9 @@ func (consumer *Consumer) observePendingCancellation(cancellations <-chan string
 	}
 }
 
+// Keep the envelope's generation for settlement even after reconnect. Applying
+// an old delivery tag to the replacement channel could acknowledge unrelated
+// work. Handler context bounds cooperation, not callback execution itself.
 func (consumer *Consumer) handle(envelope consumerEnvelope) {
 	handlerContext, cancel := context.WithTimeout(consumer.lifetimeContext, consumer.config.HandlerTimeout)
 	requested, err := consumer.handler(handlerContext, envelope.delivery)
@@ -533,6 +548,9 @@ func (consumer *Consumer) handle(envelope consumerEnvelope) {
 		envelope.delivery.completeSettlement(ErrSettlementResultUnavailable)
 		return
 	}
+	// Counter pointers are also visible to the trusted handler through its
+	// Delivery copy. Mutating them changes this decision; ownership is not
+	// tamper-proof broker metadata or an untrusted-callback retry bound.
 	requested = boundedSettlement(envelope.delivery, requested, consumer.config)
 	settlementErr := consumer.settle(envelope.generation, envelope.tag, requested)
 	settlementResult := settlementErr
@@ -557,6 +575,9 @@ func consumerOperationFailed(err error) bool {
 	return err != nil
 }
 
+// Consumer acknowledgements are one-way AMQP methods, not publisher confirms.
+// A nil client-call error means local send success; channel loss can still
+// redeliver. AwaitSettlement must not promise a broker ACK-of-ACK (DEC-004).
 func (consumer *Consumer) settle(generation *consumerGeneration, tag uint64, settlement Settlement) error {
 	settled := make(chan error, 1)
 	go func() { settled <- applySettlement(generation.channel, tag, settlement) }()
@@ -704,7 +725,10 @@ func (consumer *Consumer) currentGeneration() *consumerGeneration {
 	return consumer.generation
 }
 
-// Done closes after broker intake stops and all admitted handlers return.
+// Done closes after broker intake stops and all admitted handlers return, with
+// the observation stream closed. It can remain open for an uncooperative
+// handler, and a healthy Drain can finish without closing the connection.
+// Shutdown is still required to release retained owned resources.
 func (consumer *Consumer) Done() <-chan struct{} { return consumer.done }
 
 // Err reports a sanitized unexpected terminal consumer failure.
@@ -767,6 +791,9 @@ func (consumer *Consumer) signalAdmissionChanged() {
 // Drain cancels broker intake and waits for every delivery already received
 // from the broker. It leaves the healthy owned connection open after complete
 // settlement; delegated work or a drain deadline closes the connection.
+// With no caller deadline, HandlerTimeout supplies a fallback. It permanently
+// stops intake (Resume cannot restart a drained resource). Callback termination
+// remains cooperative; a context error does not mean every handler stopped.
 func (consumer *Consumer) Drain(ctx context.Context) error {
 	if !contextProvided(ctx) {
 		return ErrContextRequired
@@ -805,7 +832,9 @@ func consumerCompletedDrainResult(ctx context.Context, drainErr error) error {
 }
 
 // Observations returns the bounded best-effort consumer event stream. It closes
-// after broker intake and all admitted handlers stop.
+// after broker intake and all admitted handlers stop. Repeated calls return the
+// same lossy, nonblocking channel; multiple readers divide events rather than
+// receiving broadcasts. The package alone closes it, including tail-loss data.
 func (consumer *Consumer) Observations() <-chan Observation {
 	return consumer.observations.channel
 }
@@ -850,7 +879,9 @@ func consumerGenerationCanCancel(closed bool) bool {
 // redelivery and make an overlapping Drain report ErrConsumerUnavailable. It is
 // safe to call repeatedly or concurrently. Each caller waits only for its own
 // context; cleanup continues after a caller returns early. If cancellation or
-// the internal drain deadline fails, resources are still closed for redelivery.
+// the internal drain deadline fails, resource closure is still attempted for
+// redelivery. Callers can return before arbitrary handler/cleanup code finishes;
+// neither this method nor a Go context can forcibly terminate caller code.
 func (consumer *Consumer) Shutdown(ctx context.Context) error {
 	if !contextProvided(ctx) {
 		return ErrContextRequired
@@ -898,6 +929,7 @@ func (consumer *Consumer) finishShutdown(deadline time.Time) {
 }
 
 // Close is retained for compatibility.
+//
 // Deprecated: use Shutdown.
 func (consumer *Consumer) Close(ctx context.Context) error { return consumer.Shutdown(ctx) }
 

@@ -45,10 +45,13 @@ type retryableTopologyOperationError struct {
 	cause error
 }
 
+// Error formats only the stable topology classification, not broker text.
 func (err *retryableTopologyOperationError) Error() string {
 	return ErrTopologyUnavailable.Error()
 }
 
+// Unwrap exposes topology classification and any retained context cancellation;
+// raw transport/broker causes are discarded by topologyOperationError.
 func (err *retryableTopologyOperationError) Unwrap() []error {
 	if err.cause == nil {
 		return []error{ErrTopologyUnavailable}
@@ -56,11 +59,19 @@ func (err *retryableTopologyOperationError) Unwrap() []error {
 	return []error{ErrTopologyUnavailable, err.cause}
 }
 
-// ApplyTopology passively verifies operator-owned exchange and queue
-// equivalence, or performs explicitly permitted development-only declarations.
+// ApplyTopology requests passive broker checks for supplied exchange/queue
+// declarations, or explicitly permitted development declarations in input order.
 // AMQP cannot passively inspect bindings; Topology.Validate rejects passive
 // binding requests rather than mutating production topology. Connection-scoped
 // server-named queues are declared only by a client-owned transient consumer.
+// Configuration/topology slices and pointers are copied after validation; keep
+// inputs stable until then. Each bounded attempt opens and closes an independent
+// connection. Passive transport failures can retry on another endpoint; active
+// operation failures are not replayed. Active mutations are nontransactional:
+// errors (including cleanup failure after success) can follow partial or complete
+// declarations, but no partial result is returned or rollback attempted.
+// Passive responses are broker evidence, not independent binding/effective-
+// policy/authorization verification. See DEC-005 and topology_apply_test.go.
 func ApplyTopology(
 	ctx context.Context,
 	connection ConnectionConfig,

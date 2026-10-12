@@ -15,12 +15,16 @@ func newDeliverySettlement() *deliverySettlement {
 	return &deliverySettlement{done: make(chan struct{})}
 }
 
-// AwaitSettlement waits for the broker result of the settlement selected by
+// AwaitSettlement waits for the local client settlement-send result selected by
 // the delivery handler. The handler must first return its Settlement; waiting
 // synchronously inside that handler cannot complete. A separate goroutine may
 // wait on a copied Delivery while the handler returns. Copies share the same
 // bounded result. The method returns ErrSettlementResultUnavailable for
 // deliveries not created by a Consumer or whose handler delegated settlement.
+// Nil means the AMQP client ACK/NACK/Reject call succeeded, not that the broker
+// confirmed receipt or that application effects are durable. Failures are
+// sanitized as ErrConsumerUnavailable; context expiry only stops this wait.
+// A completed result is preferred over concurrent cancellation.
 func (delivery Delivery) AwaitSettlement(ctx context.Context) error {
 	if ctx == nil {
 		return ErrContextRequired

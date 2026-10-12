@@ -63,7 +63,13 @@ func (connection *nativeAMQPConnection) Channel() (producerChannel, error) {
 
 // OpenProducer establishes an independent producer-only AMQP connection and
 // confirm-enabled channel. Startup and bounded runtime recovery attempts rotate
-// endpoints and credentials. Exhausted runtime recovery is terminal.
+// endpoints and credentials. Exhausted runtime recovery is terminal. Validated
+// endpoint/TLS slices are copied; the provider remains borrowed for future calls.
+// The supplied nonnil context bounds startup only, not the returned lifetime;
+// callers must Shutdown even if they cancel that context later. TLS uses system
+// plus supplied roots, hostname verification and a TLS 1.2 minimum. Credential,
+// dial and setup failures are sanitized, with context classification where kept.
+// Caller callbacks must cooperate and not panic; there is no automatic replay.
 func OpenProducer(
 	ctx context.Context,
 	connection ConnectionConfig,

@@ -24,6 +24,9 @@ func buildAMQPClientConfig(
 	if !ok {
 		return "", amqp.Config{}, time.Time{}, ErrProducerUnavailable
 	}
+	// Never put credentials in the URI/error surface. PlainAuth necessarily
+	// converts password bytes to an immutable Go string; clearing the provider
+	// buffer cannot erase that native copy or other retained credential copies.
 	address := (&url.URL{
 		Scheme: "amqps",
 		Host:   net.JoinHostPort(endpoint.Host, strconv.Itoa(int(endpoint.Port))),

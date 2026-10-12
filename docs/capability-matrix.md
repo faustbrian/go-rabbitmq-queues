@@ -33,8 +33,8 @@ Important RabbitMQ 4.3 distinctions:
 - `Publication.ExchangeKind` records the locally expected exchange semantic.
   Direct and topic publications preserve any bounded routing key, including
   RabbitMQ's native empty key; fanout and headers publications require the
-  empty key. Passive topology verification remains the broker evidence for the
-  exchange's actual kind;
+  empty key. Passive responses do not independently establish the exchange's
+  kind/durability; verify full properties through infrastructure evidence;
 - RabbitMQ's predeclared default direct exchange is represented only by an
   empty `Publication.Exchange` paired with an explicit `ExchangeDirect` kind.
   Its routing key is the destination queue identity;
@@ -108,8 +108,9 @@ Important RabbitMQ 4.3 distinctions:
 | Infrastructure | Exchanges, queues, bindings, policies, TLS identities, users, permissions, cluster sizing |
 | Application | Payload schema, idempotency, business retries, outbox transaction, handler side effects |
 
-AMQP passive declarations compare exchange and queue identity and declaration
-arguments, closing the channel when the entity is missing or inequivalent. A
+Passive declarations request broker existence/response checks, not an exhaustive
+declaration-property audit. AMQP 0-9-1 passive fields ignore type/durability
+flags; full property equivalence and effective policy need separate evidence. A
 `RESOURCE_LOCKED` response during detached passive inspection proves that the
 name belongs to an exclusive queue on another connection and is classified as
 inequivalent topology. AMQP 0-9-1 provides no passive binding inspection

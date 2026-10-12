@@ -11,10 +11,16 @@ const (
 // Limits bounds untrusted message and topology-controlled allocation. Values
 // may be lowered from DefaultLimits but cannot raise the package safety caps.
 type Limits struct {
-	MaxPayloadBytes    int
-	MaxHeaderEntries   int
-	MaxHeaderBytes     int
-	MaxNameBytes       int
+	// MaxPayloadBytes bounds one opaque body; the package cap is 16 MiB.
+	MaxPayloadBytes int
+	// MaxHeaderEntries bounds application headers; the package cap is 128.
+	MaxHeaderEntries int
+	// MaxHeaderBytes bounds cumulative key/value data; the cap is 64 KiB.
+	// This is retained wrapper data, not the native AMQP decoder allocation.
+	MaxHeaderBytes int
+	// MaxNameBytes bounds message/consumer identities and properties; the cap is 255 bytes.
+	MaxNameBytes int
+	// MaxRoutingKeyBytes bounds a routing key; the cap is 255 bytes.
 	MaxRoutingKeyBytes int
 }
 
@@ -42,21 +48,32 @@ func (limits Limits) valid() bool {
 type HeaderKind uint8
 
 const (
+	// HeaderString selects an opaque string field-table value.
 	HeaderString HeaderKind = iota + 1
+	// HeaderBool selects a boolean field-table value.
 	HeaderBool
+	// HeaderInt64 selects a signed 64-bit field-table integer.
 	HeaderInt64
+	// HeaderBytes selects opaque byte-string field-table data.
 	HeaderBytes
 )
 
 // Header is one ordered AMQP application header. Nested tables and arrays are
 // intentionally excluded to keep allocation and interoperability bounded.
 type Header struct {
-	Key    string
-	Kind   HeaderKind
+	// Key is unique within a message and cannot use package/broker reserved keys.
+	Key string
+	// Kind selects the sole active value field; unused fields must be zero/nil.
+	Kind HeaderKind
+	// String contains opaque bounded string bytes for HeaderString, including controls.
 	String string
-	Bool   bool
-	Int64  int64
-	Bytes  []byte
+	// Bool contains the HeaderBool value.
+	Bool bool
+	// Int64 contains the HeaderInt64 value, including negative values.
+	Int64 int64
+	// Bytes contains opaque HeaderBytes data. Direct struct assignment borrows the slice;
+	// BytesHeader copies it, and publication admission later copies admitted bytes.
+	Bytes []byte
 }
 
 // StringHeader creates a string application header.
@@ -81,29 +98,43 @@ func BytesHeader(key string, value []byte) Header {
 
 // Message contains AMQP message properties and opaque payload bytes.
 type Message struct {
-	Body            []byte
-	MessageID       string
-	CorrelationID   string
-	ReplyTo         string
-	ContentType     string
+	// Body is opaque caller data, borrowed until publication validation/admission copy.
+	Body []byte
+	// MessageID is required for publication, bounded but not deduplicated or authenticated.
+	MessageID string
+	// CorrelationID is optional application correlation; no request/reply lifecycle is provided.
+	CorrelationID string
+	// ReplyTo is optional application-owned reply routing metadata, not a created queue.
+	ReplyTo string
+	// ContentType is bounded descriptive metadata; no body parsing or schema validation occurs.
+	ContentType string
+	// ContentEncoding is bounded descriptive metadata; no compression/decompression is performed.
 	ContentEncoding string
-	Type            string
-	AppID           string
+	// Type is optional bounded application type metadata.
+	Type string
+	// AppID is optional bounded application identity, not verified authorization.
+	AppID string
 	// Timestamp is either zero or a non-negative whole-second AMQP timestamp.
 	Timestamp time.Time
 	// Expiration distinguishes an omitted TTL from an explicit zero-duration
 	// TTL, which RabbitMQ interprets as immediate expiration when the message
 	// cannot be delivered directly.
 	Expiration *time.Duration
-	Priority   *uint16
-	Headers    []Header
+	// Priority distinguishes omission from an explicit value in 0..255 for validation.
+	// AMQP publication encodes omission and zero identically; queue support is external.
+	Priority *uint16
+	// Headers is ordered caller metadata validated for kinds, uniqueness and budgets.
+	// AMQP table ordering is not a wire contract.
+	Headers []Header
 }
 
 // DeliveryMode selects broker persistence intent.
 type DeliveryMode uint8
 
 const (
+	// DeliveryTransient requests transient AMQP delivery mode, without persistence intent.
 	DeliveryTransient DeliveryMode = iota + 1
+	// DeliveryPersistent requests persistent AMQP delivery mode, not exactly-once effects.
 	DeliveryPersistent
 )
 
@@ -117,13 +148,21 @@ type Publication struct {
 	// explicit direct or topic kind may use RabbitMQ's native empty key; fanout
 	// and headers publications must name their kind and use an empty key.
 	ExchangeKind ExchangeKind
-	RoutingKey   string
-	Mandatory    bool
+	// RoutingKey follows ExchangeKind policy; explicit direct/topic kinds allow empty keys.
+	RoutingKey string
+	// Mandatory requests a return for unroutable publications; false can confirm a drop.
+	Mandatory bool
+	// DeliveryMode expresses broker persistence intent, not application-effect durability.
 	DeliveryMode DeliveryMode
-	Message      Message
+	// Message is validated before admission and deep-copied only once admitted.
+	Message Message
 }
 
-// Validate bounds and validates publication routing, properties, and headers.
+// Validate checks explicit routing, required MessageID, property byte/control
+// limits, whole-second nonnegative timestamps, millisecond nonnegative expiration
+// and header kind/count/byte/uniqueness rules. It performs no I/O, body/schema
+// validation, UTF-8 normalization, authorization or broker topology check.
+// Caller-owned slices and pointer values must remain stable while it reads them.
 func (publication Publication) Validate(limits Limits) error {
 	if !limits.valid() {
 		return ErrInvalidBounds

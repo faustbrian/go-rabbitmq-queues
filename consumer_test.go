@@ -51,6 +51,8 @@ func TestConsumerConfiguresManualQOSAndAcknowledgesAfterHandler(t *testing.T) {
 	}
 }
 
+// The historical test name says broker result, but the fake proves only client
+// settlement-call completion; no broker ACK-of-ACK is modeled or asserted.
 func TestDeliveryAwaitSettlementReportsBrokerResult(t *testing.T) {
 	t.Parallel()
 

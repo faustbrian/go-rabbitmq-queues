@@ -25,7 +25,13 @@ type consumerRecovery struct {
 type consumerAMQPOpenFunc func(string, amqp.Config, time.Time) (consumerChannel, io.Closer, error)
 
 // OpenConsumer establishes an independent consumer-only AMQP connection,
-// applies bounded per-consumer QoS, and starts manual-settlement workers.
+// applies bounded per-consumer QoS, and starts manual-settlement workers. The
+// nonnil context bounds startup only; runtime cancellation belongs to Shutdown.
+// Configuration slices/pointers are copied after validation, but handler and
+// credential provider remain caller-owned callbacks. It neither calls
+// ApplyTopology nor verifies named-queue declaration intent; transient queues
+// alone are declared on the owned generation. No automatic acknowledgement,
+// handler-panic containment or duplicate-effect prevention is provided.
 func OpenConsumer(
 	ctx context.Context,
 	connection ConnectionConfig,

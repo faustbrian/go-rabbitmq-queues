@@ -7,6 +7,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// BenchmarkPublicationValidate measures in-process default-limit validation of one
+// fixed publication; it excludes broker I/O and has no throughput guarantee.
 func BenchmarkPublicationValidate(b *testing.B) {
 	publication := testPublication()
 	limits := DefaultLimits()
@@ -18,6 +20,8 @@ func BenchmarkPublicationValidate(b *testing.B) {
 	}
 }
 
+// BenchmarkDeliveryFromAMQP measures owned conversion of fixed native metadata;
+// compare the same header/body shape, not native wire decode or consumer work.
 func BenchmarkDeliveryFromAMQP(b *testing.B) {
 	delivery := testAMQPDelivery(1)
 	delivery.Headers = amqp.Table{
@@ -32,6 +36,8 @@ func BenchmarkDeliveryFromAMQP(b *testing.B) {
 	}
 }
 
+// BenchmarkAMQPPublishing measures property/header/body copying for one fixed
+// message; it does not send or await confirms.
 func BenchmarkAMQPPublishing(b *testing.B) {
 	message := testPublication().Message
 	b.ReportAllocs()
@@ -40,6 +46,9 @@ func BenchmarkAMQPPublishing(b *testing.B) {
 	}
 }
 
+// BenchmarkPublishTrackerRegisterConfirm excludes token construction and measures
+// one-at-a-time registration/positive completion using 4096 reusable identities;
+// it is not a concurrent broker-confirm latency benchmark.
 func BenchmarkPublishTrackerRegisterConfirm(b *testing.B) {
 	const tokens = 4096
 	values := make([]string, tokens)
