@@ -51,8 +51,8 @@ changes, using a disposable cache per bounded session:
 ```
 
 Deterministic tests execute fuzz seeds/corpus, not active fuzzing, and do not
-qualify live brokers. Install the public v2.1.3 binary archive for your platform
-from [go-library-tools releases](https://github.com/faustbrian/go-library-tools/releases/tag/v2.1.3),
+qualify live brokers. Install the public v2.4.0 binary archive for your platform
+from [go-library-tools releases](https://github.com/faustbrian/go-library-tools/releases/tag/v2.4.0),
 checking `checksums.txt` against `.golib.yaml` and the archive against that
 checksum set. Put the extracted `golib` binary on `PATH`, or select it through
 `GOLIB`; do not build Tools from source. CI uses this public release and checks
@@ -137,3 +137,12 @@ Follow the [repository structure policy](AGENTS.md#repository-structure). New
 modules require an explicit purpose, ownership boundary, dependency review,
 package catalog entry, full quality gates, documentation, changelog, license,
 security policy, compatibility plan, and release dry-run.
+
+## Source Documentation
+
+Install the checksum-pinned public verifier declared in `.golib.yaml`.
+`make source-docs-check` validates objective Go comment, marker, link and
+generated-producer structure; `make check`, `make check-full` and `make ci`
+require it before their existing checks. Shared CI runs the same strict
+contract and includes its result in Required. This is structural enforcement,
+not a substitute for source-truth review or behavioral verification.
