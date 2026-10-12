@@ -8,7 +8,7 @@
     "ext-mbstring": "*",
     "ext-openssl": "*",
     "ext-sockets": "*",
-    "php-amqplib/php-amqplib": "3.7.4"
+    "php-amqplib/php-amqplib": "3.7.5"
   },
   "config": {
     "allow-plugins": false,
