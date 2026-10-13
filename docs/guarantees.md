@@ -1,5 +1,7 @@
 # Guarantees and boundaries
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 Production clients use passive topology verification. Active declarations are
 available only behind the explicit development permit and are not a production
 topology-management mechanism. AMQP 0-9-1 has no passive binding inspection,
@@ -213,3 +215,6 @@ relying on the observed-state requeue bound. A copied `Delivery` shares those
 pointers with the consumer envelope used after handler return; mutation changes
 the local decision. This is a trusted-handler contract, not tamper-proof broker
 metadata or protection against malicious application callbacks.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

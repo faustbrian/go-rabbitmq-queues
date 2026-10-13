@@ -1,5 +1,7 @@
 # AMQP interoperability corpus
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 The version 1 corpus defines one language-neutral AMQP 0-9-1 message example.
 The JSON file is a transport-independent fixture envelope; it does not require
 applications to use JSON payloads. `body_base64` and byte-valued headers decode
@@ -90,3 +92,6 @@ required before Laravel adoption. No Laravel framework integration or adapter
 has been exercised, so Laravel compatibility remains a separate unproved
 boundary. A local runner self-test, tagged compilation, fixture-only pass, or
 Go-only pass must not be reported as that framework-level evidence.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

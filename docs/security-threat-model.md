@@ -1,5 +1,7 @@
 # Security threat model: go-rabbitmq-queues
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 **Model version:** 1.0, 2026-10-08.
 
 **Runtime source baseline:** `b3dc3f587aaa9c408039ec1f3d0de6352d48e463`.
@@ -116,3 +118,6 @@ and verify the corrected public module before their adoption is credited.
 Report vulnerabilities through the [security policy](../SECURITY.md). Revisit
 this model when protocol, lifetime, input limits, retry/settlement, dependency,
 callback, consumer or release contracts change.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

@@ -1,5 +1,7 @@
 # Adoption audit
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 This audit records the source contracts that must remain intact when
 `rabbitmqqueue` is connected to adjacent Go libraries or adopted by Shipit
 applications. The `go-queue/rabbitmq` adapter is implemented and verified; the
@@ -223,3 +225,6 @@ applicable gate has retained, versioned evidence.
   as an ordinary rollback step.
 - Legacy removal MUST wait until the observation window and reconciliation
   checks pass without discarding rollback prerequisites.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

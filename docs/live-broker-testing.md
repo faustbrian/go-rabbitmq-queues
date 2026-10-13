@@ -1,5 +1,7 @@
 # Live broker evidence harness
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 The `livebroker` build tag enables an external-package integration suite through
 the stable public API. The suite never starts, stops, provisions, purges, or
 deletes RabbitMQ resources. It requires a dedicated, externally provisioned TLS
@@ -337,3 +339,6 @@ duplicate outcomes.
 
 The four-queue steady and burst runner is documented under
 [performance evidence](performance.md).
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

@@ -1,5 +1,7 @@
 # Kubernetes Operator compatibility
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 The operator fixture maps the package's operator-owned topology boundary onto
 the pinned RabbitMQ Cluster Operator v2.22.5 and Messaging Topology Operator
 v1.20.2 CRDs. It defines a three-node TLS-only RabbitMQ 4.3.5 arm64 cluster,
@@ -76,3 +78,6 @@ policy, binding existence, broker health, rolling upgrades, failover, or live
 client connectivity. Those claims require a retained run on a versioned
 Kubernetes cluster with both operators installed, every CR reporting `Ready`,
 the effective broker topology recorded, and the live broker suites passing.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

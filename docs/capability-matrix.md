@@ -1,5 +1,7 @@
 # RabbitMQ 4.3 capability matrix
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 This matrix is policy input for `rabbitmqqueue`; it is not a claim that every
 row is implemented yet. The source snapshot and products are pinned in
 [`COMPATIBILITY.md`](../COMPATIBILITY.md).
@@ -164,3 +166,6 @@ When infrastructure supplies a setting only through policy, omit the matching
 `Queue` field and verify the effective policy through operator evidence. Use
 the field during passive verification only when the existing queue was declared
 with that same `x-` argument.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

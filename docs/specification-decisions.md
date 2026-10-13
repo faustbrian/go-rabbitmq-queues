@@ -1,5 +1,7 @@
 # RabbitMQ queue specification decisions
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 This register makes the module's observable AMQP 0-9-1 and RabbitMQ 4.3
 interpretations explicit. Normative protocol text and pinned RabbitMQ 4.3
 documentation outrank examples and client behavior. Maintained-peer evidence
@@ -106,3 +108,6 @@ is informative and cannot weaken a protocol requirement.
 - **Public APIs and documentation:** `Queue`; `Topology`; `TopologyPolicy`; `ApplyTopology`; `docs/specification-decisions.md`.
 - **Upstream status:** RabbitMQ 4.3 documents queue-type property equivalence and feature differences; mutation authority remains package policy.
 - **Reconsider when:** RabbitMQ changes classic or quorum declaration equivalence, adds a supported queue type, or standardizes a safe topology ownership protocol.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

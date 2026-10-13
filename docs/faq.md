@@ -1,5 +1,7 @@
 # Frequently asked questions
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 ## Does shutdown guarantee that every published message was accepted?
 
 No. A producer shutdown forced by cancellation or deadline expiry makes any
@@ -29,3 +31,6 @@ when an application must preserve the backend-neutral `go-queue` worker
 contract. If no successor version is yet cleanly resolvable, use the deprecated
 `github.com/faustbrian/go-queue/rabbitmq` compatibility facade instead of a
 local replacement.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

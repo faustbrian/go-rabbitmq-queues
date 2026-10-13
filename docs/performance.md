@@ -1,5 +1,7 @@
 # Performance evidence
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 RabbitMQ capacity and package wrapper cost are separate measurements. Local Go
 benchmarks measure only validation, AMQP conversion, owned-copy allocation, and
 confirmation tracking. They do not contact a broker and cannot establish queue,
@@ -150,3 +152,6 @@ does not represent deployment storage, network contention, application
 handlers, traffic shape, or production topology. Storage saturation,
 application integration, deployment-specific capacity, and production behavior
 remain unverified.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

@@ -1,5 +1,7 @@
 # `go-queue` RabbitMQ adapter migration and rollback gate
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 This document records the compatibility boundary between
 the target-oriented `github.com/faustbrian/go-queue/adapters/rabbitmq`
 successor, the deprecated `github.com/faustbrian/go-queue/rabbitmq` facade, and
@@ -182,3 +184,6 @@ effects in both designs. A crash after the replacement confirm and before the
 source acknowledgement can duplicate work. A timeout or connection loss after
 transmission can also be ambiguous. Application idempotency and message-level
 reconciliation are therefore prerequisites for both migration and rollback.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

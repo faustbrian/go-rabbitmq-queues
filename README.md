@@ -170,3 +170,12 @@ workflow dispatch; scheduled checks remain bounded. See
 [contributing](CONTRIBUTING.md#verification) for standalone tests, fuzz seeds
 versus active smoke, installation and optional mutation. This module is
 distributed under the [MIT license](LICENSE).
+
+## Documentation navigation
+
+[Complete documentation map](docs/README.md#complete-documentation-map) · [Current source package map](docs/package-map.md)
+
+Use the [versioned ecosystem entry](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md) for package
+selection. The [frozen compatibility cohort](https://github.com/faustbrian/go-library-tools/blob/v1.8.4/docs/ecosystem/compatibility-sets.md)
+is separate from current package releases and unpublished source changes.
+Adopting them does not silently update that cohort.
