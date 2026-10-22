@@ -20,7 +20,7 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Official php-ubuntu asset 613079199, reviewed PHP 8.5.11 / Ubuntu 24.04.
+# Official php-ubuntu asset 613079354, reviewed PHP 8.5.11 / Ubuntu 24.04.
 # The numeric asset and digest must advance together after profile review.
 php_sha256='8fe4b28e1e5c3228d45416fed28152cc0ab8325ae7f6e0d5bb531f8501671bf9'
 composer_sha256='345b9c6a98da5c30dcbd4b0d99fc8710bf0ae98a3898eea18f7b2ad9dec93f06'
@@ -29,7 +29,7 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     --header 'Accept: application/octet-stream' \
     --header "Authorization: Bearer ${GH_TOKEN:?}" \
     --output "${task_root}/php.tar.zst" \
-    https://api.github.com/repos/shivammathur/php-ubuntu/releases/assets/613079199
+    https://api.github.com/repos/shivammathur/php-ubuntu/releases/assets/613079354
 printf '%s  %s\n' "${php_sha256}" "${task_root}/php.tar.zst" | sha256sum --check --strict -
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     --connect-timeout 10 --max-time 120 --max-filesize 8388608 \
