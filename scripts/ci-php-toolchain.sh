@@ -20,8 +20,11 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Official php-ubuntu asset 785891895, reviewed PHP 8.5.11 / Ubuntu 24.04.
-# The numeric asset and digest must advance together after profile review.
+# Reviewed php-ubuntu PHP 8.5.11 / Ubuntu 24.04 tarball
+# (php_8.5.11-nts+ubuntu24.04.tar.zst, upstream asset 785891895), mirrored by
+# scripts/mirror-php-toolchain.sh to this repository's ci-toolchain-php-8.5.11
+# release. Upstream rebuilds its rolling assets in place; the mirror does not.
+# The mirror asset ID and digest must advance together after profile review.
 php_sha256='02cfc1197d7fc40528c901ea775bc361e08895456a6fa8e5ddc519529a4832b5'
 composer_sha256='345b9c6a98da5c30dcbd4b0d99fc8710bf0ae98a3898eea18f7b2ad9dec93f06'
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -29,7 +32,7 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     --header 'Accept: application/octet-stream' \
     --header "Authorization: Bearer ${GH_TOKEN:?}" \
     --output "${task_root}/php.tar.zst" \
-    https://api.github.com/repos/shivammathur/php-ubuntu/releases/assets/785891895
+    https://api.github.com/repos/faustbrian/go-rabbitmq-queues/releases/assets/795110448
 printf '%s  %s\n' "${php_sha256}" "${task_root}/php.tar.zst" | sha256sum --check --strict -
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     --connect-timeout 10 --max-time 120 --max-filesize 8388608 \

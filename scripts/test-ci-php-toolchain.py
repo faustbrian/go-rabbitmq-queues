@@ -14,6 +14,17 @@ import unittest
 
 
 class PrivatePHPToolchainAcquisition(unittest.TestCase):
+    def test_php_is_acquired_from_this_repository_mirror(self):
+        # Upstream php-ubuntu assets are rebuilt in place under new IDs; CI must
+        # fetch the reviewed copy mirrored by scripts/mirror-php-toolchain.sh.
+        source = Path(__file__).with_name("ci-php-toolchain.sh").read_text()
+        urls = re.findall(r"https://api\.github\.com/\S+", source)
+        self.assertEqual(len(urls), 1)
+        self.assertRegex(
+            urls[0],
+            r"^https://api\.github\.com/repos/faustbrian/go-rabbitmq-queues/releases/assets/[0-9]+$",
+        )
+
     def test_extraction_selects_only_regular_profile_files(self):
         source = Path(__file__).with_name("ci-php-toolchain.sh").read_text()
         extraction = source.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
