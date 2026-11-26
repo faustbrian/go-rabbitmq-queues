@@ -121,9 +121,11 @@ the bounded scheduled carrier does not certify broker or PHP behavior.
 
 The Ubuntu 24.04 PHP job runs `scripts/ci-php-toolchain.sh` in one private
 `RUNNER_TEMP` prefix. Its reviewed inputs are the setup-php maintainer's
-[php-ubuntu asset 785891895](https://api.github.com/repos/shivammathur/php-ubuntu/releases/assets/785891895)
-(`php_8.5.11-nts+ubuntu24.04.tar.zst`, SHA-256
-`02cfc1197d7fc40528c901ea775bc361e08895456a6fa8e5ddc519529a4832b5`)
+php-ubuntu build `php_8.5.11-nts+ubuntu24.04.tar.zst` (SHA-256
+`02cfc1197d7fc40528c901ea775bc361e08895456a6fa8e5ddc519529a4832b5`, upstream
+asset 785891895), mirrored to this repository's
+[`ci-toolchain-php-8.5.11`](https://github.com/faustbrian/go-rabbitmq-queues/releases/tag/ci-toolchain-php-8.5.11)
+release and fetched by that release asset's numeric ID with the job token,
 and [Composer 2.10.1](https://getcomposer.org/download/2.10.1/composer.phar)
 (SHA-256 `345b9c6a98da5c30dcbd4b0d99fc8710bf0ae98a3898eea18f7b2ad9dec93f06`).
 Both digests are checked before extraction or execution; a missing asset or
@@ -142,9 +144,28 @@ mbstring) fail closed; the script does not install replacements. The whole
 private prefix is removed on success, failure or handled interruption, and a
 cleanup failure fails the job.
 
-The library maintainer owns updates: authenticate the replacement numeric
-asset and Composer bytes, inspect regular members and extension ABI/host
-library requirements, and update identities and digests together. Before
+Upstream publishes these builds as assets of its rolling `builds` release
+and rebuilds them in place: the same PHP version can receive a new asset ID
+and new bytes at any time, which makes a direct upstream pin fail with 404.
+CI therefore never reads upstream. Each reviewed tarball is copied once to a
+dedicated `ci-toolchain-php-<version>` release here. Those tags are not
+semver, so the Go module proxy ignores them, and a mirror release is never
+replaced; a new review always creates a new release.
+
+The library maintainer owns updates:
+
+1. Choose the upstream asset by name from
+   `gh api repos/shivammathur/php-ubuntu/releases/tags/builds`, note its
+   `digest`, download it to a private directory and inspect its regular
+   members and extension ABI/host library requirements.
+2. Run `scripts/mirror-php-toolchain.sh <version> <reviewed-sha256>`. It
+   refuses an existing mirror release, an upstream digest or downloaded bytes
+   that differ from the reviewed SHA-256, uploads the tarball with
+   `gh release create --latest=false`, and prints the mirrored asset ID.
+3. Update the asset ID and `php_sha256` in `scripts/ci-php-toolchain.sh`
+   together, along with the exact runtime version and extension ABI checks
+   when the PHP version changes, and authenticate replacement Composer bytes
+   the same way. Before
 adoption, run `python3 scripts/test-ci-php-toolchain.py`, shell/workflow checks,
 and the existing hosted PHP job to prove exact versions, locked dependencies,
 extensions, bidirectional TLS interoperability and cleanup. Local acquisition
