@@ -121,9 +121,9 @@ the bounded scheduled carrier does not certify broker or PHP behavior.
 
 The Ubuntu 24.04 PHP job runs `scripts/ci-php-toolchain.sh` in one private
 `RUNNER_TEMP` prefix. Its reviewed inputs are the setup-php maintainer's
-[php-ubuntu asset 613079354](https://api.github.com/repos/shivammathur/php-ubuntu/releases/assets/613079354)
-(`php_8.5-nts+ubuntu24.04.tar.zst`, SHA-256
-`8fe4b28e1e5c3228d45416fed28152cc0ab8325ae7f6e0d5bb531f8501671bf9`)
+[php-ubuntu asset 785891895](https://api.github.com/repos/shivammathur/php-ubuntu/releases/assets/785891895)
+(`php_8.5.11-nts+ubuntu24.04.tar.zst`, SHA-256
+`02cfc1197d7fc40528c901ea775bc361e08895456a6fa8e5ddc519529a4832b5`)
 and [Composer 2.10.1](https://getcomposer.org/download/2.10.1/composer.phar)
 (SHA-256 `345b9c6a98da5c30dcbd4b0d99fc8710bf0ae98a3898eea18f7b2ad9dec93f06`).
 Both digests are checked before extraction or execution; a missing asset or
