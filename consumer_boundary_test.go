@@ -359,13 +359,18 @@ func TestConsumerShutdownContinuesAfterCallerDeadline(t *testing.T) {
 
 	channel := newFakeConsumerChannel()
 	started := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(releaseHandler) }) })
 	config := testConsumerConfig()
 	config.HandlerTimeout = 20 * time.Millisecond
 	consumer, err := newConsumerFromChannel(
 		t.Context(), config,
 		func(ctx context.Context, _ Delivery) (Settlement, error) {
 			close(started)
-			<-ctx.Done()
+			// Keep the handler running until shutdown exhausts its own
+			// deadline. Its earlier timeout must not race resource cleanup.
+			<-releaseHandler
 			return Settlement{}, ctx.Err()
 		},
 		channel, &concurrentCountingCloser{},
@@ -384,6 +389,7 @@ func TestConsumerShutdownContinuesAfterCallerDeadline(t *testing.T) {
 	if err := consumer.Shutdown(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Shutdown(after cleanup) error = %v, want internal drain deadline", err)
 	}
+	release.Do(func() { close(releaseHandler) })
 	select {
 	case <-consumer.Done():
 	case <-time.After(time.Second):
